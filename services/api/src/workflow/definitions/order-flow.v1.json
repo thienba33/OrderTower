@@ -1,0 +1,92 @@
+{
+  "definitionId": "order-flow",
+  "version": "1",
+  "note": "Định nghĩa luồng dạng tệp, có phiên bản. Phiên bản mới là tệp mới, không sửa tệp đã phát hành.",
+  "states": [
+    "Mới tạo",
+    "Đã kiểm tra",
+    "Chờ kho",
+    "Đang đóng gói",
+    "Chờ điều xe",
+    "Đang giao",
+    "Đã giao",
+    "Hoàn",
+    "Hủy"
+  ],
+  "transitions": [
+    {
+      "from": "Mới tạo",
+      "to": "Đã kiểm tra",
+      "role": "Điều phối viên",
+      "guard": "không trùng đơn"
+    },
+    {
+      "from": "Đã kiểm tra",
+      "to": "Chờ kho",
+      "role": "Điều phối viên",
+      "guard": "địa chỉ đạt mức tin cậy tối thiểu"
+    },
+    {
+      "from": "Chờ kho",
+      "to": "Đang đóng gói",
+      "role": "Nhân viên kho",
+      "guard": "tồn kho đủ"
+    },
+    {
+      "from": "Đang đóng gói",
+      "to": "Chờ điều xe",
+      "role": "Nhân viên kho",
+      "guard": "đã xác nhận đóng gói"
+    },
+    {
+      "from": "Chờ điều xe",
+      "to": "Đang giao",
+      "role": "Điều phối viên",
+      "guard": "đã điều xe"
+    },
+    {
+      "from": "Đang giao",
+      "to": "Đã giao",
+      "role": "Tài xế",
+      "guard": "có ảnh bằng chứng"
+    },
+    {
+      "from": "Đã giao",
+      "to": "Hoàn",
+      "role": "Điều phối viên",
+      "guard": "có hướng xử lý, đối soát xong"
+    },
+    {
+      "from": "Mới tạo",
+      "to": "Hủy",
+      "role": "Điều phối viên",
+      "guard": "có lý do hủy"
+    },
+    {
+      "from": "Đã kiểm tra",
+      "to": "Hủy",
+      "role": "Điều phối viên",
+      "guard": "có lý do hủy"
+    },
+    {
+      "from": "Đang giao",
+      "to": "Chờ điều xe",
+      "role": "Điều phối viên",
+      "guard": "giao thất bại, có lý do"
+    }
+  ],
+  "guards": [
+    "không xác nhận đơn trùng",
+    "không chuyển kho khi tồn kho không đủ",
+    "không điều xe khi địa chỉ chưa đạt mức tin cậy tối thiểu",
+    "không đóng đơn khi chưa có hướng xử lý",
+    "không sửa đơn đã đóng mà không có lý do và phê duyệt"
+  ],
+  "approvals": [
+    "sửa địa chỉ mức tin cậy thấp",
+    "đưa khách vào danh sách hạn chế",
+    "phân đơn vượt tải",
+    "điều tiết bán hàng và nhập hàng",
+    "áp dụng đề xuất AI ảnh hưởng khách hàng hoặc tiền"
+  ]
+}

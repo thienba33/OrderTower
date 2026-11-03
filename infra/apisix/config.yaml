@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# APISIX ở chế độ standalone: cấu hình bằng tệp, không dùng etcd.
+# Tuyến khai báo trong apisix.yaml.
+apisix:
+  enable_admin: false
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml

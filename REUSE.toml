@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# Cấu hình REUSE: thông tin bản quyền áp dụng cho toàn bộ tệp trong repo.
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 BeyondDreams"
+SPDX-License-Identifier = "Apache-2.0"

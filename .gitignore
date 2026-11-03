@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+node_modules/
+dist/
+.next/
+out/
+.env
+*.log
+coverage/
+uploads/
+.DS_Store
+.idea/
+*.tsbuildinfo
+target/

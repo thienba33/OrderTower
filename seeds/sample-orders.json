@@ -1,0 +1,48 @@
+{
+  "frozen_at": null,
+  "note": "Dữ liệu mẫu tự tạo, đã ẩn danh, chỉ minh họa hình dạng dữ liệu.",
+  "orders": [
+    {
+      "id": "DH-0001",
+      "channel": "website",
+      "customer": "KH-001",
+      "status": "Mới tạo",
+      "address_confidence": "thấp",
+      "items": [
+        {
+          "sku": "SP-001",
+          "quantity": 2
+        }
+      ],
+      "history": [
+        {
+          "status": "Mới tạo",
+          "by": "he-thong-mo-phong"
+        }
+      ]
+    },
+    {
+      "id": "DH-0002",
+      "channel": "san",
+      "customer": "KH-002",
+      "status": "Chờ kho",
+      "address_confidence": "cao",
+      "items": [
+        {
+          "sku": "SP-002",
+          "quantity": 1
+        }
+      ],
+      "history": [
+        {
+          "status": "Mới tạo",
+          "by": "he-thong-mo-phong"
+        },
+        {
+          "status": "Đã kiểm tra",
+          "by": "dieu-phoi-vien"
+        }
+      ]
+    }
+  ]
+}

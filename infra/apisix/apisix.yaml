@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Tuyến khai báo cho APISIX ở chế độ standalone.
+routes:
+  - uri: /api/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "api:3001": 1
