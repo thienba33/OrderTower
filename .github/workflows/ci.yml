@@ -17,5 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Tạo .env từ mẫu
+        run: cp .env.example .env
       - name: Kiểm tra cấu hình Compose
         run: docker compose config -q
