@@ -1,13 +1,17 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Web điều hành
 
-Phục vụ 4 vai trò tác nghiệp và quản lý: Điều phối viên, Nhân viên kho,
-Nhân viên chăm sóc khách hàng, Quản lý. Quản trị viên dùng màn hình quản trị
-riêng trong cùng ứng dụng này.
+Giao diện điều hành OrderTower: Next.js + Tailwind CSS, dữ liệu mẫu đóng băng, chưa nối API thật.
 
-Màn hình chính: bảng Kanban đơn hàng, chi tiết đơn kèm lịch sử và audit,
-dashboard điều phối viên, dashboard quản lý, màn hình lớp BI, màn hình
-DX-Score radar.
+## Chạy
 
-Dependencies: Next.js, React, Tailwind CSS. Biến môi trường đọc từ `.env`
-ở gốc repo, không hardcode URL API hay key vào code.
+```sh
+npm install
+npm run dev
+```
+
+## Cấu trúc
+
+- `app/`: layout khung (sidebar + header) và các màn hình.
+- `components/layout/`: Shell, Sidebar, Header.
+- `components/ui/`: Table, Pagination, Filter, Modal, Combobox, SearchInput.
