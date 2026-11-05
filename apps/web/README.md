@@ -13,5 +13,6 @@ npm run dev
 ## Cấu trúc
 
 - `app/`: layout khung (sidebar + header) và các màn hình.
+- `data/`: dữ liệu mẫu đóng băng cho các màn hình.
 - `components/layout/`: Shell, Sidebar, Header.
 - `components/ui/`: Table, Pagination, Filter, Modal, Combobox, SearchInput.
