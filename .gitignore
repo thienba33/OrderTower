@@ -10,4 +10,5 @@ uploads/
 .DS_Store
 .idea/
 *.tsbuildinfo
+next-env.d.ts
 target/
