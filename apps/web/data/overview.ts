@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Du lieu mau dong bang ngay 02/11/2026, theo khung Figma Tong quan (45:2).
+// Du lieu mau dong bang ngay 02/11/2026.
 // Chua noi he thong that.
 
 export type OverviewKpi = {
@@ -74,7 +74,7 @@ export const SLA_RISK_ORDERS: SlaRiskOrder[] = [
   { action: "Gọi khách", customer: "KH-033", deadline: "02/11 10:30", id: "DH-1044", risk: "Sắp quá SLA giao hẹn", status: "Đang giao" },
   { action: "Xác nhận ĐC", customer: "KH-041", deadline: "02/11 12:00", id: "DH-1038", risk: "Địa chỉ tin cậy thấp", status: "Đã kiểm tra" },
   { action: "Ưu tiên kho", customer: "KH-058", deadline: "02/11 11:30", id: "DH-1033", risk: "Sắp quá SLA giao hẹn", status: "Chờ kho" },
-  // 2 dong trang 2: Figma chi ve trang 1, lay tu bang rui ro trong mockup.
+  // 2 dong trang 2 lay tu bang rui ro cung bo du lieu mau.
   { action: "Ưu tiên kho", customer: "KH-003", deadline: "02/11 12:30", id: "DH-1029", risk: "Sắp quá SLA giao hẹn", status: "Chờ kho" },
   { action: "Gọi khách", customer: "KH-030", deadline: "02/11 13:00", id: "DH-1024", risk: "Sắp quá SLA giao hẹn", status: "Mới tạo" },
 ];

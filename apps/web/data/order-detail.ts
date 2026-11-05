@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Chi tiet don hang cho man Chi tiet don (Figma 45:939).
-// Don DH-1044 lay dung tu Figma. Cac don con lai suy ra xac dinh tu dong
+// Chi tiet don hang cho man Chi tiet don.
+// Don DH-1044 la du lieu mau co dinh. Cac don con lai suy ra xac dinh tu dong
 // trong data/orders.ts (khach hang, SDT, kenh, san pham, trang thai, moc giao),
 // khong dung so ngau nhien, chay lai van ra cung mot noi dung.
 // Luu y: dong DH-1044 trong danh sach chi hien mat hang dau (HS-KHO x3,
@@ -89,7 +89,7 @@ export function addMinutes(time: string, minutes: number): string {
   return minutesToTime(timeToMinutes(time) + minutes);
 }
 
-// Chi tiet dung tu Figma cho don DH-1044.
+// Chi tiet mau co dinh cho don DH-1044.
 const DH_1044: Omit<OrderDetail, "order"> = {
   createdAt: "08:12",
   address: "Số 12, ngõ 45 phố Lò Đúc, Hai Bà Trưng, Hà Nội",
