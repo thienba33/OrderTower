@@ -1,0 +1,186 @@
+{
+  "realm": "ordertower",
+  "enabled": true,
+  "displayName": "OrderTower",
+  "registrationAllowed": true,
+  "resetPasswordAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "client": {
+      "ordertower-web": [
+        { "name": "admin" },
+        { "name": "dispatcher" },
+        { "name": "warehouse-staff" },
+        { "name": "customer-service" },
+        { "name": "driver" },
+        { "name": "manager" },
+        { "name": "customer" }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "ordertower-web",
+      "name": "OrderTower Web (local)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": ["http://localhost:3000/auth/callback"],
+      "webOrigins": ["http://localhost:3000"],
+      "defaultClientScopes": ["profile", "email", "roles"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "demo.admin",
+      "enabled": true,
+      "email": "demo.admin@example.test",
+      "firstName": "Demo",
+      "lastName": "admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ORDERTOWER_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "ordertower-web": [
+          "admin"
+        ],
+        "account": ["view-profile", "manage-account"]
+      }
+    },
+    {
+      "username": "demo.dispatcher",
+      "enabled": true,
+      "email": "demo.dispatcher@example.test",
+      "firstName": "Demo",
+      "lastName": "dispatcher",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ORDERTOWER_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "ordertower-web": [
+          "dispatcher"
+        ],
+        "account": ["view-profile", "manage-account"]
+      }
+    },
+    {
+      "username": "demo.warehouse-staff",
+      "enabled": true,
+      "email": "demo.warehouse-staff@example.test",
+      "firstName": "Demo",
+      "lastName": "warehouse-staff",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ORDERTOWER_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "ordertower-web": [
+          "warehouse-staff"
+        ],
+        "account": ["view-profile", "manage-account"]
+      }
+    },
+    {
+      "username": "demo.customer-service",
+      "enabled": true,
+      "email": "demo.customer-service@example.test",
+      "firstName": "Demo",
+      "lastName": "customer-service",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ORDERTOWER_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "ordertower-web": [
+          "customer-service"
+        ],
+        "account": ["view-profile", "manage-account"]
+      }
+    },
+    {
+      "username": "demo.driver",
+      "enabled": true,
+      "email": "demo.driver@example.test",
+      "firstName": "Demo",
+      "lastName": "driver",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ORDERTOWER_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "ordertower-web": [
+          "driver"
+        ],
+        "account": ["view-profile", "manage-account"]
+      }
+    },
+    {
+      "username": "demo.manager",
+      "enabled": true,
+      "email": "demo.manager@example.test",
+      "firstName": "Demo",
+      "lastName": "manager",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ORDERTOWER_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "ordertower-web": [
+          "manager"
+        ],
+        "account": ["view-profile", "manage-account"]
+      }
+    },
+    {
+      "username": "demo.customer",
+      "enabled": true,
+      "email": "demo.customer@example.test",
+      "firstName": "Demo",
+      "lastName": "customer",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ORDERTOWER_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "ordertower-web": [
+          "customer"
+        ],
+        "account": ["view-profile", "manage-account"]
+      }
+    }
+  ]
+}
