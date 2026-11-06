@@ -28,7 +28,7 @@ export type NavSection = {
   label: string;
 };
 
-// Muc tren cung, dung rieng ngoai cac nhom, theo khung Figma.
+// Muc tren cung, dung rieng ngoai cac nhom.
 export const NAV_TOP: NavLeaf = {
   href: "/",
   icon: LayoutGrid,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Du lieu mau dong bang ngay 02/11/2026, theo khung Figma Don hang (45:405).
-// 8 dong dau lay dung tu Figma; 112 dong con lai sinh xac dinh tu so luong
+// Du lieu mau dong bang ngay 02/11/2026.
+// 8 dong dau la du lieu mau co dinh; 112 dong con lai sinh xac dinh tu so luong
 // trang thai cua man Tong quan (14, 18, 22, 16, 12, 19, 11, 5, 3), khong dung
 // so ngau nhien, chay lai van ra cung mot danh sach. Chua noi he thong that.
 
@@ -66,7 +66,7 @@ export function formatMoney(amount: number): string {
   return `${String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ".")}đ`;
 }
 
-// 8 dong trang 1, lay dung tu Figma.
+// 8 dong trang 1 la du lieu mau co dinh.
 const EXPLICIT_ORDERS: Order[] = [
   { id: "DH-1051", channel: "Chat", customer: "KH-014", phone: "0912 *** 456", productSku: "NM-25", quantity: 2, total: 186000, status: "Chờ điều xe", deadline: "02/11 10:00", trust: "Tin cậy cao" },
   { id: "DH-1041", channel: "Web", customer: "KH-027", phone: "0903 *** 781", productSku: "NM-40", quantity: 1, total: 142000, status: "Đã kiểm tra", deadline: "02/11 11:00", trust: "Rủi ro cao" },
