@@ -15,6 +15,11 @@ jobs:
           reuse lint
   compose:
     runs-on: ubuntu-latest
+    env:
+      KEYCLOAK_DB_PASSWORD: ci-admin-db
+      KEYCLOAK_ADMIN_USERNAME: ci-admin-user
+      KEYCLOAK_ADMIN_PASSWORD: ci-admin-password
+      ORDERTOWER_DEMO_PASSWORD: ci-password-demo
     steps:
       - uses: actions/checkout@v4
       - name: Tạo .env từ mẫu

@@ -1,8 +1,73 @@
 # SPDX-License-Identifier: Apache-2.0
 # Tuyến khai báo cho APISIX ở chế độ standalone.
+# Cấu hình cách APISIX xử lý request
 routes:
-  - uri: /api/*
+  # Đăng nhập, đăng ký, quên mật khẩu và OIDC không yêu cầu token sẵn có.
+  - id: keycloak-public
+    uri: /realms/*
+    plugins:
+      proxy-rewrite:
+        headers:
+          remove:
+            - Forwarded
+          set:
+            X-Forwarded-For: $remote_addr
+            X-Forwarded-Host: $http_host
+            X-Forwarded-Proto: $scheme
+            X-Forwarded-Port: $server_port
+      limit-req:
+        rate: 5
+        burst: 10
+        nodelay: true
+        key: remote_addr
+        rejected_code: 429
+      request-id:
+        include_in_response: true
+    upstream_id: keycloak
+  # Tách tài nguyên giao diện để tải CSS/JS không tiêu tốn quota đăng nhập.
+  - id: keycloak-resources
+    uri: /resources/*
+    plugins:
+      proxy-rewrite:
+        headers:
+          remove:
+            - Forwarded
+          set:
+            X-Forwarded-For: $remote_addr
+            X-Forwarded-Host: $http_host
+            X-Forwarded-Proto: $scheme
+            X-Forwarded-Port: $server_port
+      request-id:
+        include_in_response: true
+    upstream_id: keycloak
+  # API nghiệp vụ yêu cầu access token.
+  - id: ordertower-api
+    uri: /api/*
+    plugins:
+      openid-connect:
+        client_id: ordertower-web
+        discovery: http://keycloak:8080/realms/ordertower/.well-known/openid-configuration
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        claim_validator:
+          issuer:
+            valid_issuers:
+              - http://localhost:9080/realms/ordertower
+          audience:
+            required: true
+            match_with_client_id: true
+        set_userinfo_header: false
+        set_id_token_header: false
+      request-id:
+        include_in_response: true
     upstream:
       type: roundrobin
       nodes:
         "api:3001": 1
+upstreams:
+  - id: keycloak
+    type: roundrobin
+    nodes:
+      "keycloak:8080": 1
+#END
