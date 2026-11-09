@@ -2,6 +2,7 @@
 
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useState, type ReactNode } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, X } from "lucide-react";
@@ -54,9 +55,13 @@ function SidebarBody({
   return (
     <>
       <div className="flex h-16 shrink-0 items-center gap-2.5 border-b px-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-red-700 text-[15px] font-medium text-white">
-          T
-        </div>
+        <Image
+          src="/logo-mark.png"
+          alt="OrderTower"
+          width={32}
+          height={32}
+          className="h-8 w-8 shrink-0 object-contain"
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[15px] font-medium leading-tight text-gray-900">
             OrderTower

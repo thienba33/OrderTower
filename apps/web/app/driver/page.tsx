@@ -76,7 +76,7 @@ function OrderCard({
           Bắt đầu giao
         </button>
       ) : (
-        <Link href={`/tai-xe/${order.id}`} className={buttonClass}>
+        <Link href={`/driver/${order.id}`} className={buttonClass}>
           {order.status === "Đã giao" ? "Xem bằng chứng" : "Xem chi tiết"}
         </Link>
       )}

@@ -146,7 +146,7 @@ export default function TheoDoiPage() {
 
           <div className="flex items-center">
             <Link
-              href="/cskh"
+              href="/customer-care"
               className="flex h-9 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700"
             >
               Tạo yêu cầu hỗ trợ
