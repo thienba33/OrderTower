@@ -16,6 +16,8 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     env:
+      POSTGRES_ADMIN_PASSWORD: ci-postgres-admin
+      ORDERTOWER_DB_PASSWORD: ci-ordertower-app
       KEYCLOAK_DB_PASSWORD: ci-admin-db
       KEYCLOAK_ADMIN_USERNAME: ci-admin-user
       KEYCLOAK_ADMIN_PASSWORD: ci-admin-password

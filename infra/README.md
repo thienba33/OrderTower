@@ -12,16 +12,24 @@ Nếu chưa có `.env`, sao chép `.env.example` thành `.env`:
 cp .env.example .env
 ```
 
-Điền bốn biến sau trong `.env`:
+Điền các biến sau trong `.env`:
 
 | Biến | Dùng để làm gì? |
 | --- | --- |
+| `POSTGRES_ADMIN_PASSWORD` | Mật khẩu user quản trị PostgreSQL `ordertower` |
+| `ORDERTOWER_DB_PASSWORD` | Mật khẩu user backend `ordertower_app`, khác mật khẩu quản trị |
+| `DATABASE_URL` | Kết nối bằng `ordertower_app`; điền mật khẩu ứng dụng đã URL-encode |
 | `KEYCLOAK_DB_PASSWORD` | Keycloak kết nối PostgreSQL |
 | `KEYCLOAK_ADMIN_USERNAME` | Tên đăng nhập quản trị Keycloak |
 | `KEYCLOAK_ADMIN_PASSWORD` | Mật khẩu quản trị Keycloak |
 | `ORDERTOWER_DEMO_PASSWORD` | Mật khẩu chung cho bảy tài khoản demo |
 
 Không commit `.env`. Bộ tài khoản demo chỉ dùng cho môi trường local.
+
+`DATABASE_URL` trong mẫu dùng hostname `postgres` cho backend chạy trong
+Docker. Nếu chạy backend trên máy host, đổi hostname thành `localhost`.
+Compose chỉ truyền các biến ứng dụng cần cho API, không truyền mật khẩu
+quản trị PostgreSQL/Keycloak; frontend hiện không cần nhận file `.env`.
 
 ## 2. Khởi động
 
@@ -86,6 +94,39 @@ Không dùng `docker compose down -v` hoặc `make down` nếu muốn giữ dữ
 `make down` hiện có tùy chọn xóa volume.
 
 ## Các file cấu hình
+
+### PostgreSQL và tài khoản ứng dụng
+
+PostgreSQL chỉ mở `127.0.0.1:5432` trên máy host. User `ordertower` giữ
+vai trò quản trị; backend dùng `ordertower_app`, không có quyền superuser,
+tạo database, tạo role hoặc vượt RLS. User ứng dụng được kết nối, tạo bảng
+trong schema `public` của database `ordertower` để chạy migration, nhưng
+không được kết nối database `keycloak`. Keycloak giữ user riêng `keycloak`.
+Schema và bảng nghiệp vụ vẫn do migration backend Tầng 2 quản lý.
+
+Volume mới tự chạy `01-keycloak.sh` rồi `02-ordertower.sh`. Với volume đã
+có dữ liệu, điền mật khẩu mới và cập nhật `DATABASE_URL` trong `.env`, sau
+đó áp dụng mà không xóa volume:
+
+```bash
+docker compose up -d --no-deps --wait postgres
+docker compose exec -T postgres bash /docker-entrypoint-initdb.d/02-ordertower.sh
+docker compose exec -T postgres psql -U ordertower -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+\getenv admin_password POSTGRES_PASSWORD
+ALTER ROLE ordertower PASSWORD :'admin_password';
+SQL
+```
+
+Script `02-ordertower.sh` chạy lại được và đồng bộ mật khẩu ứng dụng từ
+environment của container. Việc đổi biến `.env` đơn thuần không đổi mật
+khẩu đang lưu trong PostgreSQL. Sao lưu trước khi đổi quyền hoặc mật khẩu;
+nếu API đang chạy, tạo lại container API sau khi cập nhật kết nối.
+
+Đã kiểm thử trên local ngày 09/11/2026: tạo/ghi/đọc bảng bằng user ứng
+dụng trong transaction rollback; từ chối tạo role/database và kết nối
+sang Keycloak; mật khẩu quản trị cũ bị từ chối qua mạng Docker. Đăng nhập
+demo qua Keycloak/APISIX vẫn thành công. Khởi tạo mới cũng được kiểm thử
+trên PostgreSQL cô lập dùng tmpfs, không đụng volume dữ liệu dự án.
 
 ### APISIX và một client Keycloak
 
@@ -164,6 +205,7 @@ Khi public cần HTTPS, cấu hình proxy tin cậy theo mạng triển khai và
 | --- | --- |
 | [compose.yaml](../compose.yaml) | Khai báo dịch vụ, kết nối và volume |
 | [postgres/init/01-keycloak.sh](postgres/init/01-keycloak.sh) | Tạo database và PostgreSQL user `keycloak`; Keycloak tự tạo bảng |
+| [postgres/init/02-ordertower.sh](postgres/init/02-ordertower.sh) | Tạo/cập nhật user ứng dụng và giới hạn quyền giữa hai database |
 | [keycloak/realm/ordertower-realm.json](keycloak/realm/ordertower-realm.json) | Khai báo realm, client `ordertower-web`, role và tài khoản demo |
 | [apisix/config.yaml](apisix/config.yaml) | Bật APISIX standalone, dùng cấu hình tệp |
 | [apisix/apisix.yaml](apisix/apisix.yaml) | Route Keycloak, rate limit và xác thực API |
@@ -174,9 +216,25 @@ khách hàng tương ứng với tài khoản Keycloak.
 
 ## Các dịch vụ trong Compose
 
+SeaweedFS có healthcheck gọi `http://127.0.0.1:8333/readyz` trong container.
+Backend chờ SeaweedFS chuyển sang `healthy` trước khi khởi động và kết nối
+qua `S3_ENDPOINT=http://seaweedfs:8333`. Healthcheck không thay thế kiểm thử
+upload/download; `depends_on` cũng không tự khởi động lại backend nếu storage
+mất kết nối sau đó. Backend cần xử lý lỗi kết nối khi được triển khai.
+
+Kiểm thử SeaweedFS local ngày 09/11/2026: bucket được tạo, healthcheck đạt
+`healthy`, upload/download file 1 MiB khớp SHA-256, tải một phần trả `206`.
+Access key sai, secret key sai và tải file không có credentials đều bị
+từ chối `403`. Sau khi tạo lại riêng container và giữ volume `swdata`,
+file vẫn nguyên checksum. File thử đã được xóa (`204`, đọc lại `404`).
+Kết nối từ container APISIX đến `seaweedfs:8333/readyz` trả `200`; đây chỉ
+là kiểm tra mạng Docker, không phải route storage qua Gateway.
+Backend chưa có API upload/download hoặc metadata file trong PostgreSQL,
+nên chưa có luồng lưu file end-to-end của ứng dụng.
+
 | Dịch vụ | Phiên bản | Cổng trên máy |
 | --- | --- | --- |
-| PostgreSQL | 16 | 5432 |
+| PostgreSQL | 16 | 5432, chỉ loopback |
 | Keycloak | 26.8.1 | 8081, chỉ loopback để quản trị; người dùng qua APISIX |
 | Apache APISIX | 3.19.0-debian | 9080 |
 | SeaweedFS (mini, object storage/S3) | 4.51 | 8333, 8888, 9333 |
