@@ -17,6 +17,8 @@ export type TableProps<T> = {
   emptyText?: string;
   // Dat trong panel co tieu de rieng thi bo vien ngoai cua bang.
   bare?: boolean;
+  onRowClick?: (row: T) => void;
+  rowClassName?: (row: T) => string;
 };
 
 const ALIGN_CLASS = {
@@ -25,7 +27,7 @@ const ALIGN_CLASS = {
   right: "text-right",
 } as const;
 
-export function Table<T>({ columns, rows, rowKey, emptyText = "Không có dữ liệu", bare = false }: TableProps<T>) {
+export function Table<T>({ columns, rows, rowKey, emptyText = "Không có dữ liệu", bare = false, onRowClick, rowClassName }: TableProps<T>) {
   return (
     <div className={bare ? "overflow-x-auto" : "overflow-x-auto rounded-lg border bg-white"}>
       <table className="w-full text-sm">
@@ -51,7 +53,11 @@ export function Table<T>({ columns, rows, rowKey, emptyText = "Không có dữ l
             </tr>
           ) : (
             rows.map((row, index) => (
-              <tr key={rowKey(row, index)} className="border-t">
+              <tr
+                key={rowKey(row, index)}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={`border-t ${onRowClick ? "cursor-pointer" : ""} ${rowClassName ? rowClassName(row) : ""}`}
+              >
                 {columns.map((column) => (
                   <td
                     key={column.key}
