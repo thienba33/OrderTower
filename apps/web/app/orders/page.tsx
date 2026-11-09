@@ -306,7 +306,7 @@ export default function OrdersPage() {
       key: "action",
       header: "Hành động",
       render: (row) => (
-        <Link href={`/don-hang/${row.id}`} className="text-xs font-medium text-red-700 underline">
+        <Link href={`/orders/${row.id}`} className="text-xs font-medium text-red-700 underline">
           Chi tiết
         </Link>
       ),

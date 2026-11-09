@@ -70,7 +70,7 @@ export default function OverviewPage() {
             <div key={item.label} className="flex items-center gap-2">
               <p className="min-w-0 flex-1 text-[13px] text-gray-700">{item.label}</p>
               <p className="text-sm font-semibold text-gray-900">{item.count}</p>
-              <Link href="/hang-doi-duyet" className="whitespace-nowrap text-xs font-medium text-red-700 underline">
+              <Link href="/approval-queue" className="whitespace-nowrap text-xs font-medium text-red-700 underline">
                 Xem hàng đợi
               </Link>
             </div>

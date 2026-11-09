@@ -76,9 +76,9 @@ export default function DriverDetailPage() {
 
   if (order === null) {
     return (
-      <DriverPhone activeTab="orders" onTab={() => router.push("/tai-xe")}>
+      <DriverPhone activeTab="orders" onTab={() => router.push("/driver")}>
         <div className="flex h-14 shrink-0 items-center gap-3 px-4">
-          <Link href="/tai-xe" aria-label="Quay lại danh sách đơn" className="shrink-0 text-lg font-medium text-gray-700">
+          <Link href="/driver" aria-label="Quay lại danh sách đơn" className="shrink-0 text-lg font-medium text-gray-700">
             {"<"}
           </Link>
           <p className="min-w-0 flex-1 text-base font-semibold text-gray-900">Chi tiết đơn</p>
@@ -87,7 +87,7 @@ export default function DriverDetailPage() {
         <div className="flex flex-1 flex-col gap-3 p-4">
           <h1 className="text-base font-semibold text-gray-900">Không tìm thấy đơn hàng</h1>
           <p className="text-sm text-gray-500">Không có đơn {id === "" ? "này" : id} trong danh sách của tài xế.</p>
-          <Link href="/tai-xe" className="flex h-9 items-center justify-center rounded-md bg-red-700 text-sm font-medium text-white hover:bg-red-800">
+          <Link href="/driver" className="flex h-9 items-center justify-center rounded-md bg-red-700 text-sm font-medium text-white hover:bg-red-800">
             Quay lại danh sách đơn
           </Link>
         </div>
@@ -126,9 +126,9 @@ export default function DriverDetailPage() {
   const finished = delivered || failed;
 
   return (
-    <DriverPhone activeTab="orders" onTab={() => router.push("/tai-xe")}>
+    <DriverPhone activeTab="orders" onTab={() => router.push("/driver")}>
       <div className="flex h-14 shrink-0 items-center gap-3 px-4">
-        <Link href="/tai-xe" aria-label="Quay lại danh sách đơn" className="shrink-0 text-lg font-medium text-gray-700">
+        <Link href="/driver" aria-label="Quay lại danh sách đơn" className="shrink-0 text-lg font-medium text-gray-700">
           {"<"}
         </Link>
         <p className="min-w-0 flex-1 text-base font-semibold text-gray-900">Chi tiết đơn {order.id}</p>

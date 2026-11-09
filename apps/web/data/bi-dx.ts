@@ -149,9 +149,9 @@ export type BiTodo = {
 };
 
 export const BI_TODOS: BiTodo[] = [
-  { rank: 1, text: "Chuẩn bị nhập lô L-118", button: "Xem tồn kho", href: "/kho" },
-  { rank: 2, text: "Xem đơn hoàn kênh Chat", button: "Xem đơn hoàn", href: "/cskh" },
-  { rank: 3, text: "Duyệt đề xuất đổi xe DH-1051", button: "Xem đề xuất", href: "/hang-doi-duyet" },
+  { rank: 1, text: "Chuẩn bị nhập lô L-118", button: "Xem tồn kho", href: "/warehouse" },
+  { rank: 2, text: "Xem đơn hoàn kênh Chat", button: "Xem đơn hoàn", href: "/customer-care" },
+  { rank: 3, text: "Duyệt đề xuất đổi xe DH-1051", button: "Xem đề xuất", href: "/approval-queue" },
 ];
 
 export type DxAxis = {

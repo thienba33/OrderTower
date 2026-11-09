@@ -63,7 +63,7 @@ export default function OrderDetailPage() {
       <div className="flex flex-col gap-4">
         <h1 className="text-xl font-semibold text-gray-900">Không tìm thấy đơn hàng</h1>
         <p className="text-sm text-gray-600">Mã đơn {id} không có trong dữ liệu mẫu.</p>
-        <Link href="/don-hang" className="text-sm font-medium text-red-700 underline">
+        <Link href="/orders" className="text-sm font-medium text-red-700 underline">
           Quay lại danh sách đơn hàng
         </Link>
       </div>
