@@ -33,7 +33,12 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?KEYCLOAK_ADMIN_USERNAME is required}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
       ORDERTOWER_DEMO_PASSWORD: ${ORDERTOWER_DEMO_PASSWORD:?ORDERTOWER_DEMO_PASSWORD is required for local demo users}
+      KC_HOSTNAME: http://localhost:9080
+      KC_HOSTNAME_ADMIN: http://localhost:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_PROXY_HEADERS: xforwarded
     ports:
+      # Chỉ quản trị từ máy local; người dùng đăng nhập qua APISIX :9080.
       - "127.0.0.1:8081:8080"
     volumes:
       - ./infra/keycloak/realm:/opt/keycloak/data/import:ro
@@ -45,13 +50,10 @@ services:
     image: apache/apisix:3.19.0-debian
     ports:
       - "9080:9080"
-      - "9180:9180"
     # Chế độ standalone: cấu hình bằng tệp, không dùng etcd.
     volumes:
       - ./infra/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
       - ./infra/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
-    depends_on:
-      - postgres
 
   seaweedfs:
     # Chế độ mini: master, volume, filer và cổng S3 trong một tiến trình.

@@ -35,6 +35,18 @@
       "redirectUris": ["http://localhost:3000/auth/callback"],
       "webOrigins": ["http://localhost:3000"],
       "defaultClientScopes": ["profile", "email", "roles"],
+      "protocolMappers": [
+        {
+          "name": "ordertower-web-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "ordertower-web",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:3000/"
