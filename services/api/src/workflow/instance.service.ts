@@ -5,9 +5,11 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { computeNextNumber } from '../db/id-counter';
 import type {
   StartInstanceInput,
   TransitionInstanceInput,
@@ -27,7 +29,7 @@ function copyInstance(instance: WorkflowInstance): WorkflowInstance {
 // không ai được sửa trực tiếp currentState từ bên ngoài. Người gọi (caller)
 // lấy từ token Keycloak, không nhận actor/role từ body.
 @Injectable()
-export class WorkflowInstanceService {
+export class WorkflowInstanceService implements OnModuleInit {
   private nextNumber = 1001;
 
   constructor(
@@ -37,7 +39,20 @@ export class WorkflowInstanceService {
     private readonly store: WorkflowInstanceStore,
   ) {}
 
-  start(input: StartInstanceInput, caller: Caller): WorkflowInstance {
+  // Tiếp tục số thứ tự từ kho: instance đã có WF-1001 thì instance mới là
+  // WF-1002, không quay về WF-1001 sau khi khởi động lại.
+  async onModuleInit(): Promise<void> {
+    const instances = await this.store.list();
+    this.nextNumber = computeNextNumber(
+      instances.map((instance) => instance.id),
+      'WF',
+    );
+  }
+
+  async start(
+    input: StartInstanceInput,
+    caller: Caller,
+  ): Promise<WorkflowInstance> {
     if (typeof input.definitionId !== 'string' || input.definitionId.trim() === '') {
       throw new BadRequestException('definitionId là bắt buộc, dạng chuỗi.');
     }
@@ -54,7 +69,7 @@ export class WorkflowInstanceService {
     }
     const definition = this.workflow.getDefinition(input.definitionId);
     if (
-      this.store.findByBusinessKey(input.definitionId, input.businessKey)
+      await this.store.findByBusinessKey(input.definitionId, input.businessKey)
     ) {
       throw new ConflictException(
         `Đã có instance của luồng "${input.definitionId}" cho businessKey "${input.businessKey}".`,
@@ -82,8 +97,8 @@ export class WorkflowInstanceService {
       createdAt: now,
       updatedAt: now,
     };
-    this.store.save(instance);
-    this.audit.append({
+    await this.store.save(instance);
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'workflow.instance.started',
@@ -96,27 +111,28 @@ export class WorkflowInstanceService {
     return copyInstance(instance);
   }
 
-  get(id: string): WorkflowInstance {
-    const instance = this.store.findById(id);
+  async get(id: string): Promise<WorkflowInstance> {
+    const instance = await this.store.findById(id);
     if (!instance) {
       throw new NotFoundException(`Không tìm thấy workflow instance ${id}.`);
     }
     return instance;
   }
 
-  findByBusinessKey(
+  async findByBusinessKey(
     definitionId: string,
     businessKey: string,
-  ): WorkflowInstance | null {
+  ): Promise<WorkflowInstance | null> {
     return this.store.findByBusinessKey(definitionId, businessKey);
   }
 
-  list(filters: {
+  async list(filters: {
     definitionId?: string;
     businessKey?: string;
     status?: WorkflowInstanceStatus;
-  }): WorkflowInstance[] {
-    return this.store.list().filter(
+  }): Promise<WorkflowInstance[]> {
+    const instances = await this.store.list();
+    return instances.filter(
       (instance) =>
         (filters.definitionId === undefined ||
           instance.definitionId === filters.definitionId) &&
@@ -126,17 +142,17 @@ export class WorkflowInstanceService {
     );
   }
 
-  transition(
+  async transition(
     id: string,
     input: TransitionInstanceInput,
     caller: Caller,
-  ): WorkflowInstance {
+  ): Promise<WorkflowInstance> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
     }
-    const instance = this.get(id);
-    const deny = (reason: string): never => {
-      this.audit.append({
+    const instance = await this.get(id);
+    const deny = async (reason: string): Promise<never> => {
+      await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'workflow.instance.transition.denied',
@@ -148,7 +164,7 @@ export class WorkflowInstanceService {
       throw new ConflictException(reason);
     };
     if (instance.status !== 'active') {
-      deny(
+      await deny(
         `Instance ${id} đang ở trạng thái "${instance.status}", không chuyển được.`,
       );
     }
@@ -159,7 +175,7 @@ export class WorkflowInstanceService {
       caller.roles,
     );
     if (!check.allowed) {
-      deny(check.reason ?? 'Chuyển trạng thái không được phép.');
+      await deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
     const now = new Date().toISOString();
     const from = instance.currentState;
@@ -186,7 +202,7 @@ export class WorkflowInstanceService {
     if (input.reason) {
       detailParts.push(`Lý do: ${input.reason}`);
     }
-    this.audit.append({
+    await this.audit.append({
       actor: caller.username,
       role,
       action: 'workflow.instance.transition',
@@ -195,15 +211,19 @@ export class WorkflowInstanceService {
       to: input.to,
       detail: detailParts.join('; '),
     });
-    this.store.save(instance);
+    await this.store.save(instance);
     return copyInstance(instance);
   }
 
-  suspend(id: string, caller: Caller, reason?: string): WorkflowInstance {
+  async suspend(
+    id: string,
+    caller: Caller,
+    reason?: string,
+  ): Promise<WorkflowInstance> {
     if (reason !== undefined && typeof reason !== 'string') {
       throw new BadRequestException('reason phải là dạng chuỗi khi có.');
     }
-    const instance = this.get(id);
+    const instance = await this.get(id);
     if (instance.status !== 'active') {
       throw new ConflictException(
         `Instance ${id} đang ở trạng thái "${instance.status}", không tạm dừng được.`,
@@ -220,7 +240,7 @@ export class WorkflowInstanceService {
       at: now,
       ...(reason ? { reason } : {}),
     });
-    this.audit.append({
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'workflow.instance.suspended',
@@ -229,12 +249,12 @@ export class WorkflowInstanceService {
       to: instance.currentState,
       detail: reason ?? '',
     });
-    this.store.save(instance);
+    await this.store.save(instance);
     return copyInstance(instance);
   }
 
-  resume(id: string, caller: Caller): WorkflowInstance {
-    const instance = this.get(id);
+  async resume(id: string, caller: Caller): Promise<WorkflowInstance> {
+    const instance = await this.get(id);
     if (instance.status !== 'suspended') {
       throw new ConflictException(
         `Instance ${id} đang ở trạng thái "${instance.status}", không tiếp tục được.`,
@@ -250,7 +270,7 @@ export class WorkflowInstanceService {
       role: caller.roles[0] ?? '',
       at: now,
     });
-    this.audit.append({
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'workflow.instance.resumed',
@@ -259,15 +279,19 @@ export class WorkflowInstanceService {
       to: instance.currentState,
       detail: '',
     });
-    this.store.save(instance);
+    await this.store.save(instance);
     return copyInstance(instance);
   }
 
-  terminate(id: string, caller: Caller, reason: string): WorkflowInstance {
+  async terminate(
+    id: string,
+    caller: Caller,
+    reason: string,
+  ): Promise<WorkflowInstance> {
     if (typeof reason !== 'string' || reason.trim() === '') {
       throw new BadRequestException('Kết thúc instance cần có lý do.');
     }
-    const instance = this.get(id);
+    const instance = await this.get(id);
     if (instance.status !== 'active' && instance.status !== 'suspended') {
       throw new ConflictException(
         `Instance ${id} đang ở trạng thái "${instance.status}", không kết thúc được.`,
@@ -284,7 +308,7 @@ export class WorkflowInstanceService {
       at: now,
       reason,
     });
-    this.audit.append({
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'workflow.instance.terminated',
@@ -293,7 +317,7 @@ export class WorkflowInstanceService {
       to: instance.currentState,
       detail: `Lý do: ${reason}`,
     });
-    this.store.save(instance);
+    await this.store.save(instance);
     return copyInstance(instance);
   }
 }

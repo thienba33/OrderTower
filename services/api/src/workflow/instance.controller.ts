@@ -17,7 +17,7 @@ export class WorkflowInstanceController {
   start(
     @Body() body: StartInstanceInput,
     @Req() req: AuthenticatedRequest,
-  ): WorkflowInstance {
+  ): Promise<WorkflowInstance> {
     return this.instances.start(body, req.user);
   }
 
@@ -26,7 +26,7 @@ export class WorkflowInstanceController {
     @Query('definitionId') definitionId?: string,
     @Query('businessKey') businessKey?: string,
     @Query('status') status?: WorkflowInstanceStatus,
-  ): WorkflowInstance[] {
+  ): Promise<WorkflowInstance[]> {
     return this.instances.list({
       ...(definitionId ? { definitionId } : {}),
       ...(businessKey ? { businessKey } : {}),
@@ -35,7 +35,7 @@ export class WorkflowInstanceController {
   }
 
   @Get(':id')
-  getOne(@Param('id') id: string): WorkflowInstance {
+  getOne(@Param('id') id: string): Promise<WorkflowInstance> {
     return this.instances.get(id);
   }
 
@@ -44,7 +44,7 @@ export class WorkflowInstanceController {
     @Param('id') id: string,
     @Body() body: TransitionInstanceInput,
     @Req() req: AuthenticatedRequest,
-  ): WorkflowInstance {
+  ): Promise<WorkflowInstance> {
     return this.instances.transition(id, body, req.user);
   }
 
@@ -53,7 +53,7 @@ export class WorkflowInstanceController {
     @Param('id') id: string,
     @Body() body: { reason?: string },
     @Req() req: AuthenticatedRequest,
-  ): WorkflowInstance {
+  ): Promise<WorkflowInstance> {
     return this.instances.suspend(id, req.user, body.reason);
   }
 
@@ -61,7 +61,7 @@ export class WorkflowInstanceController {
   resume(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
-  ): WorkflowInstance {
+  ): Promise<WorkflowInstance> {
     return this.instances.resume(id, req.user);
   }
 
@@ -70,7 +70,7 @@ export class WorkflowInstanceController {
     @Param('id') id: string,
     @Body() body: { reason: string },
     @Req() req: AuthenticatedRequest,
-  ): WorkflowInstance {
+  ): Promise<WorkflowInstance> {
     return this.instances.terminate(id, req.user, body.reason);
   }
 }

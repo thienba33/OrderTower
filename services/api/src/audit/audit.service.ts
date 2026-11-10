@@ -1,76 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
-import { createHash } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { GENESIS_PREV_HASH, computeAuditHash } from './audit.hash';
+import { AUDIT_STORE, InMemoryAuditStore } from './audit.store';
+import type { AuditStore } from './audit.store';
 import type {
   AuditRecord,
   AuditVerifyResult,
   NewAuditRecord,
 } from './audit.types';
 
-// Hash khởi đầu của chuỗi, dùng khi log còn rỗng.
-export const GENESIS_PREV_HASH = '0'.repeat(64);
-
-function computeHash(record: Omit<AuditRecord, 'hash'>): string {
-  const payload = JSON.stringify({
-    seq: record.seq,
-    at: record.at,
-    actor: record.actor,
-    role: record.role,
-    action: record.action,
-    orderId: record.orderId,
-    from: record.from,
-    to: record.to,
-    detail: record.detail,
-    prevHash: record.prevHash,
-  });
-  return createHash('sha256').update(payload).digest('hex');
-}
-
 // Nhật ký chỉ ghi thêm: không sửa, không xóa. Sửa bản ghi sẽ làm lệch hash
-// và bị phát hiện khi kiểm tra chuỗi. Hiện lưu trong bộ nhớ, sẽ chuyển sang
-// Postgres khi nhánh platform-database vào dev.
+// và bị phát hiện khi kiểm tra chuỗi. Kho mặc định là Postgres (xem
+// audit.module.ts); bộ nhớ chỉ dùng khi khởi tạo thủ công trong kiểm thử.
 @Injectable()
 export class AuditService {
-  private readonly records: AuditRecord[] = [];
+  // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị cũ không cần
+  // truyền gì thêm. Khi chạy trong NestJS, mô-đun tiêm kho Postgres.
+  constructor(
+    @Optional()
+    @Inject(AUDIT_STORE)
+    private readonly store: AuditStore = new InMemoryAuditStore(),
+  ) {}
 
-  append(input: NewAuditRecord): AuditRecord {
-    const prevHash =
-      this.records.length === 0
-        ? GENESIS_PREV_HASH
-        : this.records[this.records.length - 1].hash;
-    const base: Omit<AuditRecord, 'hash'> = {
-      seq: this.records.length + 1,
-      at: input.at ?? new Date().toISOString(),
-      actor: input.actor,
-      role: input.role,
-      action: input.action,
-      orderId: input.orderId,
-      from: input.from ?? null,
-      to: input.to ?? null,
-      detail: input.detail ?? '',
-      prevHash,
-    };
-    const record: AuditRecord = { ...base, hash: computeHash(base) };
-    this.records.push(record);
-    return { ...record };
+  async append(input: NewAuditRecord): Promise<AuditRecord> {
+    return this.store.append(input);
   }
 
-  getAll(): AuditRecord[] {
-    return this.records.map((record) => ({ ...record }));
+  async getAll(): Promise<AuditRecord[]> {
+    return this.store.getAll();
   }
 
-  verify(): AuditVerifyResult {
+  async verify(): Promise<AuditVerifyResult> {
+    const records = await this.store.getAll();
     let prevHash = GENESIS_PREV_HASH;
-    for (const record of this.records) {
+    for (const record of records) {
       if (record.prevHash !== prevHash) {
-        return { valid: false, checked: this.records.length, brokenAt: record.seq };
+        return { valid: false, checked: records.length, brokenAt: record.seq };
       }
       const { hash, ...rest } = record;
-      if (computeHash(rest) !== hash) {
-        return { valid: false, checked: this.records.length, brokenAt: record.seq };
+      if (computeAuditHash(rest) !== hash) {
+        return { valid: false, checked: records.length, brokenAt: record.seq };
       }
       prevHash = record.hash;
     }
-    return { valid: true, checked: this.records.length, brokenAt: null };
+    return { valid: true, checked: records.length, brokenAt: null };
   }
 }

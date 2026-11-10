@@ -16,5 +16,8 @@ chứng được: ai xin, ai duyệt, khi nào, lý do gì, đã dùng chưa.
   dùng 1 lần. Đơn nghiệp vụ gọi bước này sau khi kiểm tra `type` và
   `subjectId` khớp với việc của mình.
 - Mọi sự kiện đều ghi audit với người thật lấy từ token Keycloak.
-- Kho phê duyệt nằm sau interface `ApprovalStore`, hiện là bản bộ nhớ,
-  commit lưu bền sẽ thay bằng Postgres mà service phía trên không đổi.
+- Kho phê duyệt nằm sau interface `ApprovalStore`. Khi chạy thật, kho là
+  Postgres (`PostgresApprovalStore`, bảng `approvals`, lưu bền qua
+  `src/db/`); bản bộ nhớ (`InMemoryApprovalStore`) chỉ dùng trong kiểm thử
+  đơn vị. Số thứ tự phê duyệt (AP-1001...) tiếp tục từ số lớn nhất đã có
+  trong kho, khởi động lại API không quay về AP-1001.

@@ -29,10 +29,11 @@ export interface RequestApprovalInput {
   reason: string;
 }
 
-// Lối ra vào kho phê duyệt. Hiện có bản bộ nhớ; commit lưu bền Postgres sẽ
-// thêm bản Postgres qua cùng interface này, service phía trên không đổi.
+// Lối ra vào kho phê duyệt. Hiện có bản bộ nhớ; bản Postgres lưu bền qua
+// cùng interface này, service phía trên không đổi. Mọi phương thức đều bất
+// đồng bộ vì kho Postgres cần chờ truy vấn.
 export interface ApprovalStore {
-  save(approval: Approval): void;
-  findById(id: string): Approval | null;
-  list(): Approval[];
+  save(approval: Approval): Promise<void>;
+  findById(id: string): Promise<Approval | null>;
+  list(): Promise<Approval[]>;
 }

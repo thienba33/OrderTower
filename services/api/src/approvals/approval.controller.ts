@@ -16,7 +16,7 @@ export class ApprovalController {
   request(
     @Body() body: RequestApprovalInput,
     @Req() req: AuthenticatedRequest,
-  ): Approval {
+  ): Promise<Approval> {
     return this.approvals.request(body, req.user);
   }
 
@@ -26,7 +26,7 @@ export class ApprovalController {
     @Query('subjectId') subjectId?: string,
     @Query('status') status?: ApprovalStatus,
     @Query('requestedBy') requestedBy?: string,
-  ): Approval[] {
+  ): Promise<Approval[]> {
     return this.approvals.list({
       ...(type ? { type } : {}),
       ...(subjectId ? { subjectId } : {}),
@@ -36,7 +36,7 @@ export class ApprovalController {
   }
 
   @Get(':id')
-  getOne(@Param('id') id: string): Approval {
+  getOne(@Param('id') id: string): Promise<Approval> {
     return this.approvals.get(id);
   }
 
@@ -45,7 +45,7 @@ export class ApprovalController {
     @Param('id') id: string,
     @Body() body: { reason?: string },
     @Req() req: AuthenticatedRequest,
-  ): Approval {
+  ): Promise<Approval> {
     return this.approvals.approve(id, req.user, body.reason);
   }
 
@@ -54,7 +54,7 @@ export class ApprovalController {
     @Param('id') id: string,
     @Body() body: { reason: string },
     @Req() req: AuthenticatedRequest,
-  ): Approval {
+  ): Promise<Approval> {
     return this.approvals.reject(id, req.user, body.reason);
   }
 }
