@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AddressService } from '../address/address.service';
+import { ApprovalService } from '../approvals/approval.service';
+import { InMemoryApprovalStore } from '../approvals/approval.store';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
@@ -13,6 +15,7 @@ function buildServices(): {
   audit: AuditService;
   inventory: InventoryService;
   instances: WorkflowInstanceService;
+  approvals: ApprovalService;
 } {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
@@ -26,14 +29,16 @@ function buildServices(): {
     audit,
     new InMemoryWorkflowInstanceStore(),
   );
+  const approvals = new ApprovalService(audit, new InMemoryApprovalStore());
   const orders = new OrdersService(
     workflow,
     audit,
     inventory,
     address,
     instances,
+    approvals,
   );
-  return { orders, audit, inventory, instances };
+  return { orders, audit, inventory, instances, approvals };
 }
 
 function createInput(key: string) {
@@ -66,6 +71,11 @@ const DRIVER: Caller = {
   userId: 'user-nam',
   username: 'nam',
   roles: ['Tài xế'],
+};
+const MANAGER: Caller = {
+  userId: 'user-quanly',
+  username: 'quan-ly',
+  roles: ['Quản lý'],
 };
 
 describe('OrdersService', () => {
@@ -353,8 +363,8 @@ describe('OrdersService', () => {
     expect(updated.addressLevel).toBe('Rủi ro cao');
   });
 
-  it('sửa đơn đã đóng thiếu lý do hoặc người duyệt thì báo 400', () => {
-    const { orders } = buildServices();
+  it('sửa đơn đã đóng thiếu lý do hoặc phê duyệt thì báo 400', () => {
+    const { orders, approvals } = buildServices();
     const order = orders.create(createInput('key-1'), COORDINATOR);
     orders.transition(order.id, { to: 'Hủy', reason: 'Khách đổi ý' }, COORDINATOR);
     expect(() =>
@@ -365,17 +375,41 @@ describe('OrdersService', () => {
         customer: 'Hộ khác',
         reason: 'Sửa tên khách cho đúng sổ',
       }, COORDINATOR),
-    ).toThrow('người phê duyệt');
+    ).toThrow('cần có phê duyệt');
+    const approval = approvals.request(
+      {
+        type: 'order.edit.closed',
+        subjectId: order.id,
+        reason: 'Sửa tên khách cho đúng sổ',
+      },
+      COORDINATOR,
+    );
+    expect(() =>
+      orders.update(order.id, {
+        customer: 'Hộ khác',
+        reason: 'Sửa tên khách cho đúng sổ',
+        approvalId: approval.id,
+      }, COORDINATOR),
+    ).toThrow('chưa được duyệt');
   });
 
-  it('sửa đơn đã đóng có lý do và người duyệt thì được, ghi audit riêng', () => {
-    const { orders, audit } = buildServices();
+  it('sửa đơn đã đóng có lý do và phê duyệt đã duyệt thì được, ghi audit riêng', () => {
+    const { orders, audit, approvals } = buildServices();
     const order = orders.create(createInput('key-1'), COORDINATOR);
     orders.transition(order.id, { to: 'Hủy', reason: 'Khách đổi ý' }, COORDINATOR);
+    const approval = approvals.request(
+      {
+        type: 'order.edit.closed',
+        subjectId: order.id,
+        reason: 'Sửa tên khách cho đúng sổ',
+      },
+      COORDINATOR,
+    );
+    approvals.approve(approval.id, MANAGER, 'Đồng ý sửa');
     const updated = orders.update(order.id, {
       customer: 'Hộ nước mắm B',
       reason: 'Sửa tên khách cho đúng sổ',
-      approvedBy: 'quan-ly',
+      approvalId: approval.id,
     }, COORDINATOR);
     expect(updated.customer).toBe('Hộ nước mắm B');
     expect(updated.history.at(-1)).toMatchObject({
@@ -387,13 +421,21 @@ describe('OrdersService', () => {
       .getAll()
       .filter((record) => record.action === 'order.edit.approved');
     expect(approved).toHaveLength(1);
-    expect(approved[0].detail).toContain('Người duyệt: quan-ly');
+    expect(approved[0].detail).toContain('Phê duyệt: AP-1001 bởi quan-ly');
+    expect(approvals.get(approval.id).appliedAt).not.toBeNull();
+    expect(() =>
+      orders.update(order.id, {
+        customer: 'Hộ nước mắm C',
+        reason: 'Sửa tiếp',
+        approvalId: approval.id,
+      }, COORDINATOR),
+    ).toThrow('đã được dùng');
   });
 
   it('sửa đơn không có trường nào hoặc không tồn tại thì báo lỗi', () => {
     const { orders } = buildServices();
     const order = orders.create(createInput('key-1'), COORDINATOR);
-    expect(() => orders.update(order.id, {  }, COORDINATOR)).toThrow(
+    expect(() => orders.update(order.id, {}, COORDINATOR)).toThrow(
       'ít nhất 1 trường',
     );
     expect(() => orders.update('DH-9999', { customer: 'X' }, COORDINATOR)).toThrow(

@@ -57,6 +57,7 @@ export interface UpdateOrderInput {
   items?: OrderItem[];
   address?: AddressInput;
   reason?: string;
-  // Người phê duyệt, bắt buộc cùng lý do khi sửa đơn đã đóng.
-  approvedBy?: string;
+  // Id phê duyệt đã duyệt, bắt buộc khi sửa đơn đã đóng (thay chuỗi
+  // approvedBy tự gõ trước đây).
+  approvalId?: string;
 }

@@ -12,6 +12,8 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
+import { ApprovalService } from '../approvals/approval.service';
+import type { Approval } from '../approvals/approval.types';
 import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import type {
@@ -40,6 +42,7 @@ export class OrdersService {
     private readonly inventory: InventoryService,
     private readonly address: AddressService,
     private readonly instances: WorkflowInstanceService,
+    private readonly approvals: ApprovalService,
   ) {}
 
   create(input: CreateOrderInput, caller: Caller): Order {
@@ -275,9 +278,9 @@ export class OrdersService {
           `Sửa đơn đã đóng ${id} cần có lý do.`,
         );
       }
-      if (input.approvedBy === undefined || input.approvedBy.trim() === '') {
+      if (input.approvalId === undefined || input.approvalId.trim() === '') {
         throw new BadRequestException(
-          `Sửa đơn đã đóng ${id} cần có người phê duyệt (approvedBy).`,
+          `Sửa đơn đã đóng ${id} cần có phê duyệt (approvalId).`,
         );
       }
     }
@@ -289,6 +292,29 @@ export class OrdersService {
       throw new ConflictException(
         `Đơn ${id} đã giữ hàng ở trạng thái "${order.state}", không sửa được mặt hàng.`,
       );
+    }
+    // Đơn đã đóng: kiểm tra phê duyệt khớp đơn, đã duyệt và chưa dùng, trước
+    // khi sửa; chỉ trừ phê duyệt sau khi sửa xong.
+    let approval: Approval | null = null;
+    if (closed) {
+      approval = this.approvals.get(input.approvalId as string);
+      if (
+        approval.type !== 'order.edit.closed' ||
+        approval.subjectId !== id
+      ) {
+        throw new BadRequestException(
+          `Phê duyệt ${approval.id} không khớp với việc sửa đơn ${id}.`,
+        );
+      }
+      if (approval.status === 'pending') {
+        throw new ConflictException(`Phê duyệt ${approval.id} chưa được duyệt.`);
+      }
+      if (approval.status === 'rejected') {
+        throw new ConflictException(`Phê duyệt ${approval.id} đã bị từ chối.`);
+      }
+      if (approval.appliedAt !== null) {
+        throw new ConflictException(`Phê duyệt ${approval.id} đã được dùng.`);
+      }
     }
     if (input.customer !== undefined) {
       order.customer = input.customer;
@@ -324,9 +350,12 @@ export class OrdersService {
       from: order.state,
       to: order.state,
       detail: closed
-        ? `Lý do: ${input.reason}; Người duyệt: ${input.approvedBy}`
+        ? `Lý do: ${input.reason}; Phê duyệt: ${approval?.id} bởi ${approval?.decidedBy}`
         : (input.reason ?? ''),
     });
+    if (closed && approval) {
+      this.approvals.markApplied(approval.id, caller);
+    }
     return copyOrder(order);
   }
 }
