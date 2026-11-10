@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import type {
   CreateOrderInput,
   Order,
   TransitionOrderInput,
+  UpdateOrderInput,
 } from './orders.types';
 
 // Actor và role hiện lấy từ body, sẽ thay bằng thông tin từ token Keycloak
@@ -34,5 +35,10 @@ export class OrdersController {
     @Body() body: TransitionOrderInput,
   ): Order {
     return this.orders.transition(id, body);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() body: UpdateOrderInput): Order {
+    return this.orders.update(id, body);
   }
 }

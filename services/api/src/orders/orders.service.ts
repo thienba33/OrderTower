@@ -16,10 +16,15 @@ import type {
   CreateOrderInput,
   Order,
   TransitionOrderInput,
+  UpdateOrderInput,
 } from './orders.types';
 
 // Trạng thái đóng: không còn chuyển nào đi ra, mọi thao tác đều bị chặn.
 const CLOSED_STATES = ['Hoàn', 'Hủy'];
+
+// Trạng thái chưa giữ hàng: còn sửa được mặt hàng. Từ "Đang đóng gói" trở đi
+// kho đã giữ hàng cho đơn nên mặt hàng bị khóa, chỉ sửa được khách và địa chỉ.
+const EDITABLE_ITEMS_STATES = ['Mới tạo', 'Đã kiểm tra', 'Chờ kho'];
 
 // Lưu trong bộ nhớ, sẽ chuyển sang Postgres khi nhánh platform-database vào dev.
 @Injectable()
@@ -44,22 +49,7 @@ export class OrdersService {
     if (typeof input.customer !== 'string' || input.customer.trim() === '') {
       throw new BadRequestException('customer là bắt buộc, dạng chuỗi.');
     }
-    if (!Array.isArray(input.items) || input.items.length === 0) {
-      throw new BadRequestException('items phải là mảng không rỗng.');
-    }
-    for (const item of input.items) {
-      if (typeof item !== 'object' || item === null) {
-        throw new BadRequestException('mỗi item phải là 1 object.');
-      }
-      if (typeof item.sku !== 'string' || item.sku.trim() === '') {
-        throw new BadRequestException('mỗi item cần sku dạng chuỗi.');
-      }
-      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
-        throw new BadRequestException(
-          'quantity của mỗi item phải là số nguyên dương.',
-        );
-      }
-    }
+    validateItems(input.items);
     if (typeof input.actor !== 'string' || input.actor.trim() === '') {
       throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
     }
@@ -67,17 +57,7 @@ export class OrdersService {
       throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
     }
     if (input.address !== undefined) {
-      if (typeof input.address !== 'object' || input.address === null) {
-        throw new BadRequestException('address phải là 1 object khi có.');
-      }
-      for (const field of ['province', 'district', 'ward', 'street'] as const) {
-        const value = input.address[field];
-        if (value !== undefined && typeof value !== 'string') {
-          throw new BadRequestException(
-            `address.${field} phải là dạng chuỗi khi có.`,
-          );
-        }
-      }
+      validateAddress(input.address);
     }
     const evaluation = input.address
       ? this.address.evaluate(input.address)
@@ -188,6 +168,13 @@ export class OrdersService {
           `Chuyển sang "${input.to}" cần có lý do (guard "${transition.guard}").`,
         );
       }
+      if (transition.guard.includes('hướng xử lý')) {
+        if (input.handling === undefined || input.handling.trim() === '') {
+          throw new BadRequestException(
+            `Chuyển sang "${input.to}" cần có hướng xử lý (guard "${transition.guard}").`,
+          );
+        }
+      }
       if (transition.guard.includes('địa chỉ')) {
         const addressTrust = order.addressTrust;
         let addressDenial: string | null = null;
@@ -221,7 +208,15 @@ export class OrdersService {
       role: input.role,
       at: now,
       ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.handling ? { handling: input.handling } : {}),
     });
+    const detailParts: string[] = [];
+    if (input.handling) {
+      detailParts.push(`Hướng xử lý: ${input.handling}`);
+    }
+    if (input.reason) {
+      detailParts.push(`Lý do: ${input.reason}`);
+    }
     this.audit.append({
       actor: input.actor,
       role: input.role,
@@ -229,12 +224,143 @@ export class OrdersService {
       orderId: id,
       from,
       to: input.to,
-      detail: input.reason ?? '',
+      detail: detailParts.join('; '),
     });
     if (consumeStock) {
       this.inventory.reserve(order.items);
     }
     return copyOrder(order);
+  }
+
+  // Sửa dữ liệu đơn. Đơn mở sửa trực tiếp; đơn đã đóng chỉ sửa khi có lý do
+  // và người phê duyệt, mọi lần sửa đều ghi audit. Sửa mặt hàng làm đổi
+  // lượng hàng đã giữ nên chỉ được khi đơn chưa giữ hàng, hoặc đơn đã đóng
+  // (sửa hồ sơ, không chạm kho thật).
+  update(id: string, input: UpdateOrderInput): Order {
+    if (typeof input.actor !== 'string' || input.actor.trim() === '') {
+      throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
+    }
+    if (typeof input.role !== 'string' || input.role.trim() === '') {
+      throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
+    }
+    const order = this.orders.get(id);
+    if (!order) {
+      throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
+    }
+    if (
+      input.customer === undefined &&
+      input.items === undefined &&
+      input.address === undefined
+    ) {
+      throw new BadRequestException(
+        'Cần ít nhất 1 trường để sửa: customer, items hoặc address.',
+      );
+    }
+    if (input.customer !== undefined) {
+      if (typeof input.customer !== 'string' || input.customer.trim() === '') {
+        throw new BadRequestException('customer phải là chuỗi không rỗng.');
+      }
+    }
+    if (input.items !== undefined) {
+      validateItems(input.items);
+    }
+    if (input.address !== undefined) {
+      validateAddress(input.address);
+    }
+    const closed = CLOSED_STATES.includes(order.state);
+    if (closed) {
+      if (input.reason === undefined || input.reason.trim() === '') {
+        throw new BadRequestException(
+          `Sửa đơn đã đóng ${id} cần có lý do.`,
+        );
+      }
+      if (input.approvedBy === undefined || input.approvedBy.trim() === '') {
+        throw new BadRequestException(
+          `Sửa đơn đã đóng ${id} cần có người phê duyệt (approvedBy).`,
+        );
+      }
+    }
+    if (
+      input.items !== undefined &&
+      !closed &&
+      !EDITABLE_ITEMS_STATES.includes(order.state)
+    ) {
+      throw new ConflictException(
+        `Đơn ${id} đã giữ hàng ở trạng thái "${order.state}", không sửa được mặt hàng.`,
+      );
+    }
+    if (input.customer !== undefined) {
+      order.customer = input.customer;
+    }
+    if (input.items !== undefined) {
+      order.items = input.items.map((item) => ({
+        sku: item.sku,
+        quantity: item.quantity,
+      }));
+    }
+    let evaluation = null;
+    if (input.address !== undefined) {
+      order.address = { ...input.address };
+      evaluation = this.address.evaluate(input.address);
+      order.addressTrust = evaluation.trust;
+      order.addressLevel = evaluation.level;
+    }
+    const now = new Date().toISOString();
+    order.updatedAt = now;
+    order.history.push({
+      from: order.state,
+      to: order.state,
+      by: input.actor,
+      role: input.role,
+      at: now,
+      ...(input.reason ? { reason: input.reason } : {}),
+    });
+    this.audit.append({
+      actor: input.actor,
+      role: input.role,
+      action: closed ? 'order.edit.approved' : 'order.edit',
+      orderId: id,
+      from: order.state,
+      to: order.state,
+      detail: closed
+        ? `Lý do: ${input.reason}; Người duyệt: ${input.approvedBy}`
+        : (input.reason ?? ''),
+    });
+    return copyOrder(order);
+  }
+}
+
+function validateItems(items: unknown): void {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new BadRequestException('items phải là mảng không rỗng.');
+  }
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null) {
+      throw new BadRequestException('mỗi item phải là 1 object.');
+    }
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.sku !== 'string' || entry.sku.trim() === '') {
+      throw new BadRequestException('mỗi item cần sku dạng chuỗi.');
+    }
+    if (!Number.isInteger(entry.quantity) || (entry.quantity as number) <= 0) {
+      throw new BadRequestException(
+        'quantity của mỗi item phải là số nguyên dương.',
+      );
+    }
+  }
+}
+
+function validateAddress(address: unknown): void {
+  if (typeof address !== 'object' || address === null) {
+    throw new BadRequestException('address phải là 1 object khi có.');
+  }
+  for (const field of ['province', 'district', 'ward', 'street'] as const) {
+    const value = (address as Record<string, unknown>)[field];
+    if (value !== undefined && typeof value !== 'string') {
+      throw new BadRequestException(
+        `address.${field} phải là dạng chuỗi khi có.`,
+      );
+    }
   }
 }
 

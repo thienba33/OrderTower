@@ -64,14 +64,19 @@ describe('OrdersService', () => {
   it('đơn đi tròn 9 trạng thái tới Hoàn', () => {
     const { orders, audit } = buildServices();
     const order = orders.create(createInput('key-1'));
-    const steps: Array<{ to: string; actor: string; role: string }> = [
+    const steps: Array<{
+      to: string;
+      actor: string;
+      role: string;
+      handling?: string;
+    }> = [
       { to: 'Đã kiểm tra', ...COORDINATOR },
       { to: 'Chờ kho', ...COORDINATOR },
       { to: 'Đang đóng gói', ...WAREHOUSE },
       { to: 'Chờ điều xe', ...WAREHOUSE },
       { to: 'Đang giao', ...COORDINATOR },
       { to: 'Đã giao', ...DRIVER },
-      { to: 'Hoàn', ...COORDINATOR },
+      { to: 'Hoàn', ...COORDINATOR, handling: 'Đối soát xong, khách giữ hàng' },
     ];
     let current = order;
     for (const step of steps) {
@@ -213,6 +218,146 @@ describe('OrdersService', () => {
     expect(() =>
       orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR }),
     ).toThrow('chưa có địa chỉ');
+  });
+
+  it('đóng đơn thiếu hướng xử lý thì báo 400, có thì ghi vào lịch sử', () => {
+    const { orders, audit } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    const steps: Array<{ to: string; actor: string; role: string }> = [
+      { to: 'Đã kiểm tra', ...COORDINATOR },
+      { to: 'Chờ kho', ...COORDINATOR },
+      { to: 'Đang đóng gói', ...WAREHOUSE },
+      { to: 'Chờ điều xe', ...WAREHOUSE },
+      { to: 'Đang giao', ...COORDINATOR },
+      { to: 'Đã giao', ...DRIVER },
+    ];
+    let current = order;
+    for (const step of steps) {
+      current = orders.transition(current.id, step);
+    }
+    expect(() =>
+      orders.transition(current.id, { to: 'Hoàn', ...COORDINATOR }),
+    ).toThrow('hướng xử lý');
+    const done = orders.transition(current.id, {
+      to: 'Hoàn',
+      ...COORDINATOR,
+      handling: 'Đối soát xong, khách giữ hàng',
+    });
+    expect(done.state).toBe('Hoàn');
+    expect(done.history.at(-1)).toMatchObject({
+      to: 'Hoàn',
+      handling: 'Đối soát xong, khách giữ hàng',
+    });
+    const lastAudit = audit.getAll().at(-1);
+    expect(lastAudit?.detail).toContain('Hướng xử lý: Đối soát xong');
+  });
+
+  it('sửa khách của đơn mở thì được, ghi audit order.edit', () => {
+    const { orders, audit } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    const updated = orders.update(order.id, {
+      customer: 'Hộ nước mắm B',
+      ...COORDINATOR,
+    });
+    expect(updated.customer).toBe('Hộ nước mắm B');
+    expect(updated.state).toBe('Mới tạo');
+    expect(updated.history).toHaveLength(2);
+    expect(
+      audit.getAll().filter((record) => record.action === 'order.edit'),
+    ).toHaveLength(1);
+  });
+
+  it('sửa mặt hàng trước khi đóng gói được, sau khi giữ hàng thì chặn', () => {
+    const { orders } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    const renamed = orders.update(order.id, {
+      items: [{ sku: 'NM-25', quantity: 1 }],
+      ...COORDINATOR,
+    });
+    expect(renamed.items).toEqual([{ sku: 'NM-25', quantity: 1 }]);
+    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
+    orders.transition(order.id, { to: 'Đang đóng gói', ...WAREHOUSE });
+    expect(() =>
+      orders.update(order.id, {
+        items: [{ sku: 'NM-40', quantity: 1 }],
+        ...COORDINATOR,
+      }),
+    ).toThrow('đã giữ hàng');
+    expect(orders.findOne(order.id).items).toEqual([
+      { sku: 'NM-25', quantity: 1 },
+    ]);
+    const addressChanged = orders.update(order.id, {
+      address: {
+        province: 'Hải Phòng',
+        district: 'Hồng Bàng',
+        ward: 'Phường Hoàng Văn Thụ',
+        street: 'Số 12 Lê Lợi',
+      },
+      ...COORDINATOR,
+    });
+    expect(addressChanged.addressTrust).toBe(100);
+  });
+
+  it('sửa địa chỉ tính lại mức tin cậy', () => {
+    const { orders } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    const updated = orders.update(order.id, {
+      address: { province: 'Hà Nội' },
+      ...COORDINATOR,
+    });
+    expect(updated.addressTrust).toBe(40);
+    expect(updated.addressLevel).toBe('Rủi ro cao');
+  });
+
+  it('sửa đơn đã đóng thiếu lý do hoặc người duyệt thì báo 400', () => {
+    const { orders } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    orders.transition(order.id, { to: 'Hủy', ...COORDINATOR, reason: 'Khách đổi ý' });
+    expect(() =>
+      orders.update(order.id, { customer: 'Hộ khác', ...COORDINATOR }),
+    ).toThrow('cần có lý do');
+    expect(() =>
+      orders.update(order.id, {
+        customer: 'Hộ khác',
+        reason: 'Sửa tên khách cho đúng sổ',
+        ...COORDINATOR,
+      }),
+    ).toThrow('người phê duyệt');
+  });
+
+  it('sửa đơn đã đóng có lý do và người duyệt thì được, ghi audit riêng', () => {
+    const { orders, audit } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    orders.transition(order.id, { to: 'Hủy', ...COORDINATOR, reason: 'Khách đổi ý' });
+    const updated = orders.update(order.id, {
+      customer: 'Hộ nước mắm B',
+      reason: 'Sửa tên khách cho đúng sổ',
+      approvedBy: 'quan-ly',
+      ...COORDINATOR,
+    });
+    expect(updated.customer).toBe('Hộ nước mắm B');
+    expect(updated.history.at(-1)).toMatchObject({
+      from: 'Hủy',
+      to: 'Hủy',
+      reason: 'Sửa tên khách cho đúng sổ',
+    });
+    const approved = audit
+      .getAll()
+      .filter((record) => record.action === 'order.edit.approved');
+    expect(approved).toHaveLength(1);
+    expect(approved[0].detail).toContain('Người duyệt: quan-ly');
+  });
+
+  it('sửa đơn không có trường nào hoặc không tồn tại thì báo lỗi', () => {
+    const { orders } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    expect(() => orders.update(order.id, { ...COORDINATOR })).toThrow(
+      'ít nhất 1 trường',
+    );
+    expect(() => orders.update('DH-9999', { customer: 'X', ...COORDINATOR })).toThrow(
+      'Không tìm thấy đơn',
+    );
   });
 
   it('không tìm thấy đơn thì báo 404', () => {

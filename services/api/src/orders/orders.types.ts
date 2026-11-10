@@ -16,6 +16,8 @@ export interface OrderHistoryEntry {
   role: string;
   at: string;
   reason?: string;
+  // Hướng xử lý ghi khi đóng đơn (chuyển sang Hoàn).
+  handling?: string;
 }
 
 export interface Order {
@@ -47,4 +49,17 @@ export interface TransitionOrderInput {
   actor: string;
   role: string;
   reason?: string;
+  // Hướng xử lý, bắt buộc khi guard của chuyển nhắc tới hướng xử lý.
+  handling?: string;
+}
+
+export interface UpdateOrderInput {
+  customer?: string;
+  items?: OrderItem[];
+  address?: AddressInput;
+  actor: string;
+  role: string;
+  reason?: string;
+  // Người phê duyệt, bắt buộc cùng lý do khi sửa đơn đã đóng.
+  approvedBy?: string;
 }
