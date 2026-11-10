@@ -8,7 +8,11 @@
   },
   "devDependencies": {
     "@nestjs/cli": "12.0.12",
+    "@nestjs/testing": "12.4.2",
+    "@types/jest": "30.0.0",
     "@types/node": "22.20.5",
+    "jest": "30.5.2",
+    "ts-jest": "29.4.15",
     "typescript": "5.9.3"
   },
   "engines": {
@@ -21,6 +25,8 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
+    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "version": "0.1.0"
