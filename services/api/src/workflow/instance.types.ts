@@ -37,15 +37,11 @@ export interface WorkflowInstance {
 export interface StartInstanceInput {
   definitionId: string;
   businessKey: string;
-  actor: string;
-  role: string;
   context?: Record<string, unknown>;
 }
 
 export interface TransitionInstanceInput {
   to: string;
-  actor: string;
-  role: string;
   reason?: string;
   handling?: string;
 }

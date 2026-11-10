@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
+import type { Caller } from '../auth/auth.types';
 import type {
   StartInstanceInput,
   TransitionInstanceInput,
@@ -21,18 +22,10 @@ function copyInstance(instance: WorkflowInstance): WorkflowInstance {
   return JSON.parse(JSON.stringify(instance)) as WorkflowInstance;
 }
 
-function requireActorRole(actor: unknown, role: unknown): void {
-  if (typeof actor !== 'string' || actor.trim() === '') {
-    throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
-  }
-  if (typeof role !== 'string' || role.trim() === '') {
-    throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
-  }
-}
-
 // Quản lý vòng đời instance: bắt đầu, chuyển trạng thái, tạm dừng, tiếp tục,
 // kết thúc. Mọi sự kiện đều ghi audit. Trạng thái luồng chỉ đổi qua đây,
-// không ai được sửa trực tiếp currentState từ bên ngoài.
+// không ai được sửa trực tiếp currentState từ bên ngoài. Người gọi (caller)
+// lấy từ token Keycloak, không nhận actor/role từ body.
 @Injectable()
 export class WorkflowInstanceService {
   private nextNumber = 1001;
@@ -44,14 +37,13 @@ export class WorkflowInstanceService {
     private readonly store: WorkflowInstanceStore,
   ) {}
 
-  start(input: StartInstanceInput): WorkflowInstance {
+  start(input: StartInstanceInput, caller: Caller): WorkflowInstance {
     if (typeof input.definitionId !== 'string' || input.definitionId.trim() === '') {
       throw new BadRequestException('definitionId là bắt buộc, dạng chuỗi.');
     }
     if (typeof input.businessKey !== 'string' || input.businessKey.trim() === '') {
       throw new BadRequestException('businessKey là bắt buộc, dạng chuỗi.');
     }
-    requireActorRole(input.actor, input.role);
     if (
       input.context !== undefined &&
       (typeof input.context !== 'object' ||
@@ -82,8 +74,8 @@ export class WorkflowInstanceService {
         {
           from: null,
           to: initialState,
-          by: input.actor,
-          role: input.role,
+          by: caller.username,
+          role: caller.roles[0] ?? '',
           at: now,
         },
       ],
@@ -92,8 +84,8 @@ export class WorkflowInstanceService {
     };
     this.store.save(instance);
     this.audit.append({
-      actor: input.actor,
-      role: input.role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: 'workflow.instance.started',
       // Audit log dùng chung trường orderId cho mã thực thể nghiệp vụ.
       orderId: input.businessKey,
@@ -134,16 +126,19 @@ export class WorkflowInstanceService {
     );
   }
 
-  transition(id: string, input: TransitionInstanceInput): WorkflowInstance {
+  transition(
+    id: string,
+    input: TransitionInstanceInput,
+    caller: Caller,
+  ): WorkflowInstance {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
     }
-    requireActorRole(input.actor, input.role);
     const instance = this.get(id);
     const deny = (reason: string): never => {
       this.audit.append({
-        actor: input.actor,
-        role: input.role,
+        actor: caller.username,
+        role: caller.roles[0] ?? '',
         action: 'workflow.instance.transition.denied',
         orderId: instance.businessKey,
         from: instance.currentState,
@@ -161,13 +156,15 @@ export class WorkflowInstanceService {
       instance.definitionId,
       instance.currentState,
       input.to,
-      input.role,
+      caller.roles,
     );
     if (!check.allowed) {
       deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
     const now = new Date().toISOString();
     const from = instance.currentState;
+    // Vai ghi vào lịch sử là vai được phép chuyển theo định nghĩa.
+    const role = check.requiredRole ?? caller.roles[0] ?? '';
     instance.currentState = input.to;
     instance.updatedAt = now;
     if (this.workflow.isTerminalState(instance.definitionId, input.to)) {
@@ -176,8 +173,8 @@ export class WorkflowInstanceService {
     instance.history.push({
       from,
       to: input.to,
-      by: input.actor,
-      role: input.role,
+      by: caller.username,
+      role,
       at: now,
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.handling ? { handling: input.handling } : {}),
@@ -190,8 +187,8 @@ export class WorkflowInstanceService {
       detailParts.push(`Lý do: ${input.reason}`);
     }
     this.audit.append({
-      actor: input.actor,
-      role: input.role,
+      actor: caller.username,
+      role,
       action: 'workflow.instance.transition',
       orderId: instance.businessKey,
       from,
@@ -202,13 +199,7 @@ export class WorkflowInstanceService {
     return copyInstance(instance);
   }
 
-  suspend(
-    id: string,
-    actor: string,
-    role: string,
-    reason?: string,
-  ): WorkflowInstance {
-    requireActorRole(actor, role);
+  suspend(id: string, caller: Caller, reason?: string): WorkflowInstance {
     if (reason !== undefined && typeof reason !== 'string') {
       throw new BadRequestException('reason phải là dạng chuỗi khi có.');
     }
@@ -224,14 +215,14 @@ export class WorkflowInstanceService {
     instance.history.push({
       from: instance.currentState,
       to: instance.currentState,
-      by: actor,
-      role,
+      by: caller.username,
+      role: caller.roles[0] ?? '',
       at: now,
       ...(reason ? { reason } : {}),
     });
     this.audit.append({
-      actor,
-      role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: 'workflow.instance.suspended',
       orderId: instance.businessKey,
       from: instance.currentState,
@@ -242,8 +233,7 @@ export class WorkflowInstanceService {
     return copyInstance(instance);
   }
 
-  resume(id: string, actor: string, role: string): WorkflowInstance {
-    requireActorRole(actor, role);
+  resume(id: string, caller: Caller): WorkflowInstance {
     const instance = this.get(id);
     if (instance.status !== 'suspended') {
       throw new ConflictException(
@@ -256,13 +246,13 @@ export class WorkflowInstanceService {
     instance.history.push({
       from: instance.currentState,
       to: instance.currentState,
-      by: actor,
-      role,
+      by: caller.username,
+      role: caller.roles[0] ?? '',
       at: now,
     });
     this.audit.append({
-      actor,
-      role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: 'workflow.instance.resumed',
       orderId: instance.businessKey,
       from: instance.currentState,
@@ -273,13 +263,7 @@ export class WorkflowInstanceService {
     return copyInstance(instance);
   }
 
-  terminate(
-    id: string,
-    actor: string,
-    role: string,
-    reason: string,
-  ): WorkflowInstance {
-    requireActorRole(actor, role);
+  terminate(id: string, caller: Caller, reason: string): WorkflowInstance {
     if (typeof reason !== 'string' || reason.trim() === '') {
       throw new BadRequestException('Kết thúc instance cần có lý do.');
     }
@@ -295,14 +279,14 @@ export class WorkflowInstanceService {
     instance.history.push({
       from: instance.currentState,
       to: instance.currentState,
-      by: actor,
-      role,
+      by: caller.username,
+      role: caller.roles[0] ?? '',
       at: now,
       reason,
     });
     this.audit.append({
-      actor,
-      role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: 'workflow.instance.terminated',
       orderId: instance.businessKey,
       from: instance.currentState,

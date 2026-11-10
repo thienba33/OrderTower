@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { Caller } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { WorkflowInstanceService } from './instance.service';
 import { InMemoryWorkflowInstanceStore } from './instance.store';
 import { WorkflowService } from './workflow.service';
 
-const COORDINATOR = { actor: 'son', role: 'Điều phối viên' };
+const COORDINATOR: Caller = {
+  userId: 'user-son',
+  username: 'son',
+  roles: ['Điều phối viên'],
+};
 
 function buildServices(): {
   instances: WorkflowInstanceService;
@@ -25,21 +30,25 @@ function startOrderFlow(
   instances: WorkflowInstanceService,
   businessKey: string,
 ): string {
-  return instances.start({
-    definitionId: 'order-flow',
-    businessKey,
-    ...COORDINATOR,
-  }).id;
+  return instances.start(
+    {
+      definitionId: 'order-flow',
+      businessKey,
+    },
+    COORDINATOR,
+  ).id;
 }
 
 describe('WorkflowInstanceService', () => {
   it('bắt đầu instance ở trạng thái đầu, ghi lịch sử và audit', () => {
     const { instances, audit } = buildServices();
-    const instance = instances.start({
-      definitionId: 'order-flow',
-      businessKey: 'DH-1001',
-      ...COORDINATOR,
-    });
+    const instance = instances.start(
+      {
+        definitionId: 'order-flow',
+        businessKey: 'DH-1001',
+      },
+      COORDINATOR,
+    );
     expect(instance.id).toBe('WF-1001');
     expect(instance.definitionVersion).toBe('1');
     expect(instance.currentState).toBe('Mới tạo');
@@ -54,45 +63,57 @@ describe('WorkflowInstanceService', () => {
   it('không có định nghĩa thì báo 404', () => {
     const { instances } = buildServices();
     expect(() =>
-      instances.start({
-        definitionId: 'khong-co',
-        businessKey: 'DH-1001',
-        ...COORDINATOR,
-      }),
+      instances.start(
+        {
+          definitionId: 'khong-co',
+          businessKey: 'DH-1001',
+        },
+        COORDINATOR,
+      ),
     ).toThrow('Không tìm thấy định nghĩa');
   });
 
   it('1 businessKey chỉ có 1 instance cho mỗi luồng', () => {
     const { instances } = buildServices();
-    instances.start({
-      definitionId: 'order-flow',
-      businessKey: 'DH-1001',
-      ...COORDINATOR,
-    });
-    expect(() =>
-      instances.start({
+    instances.start(
+      {
         definitionId: 'order-flow',
         businessKey: 'DH-1001',
-        ...COORDINATOR,
-      }),
+      },
+      COORDINATOR,
+    );
+    expect(() =>
+      instances.start(
+        {
+          definitionId: 'order-flow',
+          businessKey: 'DH-1001',
+        },
+        COORDINATOR,
+      ),
     ).toThrow('Đã có instance');
   });
 
   it('chuyển hợp lệ đổi trạng thái, tới trạng thái cuối thì hoàn thành', () => {
     const { instances } = buildServices();
     const id = startOrderFlow(instances, 'DH-1001');
-    let current = instances.transition(id, {
-      to: 'Đã kiểm tra',
-      ...COORDINATOR,
-    });
+    let current = instances.transition(
+      id,
+      {
+        to: 'Đã kiểm tra',
+      },
+      COORDINATOR,
+    );
     expect(current.currentState).toBe('Đã kiểm tra');
     expect(current.status).toBe('active');
     expect(current.history).toHaveLength(2);
-    current = instances.transition(id, {
-      to: 'Hủy',
-      ...COORDINATOR,
-      reason: 'Khách đổi ý',
-    });
+    current = instances.transition(
+      id,
+      {
+        to: 'Hủy',
+        reason: 'Khách đổi ý',
+      },
+      COORDINATOR,
+    );
     expect(current.currentState).toBe('Hủy');
     expect(current.status).toBe('completed');
     expect(current.history.at(-1)).toMatchObject({
@@ -105,14 +126,20 @@ describe('WorkflowInstanceService', () => {
     const { instances, audit } = buildServices();
     const id = startOrderFlow(instances, 'DH-1001');
     expect(() =>
-      instances.transition(id, { to: 'Đã giao', ...COORDINATOR }),
+      instances.transition(id, { to: 'Đã giao' }, COORDINATOR),
     ).toThrow('không có trong định nghĩa');
     expect(() =>
-      instances.transition(id, {
-        to: 'Đã kiểm tra',
-        actor: 'nam',
-        role: 'Tài xế',
-      }),
+      instances.transition(
+        id,
+        {
+          to: 'Đã kiểm tra',
+        },
+        {
+          userId: 'user-nam',
+          username: 'nam',
+          roles: ['Tài xế'],
+        },
+      ),
     ).toThrow('yêu cầu vai');
     expect(instances.get(id).currentState).toBe('Mới tạo');
     expect(
@@ -125,15 +152,15 @@ describe('WorkflowInstanceService', () => {
   it('tạm dừng rồi tiếp tục, chuyển khi đang tạm dừng thì chặn', () => {
     const { instances } = buildServices();
     const id = startOrderFlow(instances, 'DH-1001');
-    const suspended = instances.suspend(id, 'son', 'Điều phối viên', 'Chờ xác minh');
+    const suspended = instances.suspend(id, COORDINATOR, 'Chờ xác minh');
     expect(suspended.status).toBe('suspended');
     expect(() =>
-      instances.transition(id, { to: 'Đã kiểm tra', ...COORDINATOR }),
+      instances.transition(id, { to: 'Đã kiểm tra' }, COORDINATOR),
     ).toThrow('đang ở trạng thái "suspended"');
-    const resumed = instances.resume(id, 'son', 'Điều phối viên');
+    const resumed = instances.resume(id, COORDINATOR);
     expect(resumed.status).toBe('active');
     expect(
-      instances.transition(id, { to: 'Đã kiểm tra', ...COORDINATOR })
+      instances.transition(id, { to: 'Đã kiểm tra' }, COORDINATOR)
         .currentState,
     ).toBe('Đã kiểm tra');
   });
@@ -141,21 +168,20 @@ describe('WorkflowInstanceService', () => {
   it('kết thúc cần có lý do, xong thì không chuyển được nữa', () => {
     const { instances } = buildServices();
     const id = startOrderFlow(instances, 'DH-1001');
-    expect(() =>
-      instances.terminate(id, 'son', 'Điều phối viên', ''),
-    ).toThrow('cần có lý do');
+    expect(() => instances.terminate(id, COORDINATOR, '')).toThrow(
+      'cần có lý do',
+    );
     const terminated = instances.terminate(
       id,
-      'son',
-      'Điều phối viên',
+      COORDINATOR,
       'Khách hủy toàn bộ',
     );
     expect(terminated.status).toBe('terminated');
     expect(() =>
-      instances.transition(id, { to: 'Đã kiểm tra', ...COORDINATOR }),
+      instances.transition(id, { to: 'Đã kiểm tra' }, COORDINATOR),
     ).toThrow('đang ở trạng thái "terminated"');
     expect(() =>
-      instances.terminate(id, 'son', 'Điều phối viên', 'Lý do khác'),
+      instances.terminate(id, COORDINATOR, 'Lý do khác'),
     ).toThrow('không kết thúc được');
   });
 
@@ -163,7 +189,7 @@ describe('WorkflowInstanceService', () => {
     const { instances } = buildServices();
     const id1 = startOrderFlow(instances, 'DH-1001');
     startOrderFlow(instances, 'DH-1002');
-    instances.suspend(id1, 'son', 'Điều phối viên');
+    instances.suspend(id1, COORDINATOR);
     expect(instances.list({})).toHaveLength(2);
     expect(
       instances.list({ businessKey: 'DH-1002' }),

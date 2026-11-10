@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import type { AuthenticatedRequest } from '../auth/auth.types';
 import { WorkflowInstanceService } from './instance.service';
 import type {
   StartInstanceInput,
@@ -8,15 +9,16 @@ import type {
   WorkflowInstanceStatus,
 } from './instance.types';
 
-// Actor và role hiện lấy từ body, sẽ thay bằng thông tin từ token Keycloak
-// khi tích hợp xác thực ở API (commit phân quyền).
 @Controller('workflow/instances')
 export class WorkflowInstanceController {
   constructor(private readonly instances: WorkflowInstanceService) {}
 
   @Post()
-  start(@Body() body: StartInstanceInput): WorkflowInstance {
-    return this.instances.start(body);
+  start(
+    @Body() body: StartInstanceInput,
+    @Req() req: AuthenticatedRequest,
+  ): WorkflowInstance {
+    return this.instances.start(body, req.user);
   }
 
   @Get()
@@ -41,31 +43,34 @@ export class WorkflowInstanceController {
   transition(
     @Param('id') id: string,
     @Body() body: TransitionInstanceInput,
+    @Req() req: AuthenticatedRequest,
   ): WorkflowInstance {
-    return this.instances.transition(id, body);
+    return this.instances.transition(id, body, req.user);
   }
 
   @Post(':id/suspend')
   suspend(
     @Param('id') id: string,
-    @Body() body: { actor: string; role: string; reason?: string },
+    @Body() body: { reason?: string },
+    @Req() req: AuthenticatedRequest,
   ): WorkflowInstance {
-    return this.instances.suspend(id, body.actor, body.role, body.reason);
+    return this.instances.suspend(id, req.user, body.reason);
   }
 
   @Post(':id/resume')
   resume(
     @Param('id') id: string,
-    @Body() body: { actor: string; role: string },
+    @Req() req: AuthenticatedRequest,
   ): WorkflowInstance {
-    return this.instances.resume(id, body.actor, body.role);
+    return this.instances.resume(id, req.user);
   }
 
   @Post(':id/terminate')
   terminate(
     @Param('id') id: string,
-    @Body() body: { actor: string; role: string; reason: string },
+    @Body() body: { reason: string },
+    @Req() req: AuthenticatedRequest,
   ): WorkflowInstance {
-    return this.instances.terminate(id, body.actor, body.role, body.reason);
+    return this.instances.terminate(id, req.user, body.reason);
   }
 }

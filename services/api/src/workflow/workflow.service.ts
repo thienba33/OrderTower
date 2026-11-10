@@ -85,11 +85,13 @@ export class WorkflowService implements OnModuleInit {
   }
 
   // Chỉ dựa vào tệp định nghĩa, không có điều kiện chuyển nào ghi trong code.
+  // roles là vai nghiệp vụ của người gọi; không truyền roles thì chỉ kiểm
+  // tra chuyển có tồn tại, không kiểm tra vai.
   canTransition(
     definitionId: string,
     from: string,
     to: string,
-    role?: string,
+    roles?: string[],
   ): TransitionCheck {
     const definition = this.getDefinition(definitionId);
     const transition = definition.transitions.find(
@@ -102,11 +104,11 @@ export class WorkflowService implements OnModuleInit {
         reason: `Chuyển từ "${from}" sang "${to}" không có trong định nghĩa ${definition.definitionId} v${definition.version}.`,
       };
     }
-    if (role !== undefined && role !== transition.role) {
+    if (roles !== undefined && !roles.includes(transition.role)) {
       return {
         allowed: false,
         requiredRole: transition.role,
-        reason: `Chuyển này yêu cầu vai "${transition.role}", vai "${role}" không được phép.`,
+        reason: `Chuyển này yêu cầu vai "${transition.role}", người gọi không có vai này.`,
       };
     }
     return { allowed: true, requiredRole: transition.role, reason: null };

@@ -10,6 +10,7 @@ import {
   MIN_ADDRESS_TRUST,
 } from '../address/address.service';
 import { AuditService } from '../audit/audit.service';
+import type { Caller } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
 import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -41,7 +42,7 @@ export class OrdersService {
     private readonly instances: WorkflowInstanceService,
   ) {}
 
-  create(input: CreateOrderInput): Order {
+  create(input: CreateOrderInput, caller: Caller): Order {
     if (
       typeof input.idempotencyKey !== 'string' ||
       input.idempotencyKey.trim() === ''
@@ -52,12 +53,6 @@ export class OrdersService {
       throw new BadRequestException('customer là bắt buộc, dạng chuỗi.');
     }
     validateItems(input.items);
-    if (typeof input.actor !== 'string' || input.actor.trim() === '') {
-      throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.role !== 'string' || input.role.trim() === '') {
-      throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
-    }
     if (input.address !== undefined) {
       validateAddress(input.address);
     }
@@ -75,12 +70,13 @@ export class OrdersService {
     const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
     // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
     // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
-    const instance = this.instances.start({
-      definitionId: 'order-flow',
-      businessKey: id,
-      actor: input.actor,
-      role: input.role,
-    });
+    const instance = this.instances.start(
+      {
+        definitionId: 'order-flow',
+        businessKey: id,
+      },
+      caller,
+    );
     const now = new Date().toISOString();
     const order: Order = {
       id,
@@ -96,15 +92,21 @@ export class OrdersService {
       workflowInstanceId: instance.id,
       state: 'Mới tạo',
       history: [
-        { from: null, to: 'Mới tạo', by: input.actor, role: input.role, at: now },
+        {
+          from: null,
+          to: 'Mới tạo',
+          by: caller.username,
+          role: caller.roles[0] ?? '',
+          at: now,
+        },
       ],
       createdAt: now,
       updatedAt: now,
     };
     this.orders.set(order.id, order);
     this.audit.append({
-      actor: input.actor,
-      role: input.role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: 'order.created',
       orderId: order.id,
       from: null,
@@ -126,15 +128,9 @@ export class OrdersService {
     return copyOrder(order);
   }
 
-  transition(id: string, input: TransitionOrderInput): Order {
+  transition(id: string, input: TransitionOrderInput, caller: Caller): Order {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.actor !== 'string' || input.actor.trim() === '') {
-      throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.role !== 'string' || input.role.trim() === '') {
-      throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
     }
     const order = this.orders.get(id);
     if (!order) {
@@ -142,8 +138,8 @@ export class OrdersService {
     }
     const deny = (reason: string): never => {
       this.audit.append({
-        actor: input.actor,
-        role: input.role,
+        actor: caller.username,
+        role: caller.roles[0] ?? '',
         action: 'order.transition.denied',
         orderId: id,
         from: order.state,
@@ -162,7 +158,7 @@ export class OrdersService {
       'order-flow',
       order.state,
       input.to,
-      input.role,
+      caller.roles,
     );
     if (!check.allowed) {
       deny(check.reason ?? 'Chuyển trạng thái không được phép.');
@@ -216,21 +212,23 @@ export class OrdersService {
     if (!instance) {
       throw new NotFoundException(`Không tìm thấy workflow instance của đơn ${id}.`);
     }
-    const updated = this.instances.transition(instance.id, {
-      to: input.to,
-      actor: input.actor,
-      role: input.role,
-      ...(input.reason ? { reason: input.reason } : {}),
-      ...(input.handling ? { handling: input.handling } : {}),
-    });
+    const updated = this.instances.transition(
+      instance.id,
+      {
+        to: input.to,
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.handling ? { handling: input.handling } : {}),
+      },
+      caller,
+    );
     const from = order.state;
     order.state = updated.currentState;
     order.updatedAt = updated.updatedAt;
     order.history.push({
       from,
       to: input.to,
-      by: input.actor,
-      role: input.role,
+      by: caller.username,
+      role: check.requiredRole ?? caller.roles[0] ?? '',
       at: updated.updatedAt,
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.handling ? { handling: input.handling } : {}),
@@ -245,13 +243,7 @@ export class OrdersService {
   // và người phê duyệt, mọi lần sửa đều ghi audit. Sửa mặt hàng làm đổi
   // lượng hàng đã giữ nên chỉ được khi đơn chưa giữ hàng, hoặc đơn đã đóng
   // (sửa hồ sơ, không chạm kho thật).
-  update(id: string, input: UpdateOrderInput): Order {
-    if (typeof input.actor !== 'string' || input.actor.trim() === '') {
-      throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.role !== 'string' || input.role.trim() === '') {
-      throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
-    }
+  update(id: string, input: UpdateOrderInput, caller: Caller): Order {
     const order = this.orders.get(id);
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
@@ -319,14 +311,14 @@ export class OrdersService {
     order.history.push({
       from: order.state,
       to: order.state,
-      by: input.actor,
-      role: input.role,
+      by: caller.username,
+      role: caller.roles[0] ?? '',
       at: now,
       ...(input.reason ? { reason: input.reason } : {}),
     });
     this.audit.append({
-      actor: input.actor,
-      role: input.role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: closed ? 'order.edit.approved' : 'order.edit',
       orderId: id,
       from: order.state,

@@ -6,7 +6,9 @@ import {
   Get,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { AuthenticatedRequest } from '../auth/auth.types';
 import { WorkflowService } from './workflow.service';
 import type {
   TransitionCheck,
@@ -17,7 +19,6 @@ interface TransitionCheckBody {
   definitionId?: unknown;
   from?: unknown;
   to?: unknown;
-  role?: unknown;
 }
 
 @Controller('workflow')
@@ -36,8 +37,12 @@ export class WorkflowController {
     return this.workflow.getDefinition(definitionId ?? 'order-flow');
   }
 
+  // Kiểm tra theo vai của người gọi (lấy từ token), không nhận vai từ body.
   @Post('transitions/check')
-  checkTransition(@Body() body: TransitionCheckBody): TransitionCheck {
+  checkTransition(
+    @Body() body: TransitionCheckBody,
+    @Req() req: AuthenticatedRequest,
+  ): TransitionCheck {
     if (
       body.definitionId !== undefined &&
       typeof body.definitionId !== 'string'
@@ -52,14 +57,11 @@ export class WorkflowController {
     if (typeof body.to !== 'string' || body.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
     }
-    if (body.role !== undefined && typeof body.role !== 'string') {
-      throw new BadRequestException('role phải là dạng chuỗi khi có.');
-    }
     return this.workflow.canTransition(
       body.definitionId ?? 'order-flow',
       body.from,
       body.to,
-      body.role,
+      req.user.roles,
     );
   }
 }

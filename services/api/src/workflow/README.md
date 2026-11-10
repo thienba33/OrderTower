@@ -29,6 +29,17 @@ Một lượt chạy của 1 định nghĩa luồng, quản lý bởi `WorkflowI
 - Kho instance nằm sau interface `WorkflowInstanceStore`, hiện là bản bộ nhớ,
   commit lưu bền sẽ thay bằng Postgres mà service phía trên không đổi.
 
+## Xác thực và phân quyền
+
+Mọi endpoint (trừ `GET /api/health`) cần access token Keycloak hợp lệ
+(`Authorization: Bearer <token>`). API tự xác thực token bằng JWKS lấy từ
+Keycloak (`KEYCLOAK_INTERNAL_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`),
+kiểm tra issuer từ tài liệu discovery và audience là client
+`ordertower-web`. Vai lấy từ client role của Keycloak, dịch sang tên vai
+nghiệp vụ trong tệp định nghĩa luồng theo bảng ở `src/auth/roles.ts` (vai
+trong realm là `ordertower-realm.json`). Người gọi và vai ghi vào lịch sử và
+audit đều lấy từ token, không nhận actor/role từ body.
+
 Bài kiểm tra nghiệm thu: đổi tệp định nghĩa, khởi động lại engine, luồng mới
 chạy được mà không sửa code API; thử chuyển trạng thái trái phép và phải bị
 từ chối kèm log.

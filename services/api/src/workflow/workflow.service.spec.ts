@@ -73,7 +73,7 @@ describe('WorkflowService', () => {
         'order-flow',
         'Mới tạo',
         'Đã kiểm tra',
-        'Điều phối viên',
+        ['Điều phối viên'],
       ),
     ).toEqual({ allowed: true, requiredRole: 'Điều phối viên', reason: null });
   });
@@ -92,7 +92,7 @@ describe('WorkflowService', () => {
       'order-flow',
       'Mới tạo',
       'Đã kiểm tra',
-      'Tài xế',
+      ['Tài xế'],
     );
     expect(result.allowed).toBe(false);
     expect(result.requiredRole).toBe('Điều phối viên');
@@ -129,8 +129,9 @@ describe('WorkflowService', () => {
     const service = loadService();
     expect(service.getDefinition('order-flow').version).toBe('2-test');
     expect(
-      service.canTransition('order-flow', 'Chờ kho', 'Hủy', 'Điều phối viên')
-        .allowed,
+      service.canTransition('order-flow', 'Chờ kho', 'Hủy', [
+        'Điều phối viên',
+      ]).allowed,
     ).toBe(true);
   });
 
