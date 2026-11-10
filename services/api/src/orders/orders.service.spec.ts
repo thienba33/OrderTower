@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { AddressService } from '../address/address.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -14,7 +15,9 @@ function buildServices(): {
   const audit = new AuditService();
   const inventory = new InventoryService();
   inventory.onModuleInit();
-  const orders = new OrdersService(workflow, audit, inventory);
+  const address = new AddressService();
+  address.onModuleInit();
+  const orders = new OrdersService(workflow, audit, inventory, address);
   return { orders, audit, inventory };
 }
 
@@ -23,6 +26,12 @@ function createInput(key: string) {
     idempotencyKey: key,
     customer: 'Hộ nước mắm A',
     items: [{ sku: 'NM-40', quantity: 2 }],
+    address: {
+      province: 'Hà Nội',
+      district: 'Hai Bà Trưng',
+      ward: 'Phường Phạm Đình Hổ',
+      street: 'Số 8 phố Hàng Bè',
+    },
     actor: 'son',
     role: 'Điều phối viên',
   };
@@ -166,6 +175,44 @@ describe('OrdersService', () => {
     expect(() =>
       orders.transition(order.id, { to: 'Đang đóng gói', ...WAREHOUSE }),
     ).toThrow('không có trong kho');
+  });
+
+  it('tạo đơn lưu mức tin cậy địa chỉ tính từ địa chỉ', () => {
+    const { orders } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    expect(order.addressTrust).toBe(100);
+    expect(order.addressLevel).toBe('Tin cậy cao');
+  });
+
+  it('địa chỉ yếu thì chặn ở chuyển sang Chờ kho', () => {
+    const { orders, audit } = buildServices();
+    const order = orders.create({
+      ...createInput('key-1'),
+      address: { province: 'Hà Nội' },
+    });
+    expect(order.addressTrust).toBe(40);
+    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    expect(() =>
+      orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR }),
+    ).toThrow('chưa đạt tối thiểu');
+    expect(orders.findOne(order.id).state).toBe('Đã kiểm tra');
+    const denied = audit
+      .getAll()
+      .filter((record) => record.action === 'order.transition.denied');
+    expect(denied).toHaveLength(1);
+  });
+
+  it('đơn không có địa chỉ thì chặn ở chuyển sang Chờ kho', () => {
+    const { orders } = buildServices();
+    const order = orders.create({
+      ...createInput('key-1'),
+      address: undefined,
+    });
+    expect(order.addressTrust).toBeNull();
+    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    expect(() =>
+      orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR }),
+    ).toThrow('chưa có địa chỉ');
   });
 
   it('không tìm thấy đơn thì báo 404', () => {

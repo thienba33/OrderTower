@@ -4,7 +4,8 @@
   "compilerOptions": {
     "assets": [
       "workflow/definitions/*.json",
-      "inventory/data/*.json"
+      "inventory/data/*.json",
+      "address/data/*.json"
     ],
     "deleteOutDir": true
   },

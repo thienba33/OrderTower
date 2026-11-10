@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+import type {
+  AddressInput,
+  AddressLevel,
+} from '../address/address.types';
 
 export interface OrderItem {
   sku: string;
@@ -19,6 +23,10 @@ export interface Order {
   idempotencyKey: string;
   customer: string;
   items: OrderItem[];
+  address?: AddressInput;
+  // Mức tin cậy địa chỉ tính lúc tạo đơn, null khi đơn không có địa chỉ.
+  addressTrust: number | null;
+  addressLevel: AddressLevel | null;
   state: string;
   history: OrderHistoryEntry[];
   createdAt: string;
@@ -29,6 +37,7 @@ export interface CreateOrderInput {
   idempotencyKey: string;
   customer: string;
   items: OrderItem[];
+  address?: AddressInput;
   actor: string;
   role: string;
 }

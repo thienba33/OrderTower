@@ -5,6 +5,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  AddressService,
+  MIN_ADDRESS_TRUST,
+} from '../address/address.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -27,6 +31,7 @@ export class OrdersService {
     private readonly workflow: WorkflowService,
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
+    private readonly address: AddressService,
   ) {}
 
   create(input: CreateOrderInput): Order {
@@ -61,6 +66,22 @@ export class OrdersService {
     if (typeof input.role !== 'string' || input.role.trim() === '') {
       throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
     }
+    if (input.address !== undefined) {
+      if (typeof input.address !== 'object' || input.address === null) {
+        throw new BadRequestException('address phải là 1 object khi có.');
+      }
+      for (const field of ['province', 'district', 'ward', 'street'] as const) {
+        const value = input.address[field];
+        if (value !== undefined && typeof value !== 'string') {
+          throw new BadRequestException(
+            `address.${field} phải là dạng chuỗi khi có.`,
+          );
+        }
+      }
+    }
+    const evaluation = input.address
+      ? this.address.evaluate(input.address)
+      : null;
     // Rào chắn: không xác nhận đơn trùng (cùng idempotencyKey).
     for (const existing of this.orders.values()) {
       if (existing.idempotencyKey === input.idempotencyKey) {
@@ -78,6 +99,9 @@ export class OrdersService {
         sku: item.sku,
         quantity: item.quantity,
       })),
+      address: input.address ? { ...input.address } : undefined,
+      addressTrust: evaluation ? evaluation.trust : null,
+      addressLevel: evaluation ? evaluation.level : null,
       state: 'Mới tạo',
       history: [
         { from: null, to: 'Mới tạo', by: input.actor, role: input.role, at: now },
@@ -150,7 +174,7 @@ export class OrdersService {
     if (!check.allowed) {
       deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
-    // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc và tồn kho đủ.
+    // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc, địa chỉ và tồn kho.
     const transition = this.workflow
       .getTransitions()
       .find((item) => item.from === order.state && item.to === input.to);
@@ -163,6 +187,18 @@ export class OrdersService {
         throw new BadRequestException(
           `Chuyển sang "${input.to}" cần có lý do (guard "${transition.guard}").`,
         );
+      }
+      if (transition.guard.includes('địa chỉ')) {
+        const addressTrust = order.addressTrust;
+        let addressDenial: string | null = null;
+        if (addressTrust === null) {
+          addressDenial = `Đơn ${id} chưa có địa chỉ, không kiểm tra được mức tin cậy.`;
+        } else if (addressTrust < MIN_ADDRESS_TRUST) {
+          addressDenial = `Địa chỉ của đơn ${id} chỉ đạt mức tin cậy ${addressTrust} (${order.addressLevel}), chưa đạt tối thiểu ${MIN_ADDRESS_TRUST}.`;
+        }
+        if (addressDenial !== null) {
+          deny(addressDenial);
+        }
       }
       if (transition.guard.includes('tồn kho')) {
         const stock = this.inventory.checkSufficient(order.items);
