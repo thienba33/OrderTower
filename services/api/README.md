@@ -14,3 +14,6 @@ Dependencies và phiên bản được khai báo trong `package.json` khi triể
 từng mô-đun.
 
 Chạy kiểm thử đơn vị: `npm test`.
+
+Đơn hàng và audit hiện lưu trong bộ nhớ, sẽ chuyển sang Postgres khi nhánh
+platform-database vào dev.
