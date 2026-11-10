@@ -10,7 +10,11 @@ import {
   MIN_ADDRESS_TRUST,
 } from '../address/address.service';
 import { AuditService } from '../audit/audit.service';
+import type { Caller } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
+import { ApprovalService } from '../approvals/approval.service';
+import type { Approval } from '../approvals/approval.types';
+import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import type {
   CreateOrderInput,
@@ -37,9 +41,11 @@ export class OrdersService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly address: AddressService,
+    private readonly instances: WorkflowInstanceService,
+    private readonly approvals: ApprovalService,
   ) {}
 
-  create(input: CreateOrderInput): Order {
+  create(input: CreateOrderInput, caller: Caller): Order {
     if (
       typeof input.idempotencyKey !== 'string' ||
       input.idempotencyKey.trim() === ''
@@ -50,12 +56,6 @@ export class OrdersService {
       throw new BadRequestException('customer là bắt buộc, dạng chuỗi.');
     }
     validateItems(input.items);
-    if (typeof input.actor !== 'string' || input.actor.trim() === '') {
-      throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.role !== 'string' || input.role.trim() === '') {
-      throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
-    }
     if (input.address !== undefined) {
       validateAddress(input.address);
     }
@@ -70,9 +70,19 @@ export class OrdersService {
         );
       }
     }
+    const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
+    // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
+    // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
+    const instance = this.instances.start(
+      {
+        definitionId: 'order-flow',
+        businessKey: id,
+      },
+      caller,
+    );
     const now = new Date().toISOString();
     const order: Order = {
-      id: `DH-${String(this.nextNumber++).padStart(4, '0')}`,
+      id,
       idempotencyKey: input.idempotencyKey,
       customer: input.customer,
       items: input.items.map((item) => ({
@@ -82,17 +92,24 @@ export class OrdersService {
       address: input.address ? { ...input.address } : undefined,
       addressTrust: evaluation ? evaluation.trust : null,
       addressLevel: evaluation ? evaluation.level : null,
+      workflowInstanceId: instance.id,
       state: 'Mới tạo',
       history: [
-        { from: null, to: 'Mới tạo', by: input.actor, role: input.role, at: now },
+        {
+          from: null,
+          to: 'Mới tạo',
+          by: caller.username,
+          role: caller.roles[0] ?? '',
+          at: now,
+        },
       ],
       createdAt: now,
       updatedAt: now,
     };
     this.orders.set(order.id, order);
     this.audit.append({
-      actor: input.actor,
-      role: input.role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: 'order.created',
       orderId: order.id,
       from: null,
@@ -114,15 +131,9 @@ export class OrdersService {
     return copyOrder(order);
   }
 
-  transition(id: string, input: TransitionOrderInput): Order {
+  transition(id: string, input: TransitionOrderInput, caller: Caller): Order {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.actor !== 'string' || input.actor.trim() === '') {
-      throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.role !== 'string' || input.role.trim() === '') {
-      throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
     }
     const order = this.orders.get(id);
     if (!order) {
@@ -130,8 +141,8 @@ export class OrdersService {
     }
     const deny = (reason: string): never => {
       this.audit.append({
-        actor: input.actor,
-        role: input.role,
+        actor: caller.username,
+        role: caller.roles[0] ?? '',
         action: 'order.transition.denied',
         orderId: id,
         from: order.state,
@@ -147,16 +158,17 @@ export class OrdersService {
       );
     }
     const check = this.workflow.canTransition(
+      'order-flow',
       order.state,
       input.to,
-      input.role,
+      caller.roles,
     );
     if (!check.allowed) {
       deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
     // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc, địa chỉ và tồn kho.
     const transition = this.workflow
-      .getTransitions()
+      .getTransitions('order-flow')
       .find((item) => item.from === order.state && item.to === input.to);
     let consumeStock = false;
     if (transition) {
@@ -197,34 +209,32 @@ export class OrdersService {
         consumeStock = true;
       }
     }
-    const now = new Date().toISOString();
+    // Rào chắn qua rồi mới cho instance chuyển; trạng thái luồng đổi ở
+    // instance, đơn đồng bộ lại trạng thái và lịch sử của mình.
+    const instance = this.instances.findByBusinessKey('order-flow', id);
+    if (!instance) {
+      throw new NotFoundException(`Không tìm thấy workflow instance của đơn ${id}.`);
+    }
+    const updated = this.instances.transition(
+      instance.id,
+      {
+        to: input.to,
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.handling ? { handling: input.handling } : {}),
+      },
+      caller,
+    );
     const from = order.state;
-    order.state = input.to;
-    order.updatedAt = now;
+    order.state = updated.currentState;
+    order.updatedAt = updated.updatedAt;
     order.history.push({
       from,
       to: input.to,
-      by: input.actor,
-      role: input.role,
-      at: now,
+      by: caller.username,
+      role: check.requiredRole ?? caller.roles[0] ?? '',
+      at: updated.updatedAt,
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.handling ? { handling: input.handling } : {}),
-    });
-    const detailParts: string[] = [];
-    if (input.handling) {
-      detailParts.push(`Hướng xử lý: ${input.handling}`);
-    }
-    if (input.reason) {
-      detailParts.push(`Lý do: ${input.reason}`);
-    }
-    this.audit.append({
-      actor: input.actor,
-      role: input.role,
-      action: 'order.transition',
-      orderId: id,
-      from,
-      to: input.to,
-      detail: detailParts.join('; '),
     });
     if (consumeStock) {
       this.inventory.reserve(order.items);
@@ -236,13 +246,7 @@ export class OrdersService {
   // và người phê duyệt, mọi lần sửa đều ghi audit. Sửa mặt hàng làm đổi
   // lượng hàng đã giữ nên chỉ được khi đơn chưa giữ hàng, hoặc đơn đã đóng
   // (sửa hồ sơ, không chạm kho thật).
-  update(id: string, input: UpdateOrderInput): Order {
-    if (typeof input.actor !== 'string' || input.actor.trim() === '') {
-      throw new BadRequestException('actor là bắt buộc, dạng chuỗi.');
-    }
-    if (typeof input.role !== 'string' || input.role.trim() === '') {
-      throw new BadRequestException('role là bắt buộc, dạng chuỗi.');
-    }
+  update(id: string, input: UpdateOrderInput, caller: Caller): Order {
     const order = this.orders.get(id);
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
@@ -274,9 +278,9 @@ export class OrdersService {
           `Sửa đơn đã đóng ${id} cần có lý do.`,
         );
       }
-      if (input.approvedBy === undefined || input.approvedBy.trim() === '') {
+      if (input.approvalId === undefined || input.approvalId.trim() === '') {
         throw new BadRequestException(
-          `Sửa đơn đã đóng ${id} cần có người phê duyệt (approvedBy).`,
+          `Sửa đơn đã đóng ${id} cần có phê duyệt (approvalId).`,
         );
       }
     }
@@ -288,6 +292,29 @@ export class OrdersService {
       throw new ConflictException(
         `Đơn ${id} đã giữ hàng ở trạng thái "${order.state}", không sửa được mặt hàng.`,
       );
+    }
+    // Đơn đã đóng: kiểm tra phê duyệt khớp đơn, đã duyệt và chưa dùng, trước
+    // khi sửa; chỉ trừ phê duyệt sau khi sửa xong.
+    let approval: Approval | null = null;
+    if (closed) {
+      approval = this.approvals.get(input.approvalId as string);
+      if (
+        approval.type !== 'order.edit.closed' ||
+        approval.subjectId !== id
+      ) {
+        throw new BadRequestException(
+          `Phê duyệt ${approval.id} không khớp với việc sửa đơn ${id}.`,
+        );
+      }
+      if (approval.status === 'pending') {
+        throw new ConflictException(`Phê duyệt ${approval.id} chưa được duyệt.`);
+      }
+      if (approval.status === 'rejected') {
+        throw new ConflictException(`Phê duyệt ${approval.id} đã bị từ chối.`);
+      }
+      if (approval.appliedAt !== null) {
+        throw new ConflictException(`Phê duyệt ${approval.id} đã được dùng.`);
+      }
     }
     if (input.customer !== undefined) {
       order.customer = input.customer;
@@ -310,22 +337,25 @@ export class OrdersService {
     order.history.push({
       from: order.state,
       to: order.state,
-      by: input.actor,
-      role: input.role,
+      by: caller.username,
+      role: caller.roles[0] ?? '',
       at: now,
       ...(input.reason ? { reason: input.reason } : {}),
     });
     this.audit.append({
-      actor: input.actor,
-      role: input.role,
+      actor: caller.username,
+      role: caller.roles[0] ?? '',
       action: closed ? 'order.edit.approved' : 'order.edit',
       orderId: id,
       from: order.state,
       to: order.state,
       detail: closed
-        ? `Lý do: ${input.reason}; Người duyệt: ${input.approvedBy}`
+        ? `Lý do: ${input.reason}; Phê duyệt: ${approval?.id} bởi ${approval?.decidedBy}`
         : (input.reason ?? ''),
     });
+    if (closed && approval) {
+      this.approvals.markApplied(approval.id, caller);
+    }
     return copyOrder(order);
   }
 }

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AddressService } from '../address/address.service';
+import { ApprovalService } from '../approvals/approval.service';
+import { InMemoryApprovalStore } from '../approvals/approval.store';
 import { AuditService } from '../audit/audit.service';
+import type { Caller } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
+import { WorkflowInstanceService } from '../workflow/instance.service';
+import { InMemoryWorkflowInstanceStore } from '../workflow/instance.store';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OrdersService } from './orders.service';
 
@@ -9,6 +14,8 @@ function buildServices(): {
   orders: OrdersService;
   audit: AuditService;
   inventory: InventoryService;
+  instances: WorkflowInstanceService;
+  approvals: ApprovalService;
 } {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
@@ -17,8 +24,21 @@ function buildServices(): {
   inventory.onModuleInit();
   const address = new AddressService();
   address.onModuleInit();
-  const orders = new OrdersService(workflow, audit, inventory, address);
-  return { orders, audit, inventory };
+  const instances = new WorkflowInstanceService(
+    workflow,
+    audit,
+    new InMemoryWorkflowInstanceStore(),
+  );
+  const approvals = new ApprovalService(audit, new InMemoryApprovalStore());
+  const orders = new OrdersService(
+    workflow,
+    audit,
+    inventory,
+    address,
+    instances,
+    approvals,
+  );
+  return { orders, audit, inventory, instances, approvals };
 }
 
 function createInput(key: string) {
@@ -37,76 +57,113 @@ function createInput(key: string) {
   };
 }
 
-const COORDINATOR = { actor: 'son', role: 'Điều phối viên' };
-const WAREHOUSE = { actor: 'minh', role: 'Nhân viên kho' };
-const DRIVER = { actor: 'nam', role: 'Tài xế' };
+const COORDINATOR: Caller = {
+  userId: 'user-son',
+  username: 'son',
+  roles: ['Điều phối viên'],
+};
+const WAREHOUSE: Caller = {
+  userId: 'user-minh',
+  username: 'minh',
+  roles: ['Nhân viên kho'],
+};
+const DRIVER: Caller = {
+  userId: 'user-nam',
+  username: 'nam',
+  roles: ['Tài xế'],
+};
+const MANAGER: Caller = {
+  userId: 'user-quanly',
+  username: 'quan-ly',
+  roles: ['Quản lý'],
+};
 
 describe('OrdersService', () => {
   it('tạo đơn ở trạng thái Mới tạo, ghi lịch sử và audit', () => {
-    const { orders, audit } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const { orders, audit, instances } = buildServices();
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     expect(order.id).toBe('DH-1001');
     expect(order.state).toBe('Mới tạo');
+    expect(order.workflowInstanceId).toBe('WF-1001');
+    const instance = instances.findByBusinessKey('order-flow', 'DH-1001');
+    expect(instance?.currentState).toBe('Mới tạo');
+    expect(instance?.status).toBe('active');
     expect(order.history).toHaveLength(1);
     expect(order.history[0]).toMatchObject({ from: null, to: 'Mới tạo' });
-    expect(audit.getAll()).toHaveLength(1);
-    expect(audit.getAll()[0].action).toBe('order.created');
+    expect(audit.getAll()).toHaveLength(2);
+    expect(audit.getAll().map((record) => record.action)).toEqual([
+      'workflow.instance.started',
+      'order.created',
+    ]);
   });
 
   it('từ chối đơn trùng idempotencyKey', () => {
     const { orders, audit } = buildServices();
-    orders.create(createInput('key-1'));
-    expect(() => orders.create(createInput('key-1'))).toThrow('đã tồn tại');
+    orders.create(createInput('key-1'), COORDINATOR);
+    expect(() => orders.create(createInput('key-1'), COORDINATOR)).toThrow('đã tồn tại');
     expect(orders.list()).toHaveLength(1);
-    expect(audit.getAll()).toHaveLength(1);
+    expect(audit.getAll()).toHaveLength(2);
   });
 
   it('đơn đi tròn 9 trạng thái tới Hoàn', () => {
-    const { orders, audit } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const { orders, audit, instances } = buildServices();
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     const steps: Array<{
       to: string;
-      actor: string;
-      role: string;
+      caller: Caller;
       handling?: string;
     }> = [
-      { to: 'Đã kiểm tra', ...COORDINATOR },
-      { to: 'Chờ kho', ...COORDINATOR },
-      { to: 'Đang đóng gói', ...WAREHOUSE },
-      { to: 'Chờ điều xe', ...WAREHOUSE },
-      { to: 'Đang giao', ...COORDINATOR },
-      { to: 'Đã giao', ...DRIVER },
-      { to: 'Hoàn', ...COORDINATOR, handling: 'Đối soát xong, khách giữ hàng' },
+      { to: 'Đã kiểm tra', caller: COORDINATOR },
+      { to: 'Chờ kho', caller: COORDINATOR },
+      { to: 'Đang đóng gói', caller: WAREHOUSE },
+      { to: 'Chờ điều xe', caller: WAREHOUSE },
+      { to: 'Đang giao', caller: COORDINATOR },
+      { to: 'Đã giao', caller: DRIVER },
+      {
+        to: 'Hoàn',
+        caller: COORDINATOR,
+        handling: 'Đối soát xong, khách giữ hàng',
+      },
     ];
     let current = order;
     for (const step of steps) {
-      current = orders.transition(current.id, step);
+      current = orders.transition(
+        current.id,
+        {
+          to: step.to,
+          ...(step.handling ? { handling: step.handling } : {}),
+        },
+        step.caller,
+      );
     }
     expect(current.state).toBe('Hoàn');
     expect(current.history).toHaveLength(8);
-    expect(audit.getAll()).toHaveLength(8);
+    expect(audit.getAll()).toHaveLength(9);
     expect(audit.verify().valid).toBe(true);
+    const instance = instances.findByBusinessKey('order-flow', order.id);
+    expect(instance?.status).toBe('completed');
+    expect(instance?.history).toHaveLength(8);
+    expect(instance?.currentState).toBe('Hoàn');
   });
 
   it('hủy đơn từ Mới tạo cần có lý do', () => {
     const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Hủy', ...COORDINATOR }),
+      orders.transition(order.id, { to: 'Hủy' }, COORDINATOR),
     ).toThrow('cần có lý do');
     const cancelled = orders.transition(order.id, {
       to: 'Hủy',
-      ...COORDINATOR,
       reason: 'Khách đổi ý',
-    });
+    }, COORDINATOR);
     expect(cancelled.state).toBe('Hủy');
   });
 
   it('từ chối chuyển trái phép, đơn giữ nguyên trạng thái, có ghi audit', () => {
     const { orders, audit } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Đã giao', ...COORDINATOR }),
+      orders.transition(order.id, { to: 'Đã giao' }, COORDINATOR),
     ).toThrow('không có trong định nghĩa');
     expect(orders.findOne(order.id).state).toBe('Mới tạo');
     const denied = audit
@@ -118,34 +175,32 @@ describe('OrdersService', () => {
 
   it('từ chối khi sai vai', () => {
     const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Đã kiểm tra', ...DRIVER }),
-    ).toThrow('không được phép');
+      orders.transition(order.id, { to: 'Đã kiểm tra' }, DRIVER),
+    ).toThrow('yêu cầu vai');
   });
 
   it('đơn đã đóng thì mọi chuyển đều bị chặn', () => {
     const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     orders.transition(order.id, {
       to: 'Hủy',
-      ...COORDINATOR,
       reason: 'Khách đổi ý',
-    });
+    }, COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Mới tạo', ...COORDINATOR }),
+      orders.transition(order.id, { to: 'Mới tạo' }, COORDINATOR),
     ).toThrow('đã ở trạng thái đóng');
   });
 
   it('đóng gói thành công thì giữ hàng trong kho', () => {
     const { orders, inventory } = buildServices();
-    const order = orders.create(createInput('key-1'));
-    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
-    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
+    const order = orders.create(createInput('key-1'), COORDINATOR);
+    orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR);
     const packed = orders.transition(order.id, {
       to: 'Đang đóng gói',
-      ...WAREHOUSE,
-    });
+    }, WAREHOUSE);
     expect(packed.state).toBe('Đang đóng gói');
     expect(inventory.get('NM-40')).toMatchObject({ stock: 450, reserved: 2 });
   });
@@ -155,11 +210,11 @@ describe('OrdersService', () => {
     const order = orders.create({
       ...createInput('key-1'),
       items: [{ sku: 'NM-40', quantity: 9999 }],
-    });
-    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
-    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
+    }, COORDINATOR);
+    orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Đang đóng gói', ...WAREHOUSE }),
+      orders.transition(order.id, { to: 'Đang đóng gói' }, WAREHOUSE),
     ).toThrow('Tồn kho không đủ');
     expect(orders.findOne(order.id).state).toBe('Chờ kho');
     expect(inventory.get('NM-40')).toMatchObject({ stock: 452, reserved: 0 });
@@ -174,17 +229,17 @@ describe('OrdersService', () => {
     const order = orders.create({
       ...createInput('key-1'),
       items: [{ sku: 'XX-00', quantity: 1 }],
-    });
-    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
-    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
+    }, COORDINATOR);
+    orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Đang đóng gói', ...WAREHOUSE }),
+      orders.transition(order.id, { to: 'Đang đóng gói' }, WAREHOUSE),
     ).toThrow('không có trong kho');
   });
 
   it('tạo đơn lưu mức tin cậy địa chỉ tính từ địa chỉ', () => {
     const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     expect(order.addressTrust).toBe(100);
     expect(order.addressLevel).toBe('Tin cậy cao');
   });
@@ -194,11 +249,11 @@ describe('OrdersService', () => {
     const order = orders.create({
       ...createInput('key-1'),
       address: { province: 'Hà Nội' },
-    });
+    }, COORDINATOR);
     expect(order.addressTrust).toBe(40);
-    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR }),
+      orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR),
     ).toThrow('chưa đạt tối thiểu');
     expect(orders.findOne(order.id).state).toBe('Đã kiểm tra');
     const denied = audit
@@ -212,37 +267,40 @@ describe('OrdersService', () => {
     const order = orders.create({
       ...createInput('key-1'),
       address: undefined,
-    });
+    }, COORDINATOR);
     expect(order.addressTrust).toBeNull();
-    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
     expect(() =>
-      orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR }),
+      orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR),
     ).toThrow('chưa có địa chỉ');
   });
 
   it('đóng đơn thiếu hướng xử lý thì báo 400, có thì ghi vào lịch sử', () => {
     const { orders, audit } = buildServices();
-    const order = orders.create(createInput('key-1'));
-    const steps: Array<{ to: string; actor: string; role: string }> = [
-      { to: 'Đã kiểm tra', ...COORDINATOR },
-      { to: 'Chờ kho', ...COORDINATOR },
-      { to: 'Đang đóng gói', ...WAREHOUSE },
-      { to: 'Chờ điều xe', ...WAREHOUSE },
-      { to: 'Đang giao', ...COORDINATOR },
-      { to: 'Đã giao', ...DRIVER },
+    const order = orders.create(createInput('key-1'), COORDINATOR);
+    const steps: Array<{ to: string; caller: Caller }> = [
+      { to: 'Đã kiểm tra', caller: COORDINATOR },
+      { to: 'Chờ kho', caller: COORDINATOR },
+      { to: 'Đang đóng gói', caller: WAREHOUSE },
+      { to: 'Chờ điều xe', caller: WAREHOUSE },
+      { to: 'Đang giao', caller: COORDINATOR },
+      { to: 'Đã giao', caller: DRIVER },
     ];
     let current = order;
     for (const step of steps) {
-      current = orders.transition(current.id, step);
+      current = orders.transition(
+        current.id,
+        { to: step.to },
+        step.caller,
+      );
     }
     expect(() =>
-      orders.transition(current.id, { to: 'Hoàn', ...COORDINATOR }),
+      orders.transition(current.id, { to: 'Hoàn' }, COORDINATOR),
     ).toThrow('hướng xử lý');
     const done = orders.transition(current.id, {
       to: 'Hoàn',
-      ...COORDINATOR,
       handling: 'Đối soát xong, khách giữ hàng',
-    });
+    }, COORDINATOR);
     expect(done.state).toBe('Hoàn');
     expect(done.history.at(-1)).toMatchObject({
       to: 'Hoàn',
@@ -254,11 +312,10 @@ describe('OrdersService', () => {
 
   it('sửa khách của đơn mở thì được, ghi audit order.edit', () => {
     const { orders, audit } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     const updated = orders.update(order.id, {
       customer: 'Hộ nước mắm B',
-      ...COORDINATOR,
-    });
+    }, COORDINATOR);
     expect(updated.customer).toBe('Hộ nước mắm B');
     expect(updated.state).toBe('Mới tạo');
     expect(updated.history).toHaveLength(2);
@@ -269,20 +326,18 @@ describe('OrdersService', () => {
 
   it('sửa mặt hàng trước khi đóng gói được, sau khi giữ hàng thì chặn', () => {
     const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     const renamed = orders.update(order.id, {
       items: [{ sku: 'NM-25', quantity: 1 }],
-      ...COORDINATOR,
-    });
+    }, COORDINATOR);
     expect(renamed.items).toEqual([{ sku: 'NM-25', quantity: 1 }]);
-    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
-    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
-    orders.transition(order.id, { to: 'Đang đóng gói', ...WAREHOUSE });
+    orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR);
+    orders.transition(order.id, { to: 'Đang đóng gói' }, WAREHOUSE);
     expect(() =>
       orders.update(order.id, {
         items: [{ sku: 'NM-40', quantity: 1 }],
-        ...COORDINATOR,
-      }),
+      }, COORDINATOR),
     ).toThrow('đã giữ hàng');
     expect(orders.findOne(order.id).items).toEqual([
       { sku: 'NM-25', quantity: 1 },
@@ -294,48 +349,68 @@ describe('OrdersService', () => {
         ward: 'Phường Hoàng Văn Thụ',
         street: 'Số 12 Lê Lợi',
       },
-      ...COORDINATOR,
-    });
+    }, COORDINATOR);
     expect(addressChanged.addressTrust).toBe(100);
   });
 
   it('sửa địa chỉ tính lại mức tin cậy', () => {
     const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
+    const order = orders.create(createInput('key-1'), COORDINATOR);
     const updated = orders.update(order.id, {
       address: { province: 'Hà Nội' },
-      ...COORDINATOR,
-    });
+    }, COORDINATOR);
     expect(updated.addressTrust).toBe(40);
     expect(updated.addressLevel).toBe('Rủi ro cao');
   });
 
-  it('sửa đơn đã đóng thiếu lý do hoặc người duyệt thì báo 400', () => {
-    const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
-    orders.transition(order.id, { to: 'Hủy', ...COORDINATOR, reason: 'Khách đổi ý' });
+  it('sửa đơn đã đóng thiếu lý do hoặc phê duyệt thì báo 400', () => {
+    const { orders, approvals } = buildServices();
+    const order = orders.create(createInput('key-1'), COORDINATOR);
+    orders.transition(order.id, { to: 'Hủy', reason: 'Khách đổi ý' }, COORDINATOR);
     expect(() =>
-      orders.update(order.id, { customer: 'Hộ khác', ...COORDINATOR }),
+      orders.update(order.id, { customer: 'Hộ khác' }, COORDINATOR),
     ).toThrow('cần có lý do');
     expect(() =>
       orders.update(order.id, {
         customer: 'Hộ khác',
         reason: 'Sửa tên khách cho đúng sổ',
-        ...COORDINATOR,
-      }),
-    ).toThrow('người phê duyệt');
+      }, COORDINATOR),
+    ).toThrow('cần có phê duyệt');
+    const approval = approvals.request(
+      {
+        type: 'order.edit.closed',
+        subjectId: order.id,
+        reason: 'Sửa tên khách cho đúng sổ',
+      },
+      COORDINATOR,
+    );
+    expect(() =>
+      orders.update(order.id, {
+        customer: 'Hộ khác',
+        reason: 'Sửa tên khách cho đúng sổ',
+        approvalId: approval.id,
+      }, COORDINATOR),
+    ).toThrow('chưa được duyệt');
   });
 
-  it('sửa đơn đã đóng có lý do và người duyệt thì được, ghi audit riêng', () => {
-    const { orders, audit } = buildServices();
-    const order = orders.create(createInput('key-1'));
-    orders.transition(order.id, { to: 'Hủy', ...COORDINATOR, reason: 'Khách đổi ý' });
+  it('sửa đơn đã đóng có lý do và phê duyệt đã duyệt thì được, ghi audit riêng', () => {
+    const { orders, audit, approvals } = buildServices();
+    const order = orders.create(createInput('key-1'), COORDINATOR);
+    orders.transition(order.id, { to: 'Hủy', reason: 'Khách đổi ý' }, COORDINATOR);
+    const approval = approvals.request(
+      {
+        type: 'order.edit.closed',
+        subjectId: order.id,
+        reason: 'Sửa tên khách cho đúng sổ',
+      },
+      COORDINATOR,
+    );
+    approvals.approve(approval.id, MANAGER, 'Đồng ý sửa');
     const updated = orders.update(order.id, {
       customer: 'Hộ nước mắm B',
       reason: 'Sửa tên khách cho đúng sổ',
-      approvedBy: 'quan-ly',
-      ...COORDINATOR,
-    });
+      approvalId: approval.id,
+    }, COORDINATOR);
     expect(updated.customer).toBe('Hộ nước mắm B');
     expect(updated.history.at(-1)).toMatchObject({
       from: 'Hủy',
@@ -346,16 +421,24 @@ describe('OrdersService', () => {
       .getAll()
       .filter((record) => record.action === 'order.edit.approved');
     expect(approved).toHaveLength(1);
-    expect(approved[0].detail).toContain('Người duyệt: quan-ly');
+    expect(approved[0].detail).toContain('Phê duyệt: AP-1001 bởi quan-ly');
+    expect(approvals.get(approval.id).appliedAt).not.toBeNull();
+    expect(() =>
+      orders.update(order.id, {
+        customer: 'Hộ nước mắm C',
+        reason: 'Sửa tiếp',
+        approvalId: approval.id,
+      }, COORDINATOR),
+    ).toThrow('đã được dùng');
   });
 
   it('sửa đơn không có trường nào hoặc không tồn tại thì báo lỗi', () => {
     const { orders } = buildServices();
-    const order = orders.create(createInput('key-1'));
-    expect(() => orders.update(order.id, { ...COORDINATOR })).toThrow(
+    const order = orders.create(createInput('key-1'), COORDINATOR);
+    expect(() => orders.update(order.id, {}, COORDINATOR)).toThrow(
       'ít nhất 1 trường',
     );
-    expect(() => orders.update('DH-9999', { customer: 'X', ...COORDINATOR })).toThrow(
+    expect(() => orders.update('DH-9999', { customer: 'X' }, COORDINATOR)).toThrow(
       'Không tìm thấy đơn',
     );
   });
@@ -363,7 +446,7 @@ describe('OrdersService', () => {
   it('không tìm thấy đơn thì báo 404', () => {
     const { orders } = buildServices();
     expect(() =>
-      orders.transition('DH-9999', { to: 'Đã kiểm tra', ...COORDINATOR }),
+      orders.transition('DH-9999', { to: 'Đã kiểm tra' }, COORDINATOR),
     ).toThrow('Không tìm thấy đơn');
     expect(() => orders.findOne('DH-9999')).toThrow('Không tìm thấy đơn');
   });
@@ -371,16 +454,16 @@ describe('OrdersService', () => {
   it('từ chối dữ liệu tạo đơn không hợp lệ', () => {
     const { orders } = buildServices();
     expect(() =>
-      orders.create({ ...createInput('key-1'), customer: '' }),
+      orders.create({ ...createInput('key-1'), customer: '' }, COORDINATOR),
     ).toThrow('customer là bắt buộc');
     expect(() =>
-      orders.create({ ...createInput('key-1'), items: [] }),
+      orders.create({ ...createInput('key-1'), items: [] }, COORDINATOR),
     ).toThrow('items phải là mảng không rỗng');
     expect(() =>
       orders.create({
         ...createInput('key-1'),
         items: [{ sku: 'NM-40', quantity: 0 }],
-      }),
+      }, COORDINATOR),
     ).toThrow('số nguyên dương');
   });
 });

@@ -29,6 +29,8 @@ export interface Order {
   // Mức tin cậy địa chỉ tính lúc tạo đơn, null khi đơn không có địa chỉ.
   addressTrust: number | null;
   addressLevel: AddressLevel | null;
+  // Id của workflow instance quản lý trạng thái của đơn.
+  workflowInstanceId: string;
   state: string;
   history: OrderHistoryEntry[];
   createdAt: string;
@@ -40,14 +42,11 @@ export interface CreateOrderInput {
   customer: string;
   items: OrderItem[];
   address?: AddressInput;
-  actor: string;
-  role: string;
 }
 
+// Người gọi lấy từ token Keycloak, không nằm trong body.
 export interface TransitionOrderInput {
   to: string;
-  actor: string;
-  role: string;
   reason?: string;
   // Hướng xử lý, bắt buộc khi guard của chuyển nhắc tới hướng xử lý.
   handling?: string;
@@ -57,9 +56,8 @@ export interface UpdateOrderInput {
   customer?: string;
   items?: OrderItem[];
   address?: AddressInput;
-  actor: string;
-  role: string;
   reason?: string;
-  // Người phê duyệt, bắt buộc cùng lý do khi sửa đơn đã đóng.
-  approvedBy?: string;
+  // Id phê duyệt đã duyệt, bắt buộc khi sửa đơn đã đóng (thay chuỗi
+  // approvedBy tự gõ trước đây).
+  approvalId?: string;
 }
