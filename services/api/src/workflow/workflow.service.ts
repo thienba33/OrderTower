@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import type {
   TransitionCheck,
   WorkflowDefinition,
   WorkflowTransition,
 } from './workflow.types';
-
-// Tên tệp định nghĩa mặc định. Phiên bản mới là tệp mới, không sửa tệp cũ.
-const DEFAULT_DEFINITION_FILE = 'order-flow.v1.json';
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -19,46 +21,77 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isNonEmptyString);
 }
 
+function copyDefinition(definition: WorkflowDefinition): WorkflowDefinition {
+  return JSON.parse(JSON.stringify(definition)) as WorkflowDefinition;
+}
+
+// Registry định nghĩa luồng: nạp mọi tệp JSON trong thư mục definitions,
+// mỗi tệp là 1 luồng có phiên bản. Thêm luồng mới cho ứng dụng khác chỉ cần
+// thêm 1 tệp, engine và API instance dùng lại nguyên vẹn, không sửa code.
 @Injectable()
 export class WorkflowService implements OnModuleInit {
   private readonly logger = new Logger(WorkflowService.name);
-  private definition: WorkflowDefinition | null = null;
+  private definitions = new Map<string, WorkflowDefinition>();
 
   onModuleInit(): void {
-    this.definition = this.loadDefinition();
-    this.logger.log(
-      `Đã nạp định nghĩa luồng ${this.definition.definitionId} v${this.definition.version} (${this.definition.states.length} trạng thái, ${this.definition.transitions.length} chuyển).`,
+    this.definitions = this.loadDefinitions();
+    for (const definition of this.definitions.values()) {
+      this.logger.log(
+        `Đã nạp định nghĩa luồng ${definition.definitionId} v${definition.version} (${definition.states.length} trạng thái, ${definition.transitions.length} chuyển).`,
+      );
+    }
+  }
+
+  // Thư mục định nghĩa: biến môi trường thắng, mặc định nằm cạnh mã nguồn.
+  resolveDefinitionsDir(): string {
+    if (process.env.WORKFLOW_DEFINITIONS_DIR) {
+      return process.env.WORKFLOW_DEFINITIONS_DIR;
+    }
+    return join(__dirname, 'definitions');
+  }
+
+  getDefinition(definitionId: string): WorkflowDefinition {
+    const definition = this.definitions.get(definitionId);
+    if (!definition) {
+      throw new NotFoundException(
+        `Không tìm thấy định nghĩa luồng "${definitionId}".`,
+      );
+    }
+    return copyDefinition(definition);
+  }
+
+  listDefinitions(): WorkflowDefinition[] {
+    return [...this.definitions.values()].map(copyDefinition);
+  }
+
+  getStates(definitionId: string): string[] {
+    return [...this.getDefinition(definitionId).states];
+  }
+
+  getTransitions(definitionId: string): WorkflowTransition[] {
+    return copyDefinition(this.getDefinition(definitionId)).transitions;
+  }
+
+  // Trạng thái đầu là phần tử đầu tiên của states trong tệp định nghĩa.
+  getInitialState(definitionId: string): string {
+    return this.getDefinition(definitionId).states[0];
+  }
+
+  // Trạng thái cuối là trạng thái không còn chuyển nào đi ra.
+  isTerminalState(definitionId: string, state: string): boolean {
+    return !this.getDefinition(definitionId).transitions.some(
+      (item) => item.from === state,
     );
   }
 
-  // Đường dẫn tệp định nghĩa: biến môi trường thắng, mặc định nằm cạnh mã nguồn.
-  resolveDefinitionPath(): string {
-    if (process.env.WORKFLOW_DEFINITION_PATH) {
-      return process.env.WORKFLOW_DEFINITION_PATH;
-    }
-    return join(__dirname, 'definitions', DEFAULT_DEFINITION_FILE);
-  }
-
-  getDefinition(): WorkflowDefinition {
-    if (!this.definition) {
-      throw new Error('Định nghĩa luồng chưa được nạp.');
-    }
-    return JSON.parse(JSON.stringify(this.definition)) as WorkflowDefinition;
-  }
-
-  getStates(): string[] {
-    return [...this.getDefinition().states];
-  }
-
-  getTransitions(): WorkflowTransition[] {
-    return JSON.parse(
-      JSON.stringify(this.getDefinition().transitions),
-    ) as WorkflowTransition[];
-  }
-
   // Chỉ dựa vào tệp định nghĩa, không có điều kiện chuyển nào ghi trong code.
-  canTransition(from: string, to: string, role?: string): TransitionCheck {
-    const definition = this.getDefinition();
+  canTransition(
+    definitionId: string,
+    from: string,
+    to: string,
+    role?: string,
+  ): TransitionCheck {
+    const definition = this.getDefinition(definitionId);
     const transition = definition.transitions.find(
       (item) => item.from === from && item.to === to,
     );
@@ -79,25 +112,50 @@ export class WorkflowService implements OnModuleInit {
     return { allowed: true, requiredRole: transition.role, reason: null };
   }
 
-  private loadDefinition(): WorkflowDefinition {
-    const path = this.resolveDefinitionPath();
-    let raw: string;
+  private loadDefinitions(): Map<string, WorkflowDefinition> {
+    const dir = this.resolveDefinitionsDir();
+    let files: string[];
     try {
-      raw = readFileSync(path, 'utf-8');
+      files = readdirSync(dir);
     } catch (error) {
       throw new Error(
-        `Không đọc được tệp định nghĩa luồng tại ${path}: ${error instanceof Error ? error.message : String(error)}`,
+        `Không đọc được thư mục định nghĩa luồng tại ${dir}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw) as unknown;
-    } catch (error) {
+    const jsonFiles = files.filter((file) => file.endsWith('.json')).sort();
+    if (jsonFiles.length === 0) {
       throw new Error(
-        `Tệp định nghĩa luồng tại ${path} không phải JSON hợp lệ: ${error instanceof Error ? error.message : String(error)}`,
+        `Thư mục định nghĩa luồng tại ${dir} không có tệp JSON nào.`,
       );
     }
-    return validateDefinition(parsed, path);
+    const definitions = new Map<string, WorkflowDefinition>();
+    for (const file of jsonFiles) {
+      const path = join(dir, file);
+      let raw: string;
+      try {
+        raw = readFileSync(path, 'utf-8');
+      } catch (error) {
+        throw new Error(
+          `Không đọc được tệp định nghĩa luồng tại ${path}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw) as unknown;
+      } catch (error) {
+        throw new Error(
+          `Tệp định nghĩa luồng tại ${path} không phải JSON hợp lệ: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const definition = validateDefinition(parsed, path);
+      if (definitions.has(definition.definitionId)) {
+        throw new Error(
+          `Định nghĩa luồng "${definition.definitionId}" bị trùng trong thư mục ${dir} (tệp ${file}).`,
+        );
+      }
+      definitions.set(definition.definitionId, definition);
+    }
+    return definitions;
   }
 }
 

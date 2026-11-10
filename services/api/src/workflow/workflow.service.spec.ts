@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { WorkflowService } from './workflow.service';
 
 describe('WorkflowService', () => {
-  const originalDefinitionPath = process.env.WORKFLOW_DEFINITION_PATH;
+  const originalDefinitionsDir = process.env.WORKFLOW_DEFINITIONS_DIR;
   let tempDir: string;
 
   beforeEach(() => {
@@ -13,10 +13,10 @@ describe('WorkflowService', () => {
   });
 
   afterEach(() => {
-    if (originalDefinitionPath === undefined) {
-      delete process.env.WORKFLOW_DEFINITION_PATH;
+    if (originalDefinitionsDir === undefined) {
+      delete process.env.WORKFLOW_DEFINITIONS_DIR;
     } else {
-      process.env.WORKFLOW_DEFINITION_PATH = originalDefinitionPath;
+      process.env.WORKFLOW_DEFINITIONS_DIR = originalDefinitionsDir;
     }
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -27,31 +27,60 @@ describe('WorkflowService', () => {
     return service;
   }
 
-  function writeDefinition(definition: unknown): void {
-    const path = join(tempDir, 'order-flow.test.json');
-    writeFileSync(path, JSON.stringify(definition));
-    process.env.WORKFLOW_DEFINITION_PATH = path;
+  function writeDefinition(
+    fileName: string,
+    definition: unknown,
+  ): void {
+    writeFileSync(join(tempDir, fileName), JSON.stringify(definition));
+    process.env.WORKFLOW_DEFINITIONS_DIR = tempDir;
   }
 
   it('nạp định nghĩa v1 trong repo: 9 trạng thái, 10 chuyển', () => {
     const service = loadService();
-    const definition = service.getDefinition();
+    const definition = service.getDefinition('order-flow');
     expect(definition.definitionId).toBe('order-flow');
     expect(definition.version).toBe('1');
     expect(definition.states).toHaveLength(9);
     expect(definition.transitions).toHaveLength(10);
   });
 
+  it('nạp được nhiều định nghĩa trong cùng thư mục', () => {
+    const base = loadService().getDefinition('order-flow');
+    writeDefinition('order-flow.v1.json', base);
+    writeDefinition('other-flow.v1.json', {
+      ...base,
+      definitionId: 'other-flow',
+      version: '1',
+    });
+    const service = loadService();
+    expect(service.listDefinitions()).toHaveLength(2);
+    expect(service.getDefinition('other-flow').definitionId).toBe(
+      'other-flow',
+    );
+  });
+
+  it('không có định nghĩa thì báo 404', () => {
+    const service = loadService();
+    expect(() => service.getDefinition('khong-co')).toThrow(
+      'Không tìm thấy định nghĩa',
+    );
+  });
+
   it('cho phép chuyển hợp lệ đúng vai', () => {
     const service = loadService();
     expect(
-      service.canTransition('Mới tạo', 'Đã kiểm tra', 'Điều phối viên'),
+      service.canTransition(
+        'order-flow',
+        'Mới tạo',
+        'Đã kiểm tra',
+        'Điều phối viên',
+      ),
     ).toEqual({ allowed: true, requiredRole: 'Điều phối viên', reason: null });
   });
 
   it('từ chối chuyển trái phép kèm lý do', () => {
     const service = loadService();
-    const result = service.canTransition('Mới tạo', 'Đã giao');
+    const result = service.canTransition('order-flow', 'Mới tạo', 'Đã giao');
     expect(result.allowed).toBe(false);
     expect(result.requiredRole).toBeNull();
     expect(result.reason).toContain('không có trong định nghĩa');
@@ -59,21 +88,34 @@ describe('WorkflowService', () => {
 
   it('từ chối khi sai vai', () => {
     const service = loadService();
-    const result = service.canTransition('Mới tạo', 'Đã kiểm tra', 'Tài xế');
+    const result = service.canTransition(
+      'order-flow',
+      'Mới tạo',
+      'Đã kiểm tra',
+      'Tài xế',
+    );
     expect(result.allowed).toBe(false);
     expect(result.requiredRole).toBe('Điều phối viên');
   });
 
+  it('trạng thái đầu là phần tử đầu của states, trạng thái cuối không có chuyển đi ra', () => {
+    const service = loadService();
+    expect(service.getInitialState('order-flow')).toBe('Mới tạo');
+    expect(service.isTerminalState('order-flow', 'Hoàn')).toBe(true);
+    expect(service.isTerminalState('order-flow', 'Hủy')).toBe(true);
+    expect(service.isTerminalState('order-flow', 'Mới tạo')).toBe(false);
+  });
+
   it('bản sao định nghĩa trả ra không làm đổi định nghĩa đã nạp', () => {
     const service = loadService();
-    const copy = service.getDefinition();
+    const copy = service.getDefinition('order-flow');
     copy.states.push('Trạng thái lạ');
-    expect(service.getDefinition().states).toHaveLength(9);
+    expect(service.getDefinition('order-flow').states).toHaveLength(9);
   });
 
   it('đổi tệp định nghĩa, khởi động lại: luồng mới chạy được mà không sửa code', () => {
     const definition = JSON.parse(
-      JSON.stringify(loadService().getDefinition()),
+      JSON.stringify(loadService().getDefinition('order-flow')),
     ) as Record<string, unknown>;
     definition.version = '2-test';
     const transitions = definition.transitions as Array<Record<string, string>>;
@@ -83,16 +125,17 @@ describe('WorkflowService', () => {
       role: 'Điều phối viên',
       guard: 'có lý do hủy',
     });
-    writeDefinition(definition);
+    writeDefinition('order-flow.v1.json', definition);
     const service = loadService();
-    expect(service.getDefinition().version).toBe('2-test');
+    expect(service.getDefinition('order-flow').version).toBe('2-test');
     expect(
-      service.canTransition('Chờ kho', 'Hủy', 'Điều phối viên').allowed,
+      service.canTransition('order-flow', 'Chờ kho', 'Hủy', 'Điều phối viên')
+        .allowed,
     ).toBe(true);
   });
 
   it('tệp định nghĩa sai hình dạng thì chặn khởi động', () => {
-    writeDefinition({
+    writeDefinition('order-flow.v1.json', {
       definitionId: 'order-flow',
       version: 'x',
       states: ['A'],

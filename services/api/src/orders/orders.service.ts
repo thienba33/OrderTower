@@ -11,6 +11,7 @@ import {
 } from '../address/address.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import type {
   CreateOrderInput,
@@ -37,6 +38,7 @@ export class OrdersService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly address: AddressService,
+    private readonly instances: WorkflowInstanceService,
   ) {}
 
   create(input: CreateOrderInput): Order {
@@ -70,9 +72,18 @@ export class OrdersService {
         );
       }
     }
+    const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
+    // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
+    // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
+    const instance = this.instances.start({
+      definitionId: 'order-flow',
+      businessKey: id,
+      actor: input.actor,
+      role: input.role,
+    });
     const now = new Date().toISOString();
     const order: Order = {
-      id: `DH-${String(this.nextNumber++).padStart(4, '0')}`,
+      id,
       idempotencyKey: input.idempotencyKey,
       customer: input.customer,
       items: input.items.map((item) => ({
@@ -82,6 +93,7 @@ export class OrdersService {
       address: input.address ? { ...input.address } : undefined,
       addressTrust: evaluation ? evaluation.trust : null,
       addressLevel: evaluation ? evaluation.level : null,
+      workflowInstanceId: instance.id,
       state: 'Mới tạo',
       history: [
         { from: null, to: 'Mới tạo', by: input.actor, role: input.role, at: now },
@@ -147,6 +159,7 @@ export class OrdersService {
       );
     }
     const check = this.workflow.canTransition(
+      'order-flow',
       order.state,
       input.to,
       input.role,
@@ -156,7 +169,7 @@ export class OrdersService {
     }
     // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc, địa chỉ và tồn kho.
     const transition = this.workflow
-      .getTransitions()
+      .getTransitions('order-flow')
       .find((item) => item.from === order.state && item.to === input.to);
     let consumeStock = false;
     if (transition) {
@@ -197,34 +210,30 @@ export class OrdersService {
         consumeStock = true;
       }
     }
-    const now = new Date().toISOString();
+    // Rào chắn qua rồi mới cho instance chuyển; trạng thái luồng đổi ở
+    // instance, đơn đồng bộ lại trạng thái và lịch sử của mình.
+    const instance = this.instances.findByBusinessKey('order-flow', id);
+    if (!instance) {
+      throw new NotFoundException(`Không tìm thấy workflow instance của đơn ${id}.`);
+    }
+    const updated = this.instances.transition(instance.id, {
+      to: input.to,
+      actor: input.actor,
+      role: input.role,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.handling ? { handling: input.handling } : {}),
+    });
     const from = order.state;
-    order.state = input.to;
-    order.updatedAt = now;
+    order.state = updated.currentState;
+    order.updatedAt = updated.updatedAt;
     order.history.push({
       from,
       to: input.to,
       by: input.actor,
       role: input.role,
-      at: now,
+      at: updated.updatedAt,
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.handling ? { handling: input.handling } : {}),
-    });
-    const detailParts: string[] = [];
-    if (input.handling) {
-      detailParts.push(`Hướng xử lý: ${input.handling}`);
-    }
-    if (input.reason) {
-      detailParts.push(`Lý do: ${input.reason}`);
-    }
-    this.audit.append({
-      actor: input.actor,
-      role: input.role,
-      action: 'order.transition',
-      orderId: id,
-      from,
-      to: input.to,
-      detail: detailParts.join('; '),
     });
     if (consumeStock) {
       this.inventory.reserve(order.items);

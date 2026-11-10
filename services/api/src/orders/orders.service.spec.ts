@@ -2,6 +2,8 @@
 import { AddressService } from '../address/address.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { WorkflowInstanceService } from '../workflow/instance.service';
+import { InMemoryWorkflowInstanceStore } from '../workflow/instance.store';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OrdersService } from './orders.service';
 
@@ -9,6 +11,7 @@ function buildServices(): {
   orders: OrdersService;
   audit: AuditService;
   inventory: InventoryService;
+  instances: WorkflowInstanceService;
 } {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
@@ -17,8 +20,19 @@ function buildServices(): {
   inventory.onModuleInit();
   const address = new AddressService();
   address.onModuleInit();
-  const orders = new OrdersService(workflow, audit, inventory, address);
-  return { orders, audit, inventory };
+  const instances = new WorkflowInstanceService(
+    workflow,
+    audit,
+    new InMemoryWorkflowInstanceStore(),
+  );
+  const orders = new OrdersService(
+    workflow,
+    audit,
+    inventory,
+    address,
+    instances,
+  );
+  return { orders, audit, inventory, instances };
 }
 
 function createInput(key: string) {
@@ -43,14 +57,21 @@ const DRIVER = { actor: 'nam', role: 'Tài xế' };
 
 describe('OrdersService', () => {
   it('tạo đơn ở trạng thái Mới tạo, ghi lịch sử và audit', () => {
-    const { orders, audit } = buildServices();
+    const { orders, audit, instances } = buildServices();
     const order = orders.create(createInput('key-1'));
     expect(order.id).toBe('DH-1001');
     expect(order.state).toBe('Mới tạo');
+    expect(order.workflowInstanceId).toBe('WF-1001');
+    const instance = instances.findByBusinessKey('order-flow', 'DH-1001');
+    expect(instance?.currentState).toBe('Mới tạo');
+    expect(instance?.status).toBe('active');
     expect(order.history).toHaveLength(1);
     expect(order.history[0]).toMatchObject({ from: null, to: 'Mới tạo' });
-    expect(audit.getAll()).toHaveLength(1);
-    expect(audit.getAll()[0].action).toBe('order.created');
+    expect(audit.getAll()).toHaveLength(2);
+    expect(audit.getAll().map((record) => record.action)).toEqual([
+      'workflow.instance.started',
+      'order.created',
+    ]);
   });
 
   it('từ chối đơn trùng idempotencyKey', () => {
@@ -58,11 +79,11 @@ describe('OrdersService', () => {
     orders.create(createInput('key-1'));
     expect(() => orders.create(createInput('key-1'))).toThrow('đã tồn tại');
     expect(orders.list()).toHaveLength(1);
-    expect(audit.getAll()).toHaveLength(1);
+    expect(audit.getAll()).toHaveLength(2);
   });
 
   it('đơn đi tròn 9 trạng thái tới Hoàn', () => {
-    const { orders, audit } = buildServices();
+    const { orders, audit, instances } = buildServices();
     const order = orders.create(createInput('key-1'));
     const steps: Array<{
       to: string;
@@ -84,8 +105,12 @@ describe('OrdersService', () => {
     }
     expect(current.state).toBe('Hoàn');
     expect(current.history).toHaveLength(8);
-    expect(audit.getAll()).toHaveLength(8);
+    expect(audit.getAll()).toHaveLength(9);
     expect(audit.verify().valid).toBe(true);
+    const instance = instances.findByBusinessKey('order-flow', order.id);
+    expect(instance?.status).toBe('completed');
+    expect(instance?.history).toHaveLength(8);
+    expect(instance?.currentState).toBe('Hoàn');
   });
 
   it('hủy đơn từ Mới tạo cần có lý do', () => {

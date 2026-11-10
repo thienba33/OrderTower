@@ -29,6 +29,8 @@ export interface Order {
   // Mức tin cậy địa chỉ tính lúc tạo đơn, null khi đơn không có địa chỉ.
   addressTrust: number | null;
   addressLevel: AddressLevel | null;
+  // Id của workflow instance quản lý trạng thái của đơn.
+  workflowInstanceId: string;
   state: string;
   history: OrderHistoryEntry[];
   createdAt: string;
