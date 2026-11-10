@@ -85,6 +85,9 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       KEYCLOAK_URL: ${KEYCLOAK_URL:-http://localhost:9080}
+      # URL nội bộ để API lấy discovery và JWKS của Keycloak (jwks_uri công
+      # khai không tới được từ trong container API).
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-ordertower}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-ordertower-web}
       S3_ENDPOINT: http://seaweedfs:8333
