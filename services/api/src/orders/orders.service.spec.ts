@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AuditService } from '../audit/audit.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OrdersService } from './orders.service';
 
-function buildServices(): { orders: OrdersService; audit: AuditService } {
+function buildServices(): {
+  orders: OrdersService;
+  audit: AuditService;
+  inventory: InventoryService;
+} {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
   const audit = new AuditService();
-  const orders = new OrdersService(workflow, audit);
-  return { orders, audit };
+  const inventory = new InventoryService();
+  inventory.onModuleInit();
+  const orders = new OrdersService(workflow, audit, inventory);
+  return { orders, audit, inventory };
 }
 
 function createInput(key: string) {
@@ -114,6 +121,51 @@ describe('OrdersService', () => {
     expect(() =>
       orders.transition(order.id, { to: 'Mới tạo', ...COORDINATOR }),
     ).toThrow('đã ở trạng thái đóng');
+  });
+
+  it('đóng gói thành công thì giữ hàng trong kho', () => {
+    const { orders, inventory } = buildServices();
+    const order = orders.create(createInput('key-1'));
+    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
+    const packed = orders.transition(order.id, {
+      to: 'Đang đóng gói',
+      ...WAREHOUSE,
+    });
+    expect(packed.state).toBe('Đang đóng gói');
+    expect(inventory.get('NM-40')).toMatchObject({ stock: 450, reserved: 2 });
+  });
+
+  it('tồn kho không đủ thì chặn đóng gói, đơn giữ nguyên trạng thái', () => {
+    const { orders, audit, inventory } = buildServices();
+    const order = orders.create({
+      ...createInput('key-1'),
+      items: [{ sku: 'NM-40', quantity: 9999 }],
+    });
+    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
+    expect(() =>
+      orders.transition(order.id, { to: 'Đang đóng gói', ...WAREHOUSE }),
+    ).toThrow('Tồn kho không đủ');
+    expect(orders.findOne(order.id).state).toBe('Chờ kho');
+    expect(inventory.get('NM-40')).toMatchObject({ stock: 452, reserved: 0 });
+    const denied = audit
+      .getAll()
+      .filter((record) => record.action === 'order.transition.denied');
+    expect(denied).toHaveLength(1);
+  });
+
+  it('SKU không có trong kho thì chặn đóng gói', () => {
+    const { orders } = buildServices();
+    const order = orders.create({
+      ...createInput('key-1'),
+      items: [{ sku: 'XX-00', quantity: 1 }],
+    });
+    orders.transition(order.id, { to: 'Đã kiểm tra', ...COORDINATOR });
+    orders.transition(order.id, { to: 'Chờ kho', ...COORDINATOR });
+    expect(() =>
+      orders.transition(order.id, { to: 'Đang đóng gói', ...WAREHOUSE }),
+    ).toThrow('không có trong kho');
   });
 
   it('không tìm thấy đơn thì báo 404', () => {

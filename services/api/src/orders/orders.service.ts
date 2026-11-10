@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import type {
   CreateOrderInput,
@@ -25,6 +26,7 @@ export class OrdersService {
   constructor(
     private readonly workflow: WorkflowService,
     private readonly audit: AuditService,
+    private readonly inventory: InventoryService,
   ) {}
 
   create(input: CreateOrderInput): Order {
@@ -148,18 +150,29 @@ export class OrdersService {
     if (!check.allowed) {
       deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
-    // Rào chắn lý do: chuyển nào có guard nhắc tới lý do thì bắt buộc có reason.
+    // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc và tồn kho đủ.
     const transition = this.workflow
       .getTransitions()
       .find((item) => item.from === order.state && item.to === input.to);
-    if (
-      transition &&
-      transition.guard.includes('lý do') &&
-      (input.reason === undefined || input.reason.trim() === '')
-    ) {
-      throw new BadRequestException(
-        `Chuyển sang "${input.to}" cần có lý do (guard "${transition.guard}").`,
-      );
+    let consumeStock = false;
+    if (transition) {
+      if (
+        transition.guard.includes('lý do') &&
+        (input.reason === undefined || input.reason.trim() === '')
+      ) {
+        throw new BadRequestException(
+          `Chuyển sang "${input.to}" cần có lý do (guard "${transition.guard}").`,
+        );
+      }
+      if (transition.guard.includes('tồn kho')) {
+        const stock = this.inventory.checkSufficient(order.items);
+        if (!stock.sufficient) {
+          deny(
+            `Tồn kho không đủ: ${stock.lacking.map((item) => item.reason).join(' ')}`,
+          );
+        }
+        consumeStock = true;
+      }
     }
     const now = new Date().toISOString();
     const from = order.state;
@@ -182,6 +195,9 @@ export class OrdersService {
       to: input.to,
       detail: input.reason ?? '',
     });
+    if (consumeStock) {
+      this.inventory.reserve(order.items);
+    }
     return copyOrder(order);
   }
 }

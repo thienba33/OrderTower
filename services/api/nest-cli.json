@@ -3,7 +3,8 @@
   "collection": "@nestjs/schematics",
   "compilerOptions": {
     "assets": [
-      "workflow/definitions/*.json"
+      "workflow/definitions/*.json",
+      "inventory/data/*.json"
     ],
     "deleteOutDir": true
   },
