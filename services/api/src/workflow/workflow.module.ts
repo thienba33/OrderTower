@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+import { Module } from '@nestjs/common';
+import { WorkflowController } from './workflow.controller';
+import { WorkflowService } from './workflow.service';
+
+@Module({
+  controllers: [WorkflowController],
+  providers: [WorkflowService],
+  exports: [WorkflowService],
+})
+export class WorkflowModule {}
