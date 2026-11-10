@@ -2,8 +2,11 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
+  OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import {
   AddressService,
@@ -14,8 +17,11 @@ import type { Caller } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
 import { ApprovalService } from '../approvals/approval.service';
 import type { Approval } from '../approvals/approval.types';
+import { computeNextNumber } from '../db/id-counter';
 import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
+import { InMemoryOrderStore, ORDER_STORE } from './orders.store';
+import type { OrderStore } from './orders.types';
 import type {
   CreateOrderInput,
   Order,
@@ -30,12 +36,15 @@ const CLOSED_STATES = ['Hoàn', 'Hủy'];
 // kho đã giữ hàng cho đơn nên mặt hàng bị khóa, chỉ sửa được khách và địa chỉ.
 const EDITABLE_ITEMS_STATES = ['Mới tạo', 'Đã kiểm tra', 'Chờ kho'];
 
-// Lưu trong bộ nhớ, sẽ chuyển sang Postgres khi nhánh platform-database vào dev.
+// Đơn hàng nghiệp vụ: tạo, chuyển trạng thái qua Workflow engine, sửa.
+// Trạng thái luồng sống ở workflow instance, đơn chỉ giữ mã instance và đồng
+// bộ trạng thái sau mỗi lần chuyển.
 @Injectable()
-export class OrdersService {
-  private readonly orders = new Map<string, Order>();
+export class OrdersService implements OnModuleInit {
   private nextNumber = 1001;
 
+  // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị cũ không cần
+  // truyền gì thêm. Khi chạy trong NestJS, mô-đun tiêm kho Postgres.
   constructor(
     private readonly workflow: WorkflowService,
     private readonly audit: AuditService,
@@ -43,9 +52,25 @@ export class OrdersService {
     private readonly address: AddressService,
     private readonly instances: WorkflowInstanceService,
     private readonly approvals: ApprovalService,
+    @Optional()
+    @Inject(ORDER_STORE)
+    private readonly store: OrderStore = new InMemoryOrderStore(),
   ) {}
 
-  create(input: CreateOrderInput, caller: Caller): Order {
+  // Tiếp tục số thứ tự từ kho: đã có DH-1001 thì đơn mới là DH-1002, không
+  // quay về DH-1001 sau khi khởi động lại.
+  async onModuleInit(): Promise<void> {
+    const orders = await this.store.list();
+    this.nextNumber = computeNextNumber(
+      orders.map((order) => order.id),
+      'DH',
+    );
+  }
+
+  async create(
+    input: CreateOrderInput,
+    caller: Caller,
+  ): Promise<Order> {
     if (
       typeof input.idempotencyKey !== 'string' ||
       input.idempotencyKey.trim() === ''
@@ -63,17 +88,18 @@ export class OrdersService {
       ? this.address.evaluate(input.address)
       : null;
     // Rào chắn: không xác nhận đơn trùng (cùng idempotencyKey).
-    for (const existing of this.orders.values()) {
-      if (existing.idempotencyKey === input.idempotencyKey) {
-        throw new ConflictException(
-          `Đơn với idempotencyKey "${input.idempotencyKey}" đã tồn tại (${existing.id}).`,
-        );
-      }
+    const duplicate = await this.store.findByIdempotencyKey(
+      input.idempotencyKey,
+    );
+    if (duplicate) {
+      throw new ConflictException(
+        `Đơn với idempotencyKey "${input.idempotencyKey}" đã tồn tại (${duplicate.id}).`,
+      );
     }
     const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
     // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
     // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
-    const instance = this.instances.start(
+    const instance = await this.instances.start(
       {
         definitionId: 'order-flow',
         businessKey: id,
@@ -106,8 +132,8 @@ export class OrdersService {
       createdAt: now,
       updatedAt: now,
     };
-    this.orders.set(order.id, order);
-    this.audit.append({
+    await this.store.save(order);
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'order.created',
@@ -119,28 +145,33 @@ export class OrdersService {
     return copyOrder(order);
   }
 
-  list(): Order[] {
-    return [...this.orders.values()].map(copyOrder);
+  async list(): Promise<Order[]> {
+    const orders = await this.store.list();
+    return orders.map(copyOrder);
   }
 
-  findOne(id: string): Order {
-    const order = this.orders.get(id);
+  async findOne(id: string): Promise<Order> {
+    const order = await this.store.findById(id);
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
     }
     return copyOrder(order);
   }
 
-  transition(id: string, input: TransitionOrderInput, caller: Caller): Order {
+  async transition(
+    id: string,
+    input: TransitionOrderInput,
+    caller: Caller,
+  ): Promise<Order> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
     }
-    const order = this.orders.get(id);
+    const order = await this.store.findById(id);
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
     }
-    const deny = (reason: string): never => {
-      this.audit.append({
+    const deny = async (reason: string): Promise<never> => {
+      await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'order.transition.denied',
@@ -153,7 +184,7 @@ export class OrdersService {
     };
     // Rào chắn: không sửa đơn đã đóng.
     if (CLOSED_STATES.includes(order.state)) {
-      deny(
+      await deny(
         `Đơn ${id} đã ở trạng thái đóng "${order.state}", không chuyển được nữa.`,
       );
     }
@@ -164,7 +195,7 @@ export class OrdersService {
       caller.roles,
     );
     if (!check.allowed) {
-      deny(check.reason ?? 'Chuyển trạng thái không được phép.');
+      await deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
     // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc, địa chỉ và tồn kho.
     const transition = this.workflow
@@ -196,13 +227,13 @@ export class OrdersService {
           addressDenial = `Địa chỉ của đơn ${id} chỉ đạt mức tin cậy ${addressTrust} (${order.addressLevel}), chưa đạt tối thiểu ${MIN_ADDRESS_TRUST}.`;
         }
         if (addressDenial !== null) {
-          deny(addressDenial);
+          await deny(addressDenial);
         }
       }
       if (transition.guard.includes('tồn kho')) {
-        const stock = this.inventory.checkSufficient(order.items);
+        const stock = await this.inventory.checkSufficient(order.items);
         if (!stock.sufficient) {
-          deny(
+          await deny(
             `Tồn kho không đủ: ${stock.lacking.map((item) => item.reason).join(' ')}`,
           );
         }
@@ -211,11 +242,11 @@ export class OrdersService {
     }
     // Rào chắn qua rồi mới cho instance chuyển; trạng thái luồng đổi ở
     // instance, đơn đồng bộ lại trạng thái và lịch sử của mình.
-    const instance = this.instances.findByBusinessKey('order-flow', id);
+    const instance = await this.instances.findByBusinessKey('order-flow', id);
     if (!instance) {
       throw new NotFoundException(`Không tìm thấy workflow instance của đơn ${id}.`);
     }
-    const updated = this.instances.transition(
+    const updated = await this.instances.transition(
       instance.id,
       {
         to: input.to,
@@ -236,8 +267,11 @@ export class OrdersService {
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.handling ? { handling: input.handling } : {}),
     });
+    // Lưu đơn trước khi giữ hàng: giống bản bộ nhớ cũ, thay đổi trạng thái
+    // đã nằm trong kho thì mới chạm tới kho hàng.
+    await this.store.save(order);
     if (consumeStock) {
-      this.inventory.reserve(order.items);
+      await this.inventory.reserve(order.items);
     }
     return copyOrder(order);
   }
@@ -246,8 +280,12 @@ export class OrdersService {
   // và người phê duyệt, mọi lần sửa đều ghi audit. Sửa mặt hàng làm đổi
   // lượng hàng đã giữ nên chỉ được khi đơn chưa giữ hàng, hoặc đơn đã đóng
   // (sửa hồ sơ, không chạm kho thật).
-  update(id: string, input: UpdateOrderInput, caller: Caller): Order {
-    const order = this.orders.get(id);
+  async update(
+    id: string,
+    input: UpdateOrderInput,
+    caller: Caller,
+  ): Promise<Order> {
+    const order = await this.store.findById(id);
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
     }
@@ -297,7 +335,7 @@ export class OrdersService {
     // khi sửa; chỉ trừ phê duyệt sau khi sửa xong.
     let approval: Approval | null = null;
     if (closed) {
-      approval = this.approvals.get(input.approvalId as string);
+      approval = await this.approvals.get(input.approvalId as string);
       if (
         approval.type !== 'order.edit.closed' ||
         approval.subjectId !== id
@@ -342,7 +380,8 @@ export class OrdersService {
       at: now,
       ...(input.reason ? { reason: input.reason } : {}),
     });
-    this.audit.append({
+    await this.store.save(order);
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: closed ? 'order.edit.approved' : 'order.edit',
@@ -354,7 +393,7 @@ export class OrdersService {
         : (input.reason ?? ''),
     });
     if (closed && approval) {
-      this.approvals.markApplied(approval.id, caller);
+      await this.approvals.markApplied(approval.id, caller);
     }
     return copyOrder(order);
   }

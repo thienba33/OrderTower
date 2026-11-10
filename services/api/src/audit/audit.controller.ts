@@ -8,13 +8,13 @@ export class AuditController {
   constructor(private readonly audit: AuditService) {}
 
   @Get()
-  list(): AuditRecord[] {
+  async list(): Promise<AuditRecord[]> {
     return this.audit.getAll();
   }
 
   // Endpoint kiểm tra chuỗi, dùng cho bài kiểm thử bắt buộc của Issue #17.
   @Get('verify')
-  verify(): AuditVerifyResult {
+  async verify(): Promise<AuditVerifyResult> {
     return this.audit.verify();
   }
 }

@@ -37,6 +37,16 @@ export interface Order {
   updatedAt: string;
 }
 
+// Lối ra vào kho đơn. Hiện có bản bộ nhớ; bản Postgres lưu bền qua cùng
+// interface này, service phía trên không đổi. Mọi phương thức đều bất đồng bộ
+// vì kho Postgres cần chờ truy vấn.
+export interface OrderStore {
+  save(order: Order): Promise<void>;
+  findById(id: string): Promise<Order | null>;
+  findByIdempotencyKey(key: string): Promise<Order | null>;
+  list(): Promise<Order[]>;
+}
+
 export interface CreateOrderInput {
   idempotencyKey: string;
   customer: string;

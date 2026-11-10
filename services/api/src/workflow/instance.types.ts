@@ -46,14 +46,15 @@ export interface TransitionInstanceInput {
   handling?: string;
 }
 
-// Lối ra vào kho instance. Hiện có bản bộ nhớ; commit lưu bền Postgres sẽ
-// thêm bản Postgres qua cùng interface này, service phía trên không đổi.
+// Lối ra vào kho instance. Hiện có bản bộ nhớ; bản Postgres lưu bền qua cùng
+// interface này, service phía trên không đổi. Mọi phương thức đều bất đồng bộ
+// vì kho Postgres cần chờ truy vấn.
 export interface WorkflowInstanceStore {
-  save(instance: WorkflowInstance): void;
-  findById(id: string): WorkflowInstance | null;
+  save(instance: WorkflowInstance): Promise<void>;
+  findById(id: string): Promise<WorkflowInstance | null>;
   findByBusinessKey(
     definitionId: string,
     businessKey: string,
-  ): WorkflowInstance | null;
-  list(): WorkflowInstance[];
+  ): Promise<WorkflowInstance | null>;
+  list(): Promise<WorkflowInstance[]>;
 }

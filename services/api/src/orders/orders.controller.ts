@@ -17,17 +17,17 @@ export class OrdersController {
   create(
     @Body() body: CreateOrderInput,
     @Req() req: AuthenticatedRequest,
-  ): Order {
+  ): Promise<Order> {
     return this.orders.create(body, req.user);
   }
 
   @Get()
-  list(): Order[] {
+  list(): Promise<Order[]> {
     return this.orders.list();
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string): Order {
+  findOne(@Param('id') id: string): Promise<Order> {
     return this.orders.findOne(id);
   }
 
@@ -36,7 +36,7 @@ export class OrdersController {
     @Param('id') id: string,
     @Body() body: TransitionOrderInput,
     @Req() req: AuthenticatedRequest,
-  ): Order {
+  ): Promise<Order> {
     return this.orders.transition(id, body, req.user);
   }
 
@@ -45,7 +45,7 @@ export class OrdersController {
     @Param('id') id: string,
     @Body() body: UpdateOrderInput,
     @Req() req: AuthenticatedRequest,
-  ): Order {
+  ): Promise<Order> {
     return this.orders.update(id, body, req.user);
   }
 }

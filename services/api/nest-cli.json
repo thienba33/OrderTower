@@ -5,7 +5,8 @@
     "assets": [
       "workflow/definitions/*.json",
       "inventory/data/*.json",
-      "address/data/*.json"
+      "address/data/*.json",
+      "db/migrations/*.sql"
     ],
     "deleteOutDir": true
   },

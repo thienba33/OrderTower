@@ -26,8 +26,12 @@ Một lượt chạy của 1 định nghĩa luồng, quản lý bởi `WorkflowI
 - `suspend` / `resume` tạm dừng và tiếp tục instance đang chạy; `terminate`
   kết thúc instance, bắt buộc có lý do. Quay lui chỉ qua chuyển đã định
   nghĩa, không có nhảy trạng thái tự do.
-- Kho instance nằm sau interface `WorkflowInstanceStore`, hiện là bản bộ nhớ,
-  commit lưu bền sẽ thay bằng Postgres mà service phía trên không đổi.
+- Kho instance nằm sau interface `WorkflowInstanceStore`. Khi chạy thật, kho
+  là Postgres (`PostgresWorkflowInstanceStore`, bảng `workflow_instances` và
+  `workflow_instance_history`, lưu bền qua `src/db/`); bản bộ nhớ
+  (`InMemoryWorkflowInstanceStore`) chỉ dùng trong kiểm thử đơn vị. Số thứ tự
+  instance (WF-1001...) tiếp tục từ số lớn nhất đã có trong kho, khởi động
+  lại API không quay về WF-1001.
 
 ## Xác thực và phân quyền
 

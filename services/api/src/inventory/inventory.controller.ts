@@ -8,13 +8,13 @@ export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
 
   @Get()
-  list(): InventoryItem[] {
+  list(): Promise<InventoryItem[]> {
     return this.inventory.list();
   }
 
   @Get(':sku')
-  getOne(@Param('sku') sku: string): InventoryItem {
-    const item = this.inventory.get(sku);
+  async getOne(@Param('sku') sku: string): Promise<InventoryItem> {
+    const item = await this.inventory.get(sku);
     if (!item) {
       throw new NotFoundException(`Không tìm thấy SKU ${sku} trong kho.`);
     }

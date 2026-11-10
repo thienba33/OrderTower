@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import type {
   InventoryItem,
   InventorySeedItem,
   StockCheck,
 } from './inventory.types';
 import type { OrderItem } from '../orders/orders.types';
+import { INVENTORY_STORE, InMemoryInventoryStore } from './inventory.store';
+import type { InventoryStore } from './inventory.store';
 
 // Tên tệp seed mặc định. Đổi tệp seed rồi khởi động lại thì kho mới có hiệu lực.
 const DEFAULT_SEED_FILE = 'inventory.seed.json';
@@ -16,19 +18,37 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-// Tồn kho theo SKU, nạp từ tệp seed. Hiện lưu trong bộ nhớ, sẽ chuyển sang
-// Postgres khi nhánh platform-database vào dev.
+// Tồn kho theo SKU, nạp từ tệp seed. Kho mặc định là Postgres (xem
+// inventory.module.ts); bộ nhớ chỉ dùng khi khởi tạo thủ công trong kiểm thử.
+// Tệp seed là nguồn sự thật: khi bảng inventory còn trống thì nạp seed vào,
+// khi đã có dữ liệu thì giữ nguyên, khởi động lại không đặt lại số lượng.
 @Injectable()
 export class InventoryService implements OnModuleInit {
   private readonly logger = new Logger(InventoryService.name);
-  private readonly items = new Map<string, InventoryItem>();
 
-  onModuleInit(): void {
+  // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị cũ không cần
+  // truyền gì thêm. Khi chạy trong NestJS, mô-đun tiêm kho Postgres.
+  constructor(
+    @Optional()
+    @Inject(INVENTORY_STORE)
+    private readonly store: InventoryStore = new InMemoryInventoryStore(),
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    // Đọc và kiểm tra seed trước: tệp seed sai vẫn chặn khởi động, dù kho
+    // đã có dữ liệu.
     const seed = this.loadSeed();
-    for (const item of seed) {
-      this.items.set(item.sku, { ...item, reserved: 0 });
+    const existing = await this.store.list();
+    if (existing.length > 0) {
+      this.logger.log(
+        `Kho đã có ${existing.length} SKU trong DB, giữ nguyên dữ liệu.`,
+      );
+      return;
     }
-    this.logger.log(`Đã nạp tồn kho ${this.items.size} SKU từ tệp seed.`);
+    for (const item of seed) {
+      await this.store.save({ ...item, reserved: 0 });
+    }
+    this.logger.log(`Đã nạp tồn kho ${seed.length} SKU từ tệp seed.`);
   }
 
   resolveSeedPath(): string {
@@ -38,20 +58,19 @@ export class InventoryService implements OnModuleInit {
     return join(__dirname, 'data', DEFAULT_SEED_FILE);
   }
 
-  list(): InventoryItem[] {
-    return [...this.items.values()].map((item) => ({ ...item }));
+  async list(): Promise<InventoryItem[]> {
+    return this.store.list();
   }
 
-  get(sku: string): InventoryItem | null {
-    const item = this.items.get(sku);
-    return item ? { ...item } : null;
+  async get(sku: string): Promise<InventoryItem | null> {
+    return this.store.get(sku);
   }
 
   // Kiểm tra đủ hàng cho các mặt hàng của 1 đơn, chưa trừ kho.
-  checkSufficient(items: OrderItem[]): StockCheck {
+  async checkSufficient(items: OrderItem[]): Promise<StockCheck> {
     const lacking: StockCheck['lacking'] = [];
     for (const item of items) {
-      const held = this.items.get(item.sku);
+      const held = await this.store.get(item.sku);
       if (!held) {
         lacking.push({
           sku: item.sku,
@@ -72,9 +91,9 @@ export class InventoryService implements OnModuleInit {
   }
 
   // Giữ hàng cho 1 đơn. Chỉ gọi sau khi checkSufficient đã đạt.
-  reserve(items: OrderItem[]): void {
+  async reserve(items: OrderItem[]): Promise<void> {
     for (const item of items) {
-      const held = this.items.get(item.sku);
+      const held = await this.store.get(item.sku);
       if (!held) {
         throw new Error(`Không giữ được hàng: SKU ${item.sku} không có trong kho.`);
       }
@@ -85,6 +104,7 @@ export class InventoryService implements OnModuleInit {
       }
       held.stock -= item.quantity;
       held.reserved += item.quantity;
+      await this.store.save(held);
     }
   }
 

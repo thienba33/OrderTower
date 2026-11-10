@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Caller } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { createTestDbService } from '../db/test-helpers';
 import { ApprovalService } from './approval.service';
-import { InMemoryApprovalStore } from './approval.store';
+import {
+  InMemoryApprovalStore,
+  PostgresApprovalStore,
+} from './approval.store';
 
 const COORDINATOR: Caller = {
   userId: 'user-son',
@@ -41,80 +45,80 @@ function requestEdit(
 }
 
 describe('ApprovalService', () => {
-  it('mở yêu cầu phê duyệt ở trạng thái chờ, ghi audit', () => {
+  it('mở yêu cầu phê duyệt ở trạng thái chờ, ghi audit', async () => {
     const { approvals, audit } = buildServices();
-    const approval = requestEdit(approvals);
+    const approval = await requestEdit(approvals);
     expect(approval.id).toBe('AP-1001');
     expect(approval.status).toBe('pending');
     expect(approval.requestedBy).toBe('son');
     expect(approval.decidedBy).toBeNull();
     expect(
-      audit.getAll().filter((r) => r.action === 'approval.requested'),
+      (await audit.getAll()).filter((r) => r.action === 'approval.requested'),
     ).toHaveLength(1);
   });
 
-  it('người xin không được tự duyệt yêu cầu của mình', () => {
+  it('người xin không được tự duyệt yêu cầu của mình', async () => {
     const { approvals } = buildServices();
-    const approval = requestEdit(approvals);
-    expect(() => approvals.approve(approval.id, COORDINATOR)).toThrow(
+    const approval = await requestEdit(approvals);
+    await expect(approvals.approve(approval.id, COORDINATOR)).rejects.toThrow(
       'không được tự duyệt',
     );
-    expect(() => approvals.approve(approval.id, DRIVER)).toThrow(
+    await expect(approvals.approve(approval.id, DRIVER)).rejects.toThrow(
       'cần vai Quản lý hoặc Quản trị viên',
     );
-    const managerRequest = requestEdit(approvals, MANAGER);
-    expect(() => approvals.approve(managerRequest.id, MANAGER)).toThrow(
-      'không được tự duyệt',
-    );
+    const managerRequest = await requestEdit(approvals, MANAGER);
+    await expect(
+      approvals.approve(managerRequest.id, MANAGER),
+    ).rejects.toThrow('không được tự duyệt');
   });
 
-  it('chỉ Quản lý và Quản trị viên duyệt được', () => {
+  it('chỉ Quản lý và Quản trị viên duyệt được', async () => {
     const { approvals } = buildServices();
-    const approval = requestEdit(approvals);
-    expect(() => approvals.approve(approval.id, DRIVER)).toThrow(
+    const approval = await requestEdit(approvals);
+    await expect(approvals.approve(approval.id, DRIVER)).rejects.toThrow(
       'cần vai Quản lý hoặc Quản trị viên',
     );
-    const decided = approvals.approve(approval.id, MANAGER, 'Đồng ý sửa');
+    const decided = await approvals.approve(approval.id, MANAGER, 'Đồng ý sửa');
     expect(decided.status).toBe('approved');
     expect(decided.decidedBy).toBe('quan-ly');
     expect(decided.decisionReason).toBe('Đồng ý sửa');
   });
 
-  it('từ chối bắt buộc có lý do, quyết rồi thì không quyết lại', () => {
+  it('từ chối bắt buộc có lý do, quyết rồi thì không quyết lại', async () => {
     const { approvals } = buildServices();
-    const approval = requestEdit(approvals);
-    expect(() => approvals.reject(approval.id, MANAGER, '')).toThrow(
-      'cần có lý do',
-    );
-    const decided = approvals.reject(
+    const approval = await requestEdit(approvals);
+    await expect(
+      approvals.reject(approval.id, MANAGER, ''),
+    ).rejects.toThrow('cần có lý do');
+    const decided = await approvals.reject(
       approval.id,
       MANAGER,
       'Chưa đủ căn cứ sửa',
     );
     expect(decided.status).toBe('rejected');
-    expect(() => approvals.approve(approval.id, MANAGER)).toThrow(
+    await expect(approvals.approve(approval.id, MANAGER)).rejects.toThrow(
       'đã được quyết',
     );
   });
 
-  it('1 phê duyệt chỉ áp dụng 1 lần', () => {
+  it('1 phê duyệt chỉ áp dụng 1 lần', async () => {
     const { approvals } = buildServices();
-    const approval = requestEdit(approvals);
-    expect(() => approvals.markApplied(approval.id, COORDINATOR)).toThrow(
-      'không áp dụng được',
-    );
-    approvals.approve(approval.id, MANAGER);
-    const applied = approvals.markApplied(approval.id, COORDINATOR);
+    const approval = await requestEdit(approvals);
+    await expect(
+      approvals.markApplied(approval.id, COORDINATOR),
+    ).rejects.toThrow('không áp dụng được');
+    await approvals.approve(approval.id, MANAGER);
+    const applied = await approvals.markApplied(approval.id, COORDINATOR);
     expect(applied.appliedAt).not.toBeNull();
-    expect(() => approvals.markApplied(approval.id, COORDINATOR)).toThrow(
-      'đã được dùng',
-    );
+    await expect(
+      approvals.markApplied(approval.id, COORDINATOR),
+    ).rejects.toThrow('đã được dùng');
   });
 
-  it('lấy và lọc phê duyệt theo loại, thực thể, trạng thái', () => {
+  it('lấy và lọc phê duyệt theo loại, thực thể, trạng thái', async () => {
     const { approvals } = buildServices();
-    requestEdit(approvals);
-    const second = approvals.request(
+    await requestEdit(approvals);
+    const second = await approvals.request(
       {
         type: 'address.low-trust',
         subjectId: 'DH-1002',
@@ -122,21 +126,76 @@ describe('ApprovalService', () => {
       },
       COORDINATOR,
     );
-    approvals.approve(second.id, MANAGER);
-    expect(approvals.list({})).toHaveLength(2);
+    await approvals.approve(second.id, MANAGER);
+    expect(await approvals.list({})).toHaveLength(2);
     expect(
-      approvals.list({ type: 'order.edit.closed' }),
+      await approvals.list({ type: 'order.edit.closed' }),
     ).toHaveLength(1);
-    expect(approvals.list({ status: 'approved' })).toHaveLength(1);
-    expect(approvals.list({ subjectId: 'DH-1002' })).toHaveLength(1);
-    expect(() => approvals.get('AP-9999')).toThrow('Không tìm thấy phê duyệt');
+    expect(await approvals.list({ status: 'approved' })).toHaveLength(1);
+    expect(await approvals.list({ subjectId: 'DH-1002' })).toHaveLength(1);
+    await expect(approvals.get('AP-9999')).rejects.toThrow(
+      'Không tìm thấy phê duyệt',
+    );
   });
 
-  it('bản sao trả ra không làm đổi phê duyệt trong kho', () => {
+  it('bản sao trả ra không làm đổi phê duyệt trong kho', async () => {
     const { approvals } = buildServices();
-    const approval = requestEdit(approvals);
-    const copy = approvals.get(approval.id);
+    const approval = await requestEdit(approvals);
+    const copy = await approvals.get(approval.id);
     copy.status = 'approved';
-    expect(approvals.get(approval.id).status).toBe('pending');
+    expect((await approvals.get(approval.id)).status).toBe('pending');
+  });
+});
+
+describe('PostgresApprovalStore', () => {
+  it('lưu rồi đọc lại giống hệt, kèm quyết định và lần áp dụng', async () => {
+    const db = await createTestDbService();
+    const audit = new AuditService();
+    const store = new PostgresApprovalStore(db);
+    const approvals = new ApprovalService(audit, store);
+    const requested = await approvals.request(
+      {
+        type: 'order.edit.closed',
+        subjectId: 'DH-1001',
+        reason: 'Sửa tên khách cho đúng sổ',
+      },
+      COORDINATOR,
+    );
+    expect(requested.id).toBe('AP-1001');
+    const decided = await approvals.approve(
+      requested.id,
+      MANAGER,
+      'Đồng ý sửa',
+    );
+    const applied = await approvals.markApplied(requested.id, COORDINATOR);
+    const loaded = await store.findById(requested.id);
+    expect(loaded).toEqual(applied);
+    expect(loaded?.decidedBy).toBe('quan-ly');
+    expect(loaded?.decisionReason).toBe('Đồng ý sửa');
+    expect(loaded?.appliedAt).not.toBeNull();
+    expect((await store.list()).map((item) => item.id)).toEqual(['AP-1001']);
+    expect(await store.findById('AP-9999')).toBeNull();
+  });
+
+  it('khởi động lại service thì số phê duyệt tiếp tục tăng', async () => {
+    const db = await createTestDbService();
+    const audit = new AuditService();
+    const store = new PostgresApprovalStore(db);
+    const first = new ApprovalService(audit, store);
+    await first.onModuleInit();
+    const one = await first.request(
+      { type: 'order.edit.closed', subjectId: 'DH-1001', reason: 'Lý do 1' },
+      COORDINATOR,
+    );
+    expect(one.id).toBe('AP-1001');
+    // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
+    const second = new ApprovalService(audit, store);
+    await second.onModuleInit();
+    const two = await second.request(
+      { type: 'order.edit.closed', subjectId: 'DH-1002', reason: 'Lý do 2' },
+      COORDINATOR,
+    );
+    expect(two.id).toBe('AP-1002');
+    expect((await second.get(one.id)).subjectId).toBe('DH-1001');
   });
 });

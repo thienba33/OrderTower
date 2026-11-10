@@ -5,9 +5,11 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { computeNextNumber } from '../db/id-counter';
 import type {
   Approval,
   ApprovalStatus,
@@ -28,7 +30,7 @@ function copyApproval(approval: Approval): Approval {
 // Người duyệt khác người xin (tách nhiệm), vai duyệt phải thuộc
 // APPROVER_ROLES, mọi bước đều ghi audit với người thật lấy từ token.
 @Injectable()
-export class ApprovalService {
+export class ApprovalService implements OnModuleInit {
   private nextNumber = 1001;
 
   constructor(
@@ -37,7 +39,20 @@ export class ApprovalService {
     private readonly store: ApprovalStore,
   ) {}
 
-  request(input: RequestApprovalInput, caller: Caller): Approval {
+  // Tiếp tục số thứ tự từ kho: đã có AP-1001 thì yêu cầu mới là AP-1002,
+  // không quay về AP-1001 sau khi khởi động lại.
+  async onModuleInit(): Promise<void> {
+    const approvals = await this.store.list();
+    this.nextNumber = computeNextNumber(
+      approvals.map((approval) => approval.id),
+      'AP',
+    );
+  }
+
+  async request(
+    input: RequestApprovalInput,
+    caller: Caller,
+  ): Promise<Approval> {
     if (typeof input.type !== 'string' || input.type.trim() === '') {
       throw new BadRequestException('type là bắt buộc, dạng chuỗi.');
     }
@@ -61,8 +76,8 @@ export class ApprovalService {
       decisionReason: null,
       appliedAt: null,
     };
-    this.store.save(approval);
-    this.audit.append({
+    await this.store.save(approval);
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'approval.requested',
@@ -75,21 +90,22 @@ export class ApprovalService {
     return copyApproval(approval);
   }
 
-  get(id: string): Approval {
-    const approval = this.store.findById(id);
+  async get(id: string): Promise<Approval> {
+    const approval = await this.store.findById(id);
     if (!approval) {
       throw new NotFoundException(`Không tìm thấy phê duyệt ${id}.`);
     }
     return approval;
   }
 
-  list(filters: {
+  async list(filters: {
     type?: string;
     subjectId?: string;
     status?: ApprovalStatus;
     requestedBy?: string;
-  }): Approval[] {
-    return this.store.list().filter(
+  }): Promise<Approval[]> {
+    const approvals = await this.store.list();
+    return approvals.filter(
       (approval) =>
         (filters.type === undefined || approval.type === filters.type) &&
         (filters.subjectId === undefined ||
@@ -101,11 +117,19 @@ export class ApprovalService {
     );
   }
 
-  approve(id: string, caller: Caller, reason?: string): Approval {
+  async approve(
+    id: string,
+    caller: Caller,
+    reason?: string,
+  ): Promise<Approval> {
     return this.decide(id, caller, 'approved', reason);
   }
 
-  reject(id: string, caller: Caller, reason: string): Approval {
+  async reject(
+    id: string,
+    caller: Caller,
+    reason: string,
+  ): Promise<Approval> {
     if (typeof reason !== 'string' || reason.trim() === '') {
       throw new BadRequestException('Từ chối phê duyệt cần có lý do.');
     }
@@ -114,8 +138,8 @@ export class ApprovalService {
 
   // Đánh dấu phê duyệt đã duyệt là đã dùng. Chỉ dùng 1 lần; đơn nghiệp vụ
   // gọi bước này sau khi đã kiểm tra type/subject khớp với việc của mình.
-  markApplied(id: string, caller: Caller): Approval {
-    const approval = this.get(id);
+  async markApplied(id: string, caller: Caller): Promise<Approval> {
+    const approval = await this.get(id);
     if (approval.status !== 'approved') {
       throw new ConflictException(
         `Phê duyệt ${id} đang ở trạng thái "${approval.status}", không áp dụng được.`,
@@ -126,8 +150,8 @@ export class ApprovalService {
     }
     const now = new Date().toISOString();
     approval.appliedAt = now;
-    this.store.save(approval);
-    this.audit.append({
+    await this.store.save(approval);
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'approval.applied',
@@ -139,13 +163,13 @@ export class ApprovalService {
     return copyApproval(approval);
   }
 
-  private decide(
+  private async decide(
     id: string,
     caller: Caller,
     status: 'approved' | 'rejected',
     reason?: string,
-  ): Approval {
-    const approval = this.get(id);
+  ): Promise<Approval> {
+    const approval = await this.get(id);
     if (approval.status !== 'pending') {
       throw new ConflictException(
         `Phê duyệt ${id} đã được quyết (trạng thái "${approval.status}").`,
@@ -169,8 +193,8 @@ export class ApprovalService {
     approval.decidedBy = caller.username;
     approval.decidedAt = now;
     approval.decisionReason = reason ?? null;
-    this.store.save(approval);
-    this.audit.append({
+    await this.store.save(approval);
+    await this.audit.append({
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: status === 'approved' ? 'approval.approved' : 'approval.rejected',
