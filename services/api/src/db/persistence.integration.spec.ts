@@ -46,6 +46,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const audit = app.get(AuditService);
     const inventory = app.get(InventoryService);
     const instances = app.get(WorkflowInstanceService);
+    const shipments = app.get(ShipmentsService);
 
     const order = await orders.create(
       {
@@ -65,31 +66,45 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const steps: Array<{
       to: string;
       caller: Caller;
-      handling?: string;
     }> = [
       { to: 'Đã kiểm tra', caller: COORDINATOR },
       { to: 'Chờ kho', caller: COORDINATOR },
       { to: 'Đang đóng gói', caller: WAREHOUSE },
       { to: 'Chờ điều xe', caller: WAREHOUSE },
-      { to: 'Đang giao', caller: COORDINATOR },
-      { to: 'Đã giao', caller: DRIVER },
-      {
-        to: 'Hoàn',
-        caller: COORDINATOR,
-        handling: 'Đối soát xong, khách giữ hàng',
-      },
     ];
     let current = order;
     for (const step of steps) {
       current = await orders.transition(
         current.id,
-        {
-          to: step.to,
-          ...(step.handling ? { handling: step.handling } : {}),
-        },
+        { to: step.to },
         step.caller,
       );
     }
+    // Hai chuyển qua vùng giao hàng đi qua shipment, đơn đi theo từng bước.
+    const shipment = await shipments.create(
+      { orderId: order.id },
+      COORDINATOR,
+    );
+    expect(shipment.id).toBe('GH-1001');
+    await shipments.dispatch(
+      shipment.id,
+      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      COORDINATOR,
+    );
+    current = await orders.findOne(order.id);
+    expect(current.state).toBe('Đang giao');
+    await shipments.deliver(
+      shipment.id,
+      { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
+      DRIVER,
+    );
+    current = await orders.findOne(order.id);
+    expect(current.state).toBe('Đã giao');
+    current = await orders.transition(
+      current.id,
+      { to: 'Hoàn', handling: 'Đối soát xong, khách giữ hàng' },
+      COORDINATOR,
+    );
     expect(current.state).toBe('Hoàn');
     expect(current.history).toHaveLength(8);
     expect((await audit.verify()).valid).toBe(true);
@@ -136,7 +151,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     // không cần đóng để Jest thoát.
   }, 60000);
 
-  it('shipment đi tạo -> điều xe -> giao hàng, khởi động lại vẫn còn dữ liệu', async () => {
+  it('shipment đi tạo -> điều xe -> giao thất bại -> điều xe lại -> giao hàng, khởi động lại vẫn còn dữ liệu', async () => {
     const db = await createTestDbService();
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -187,6 +202,25 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(dispatched.status).toBe('Đang giao');
     expect(dispatched.driverId).toBe('TX-01');
     expect(dispatched.vehicleId).toBe('XE-01');
+    expect((await orders.findOne(order.id)).state).toBe('Đang giao');
+    // Giao thất bại thì đơn quay lại Chờ điều xe, điều xe lại chính
+    // shipment này (không tạo shipment mới).
+    const failed = await shipments.fail(
+      shipment.id,
+      { reason: 'Khách không nghe máy' },
+      DRIVER,
+    );
+    expect(failed.status).toBe('Giao thất bại');
+    expect((await orders.findOne(order.id)).state).toBe('Chờ điều xe');
+    const redispatched = await shipments.dispatch(
+      shipment.id,
+      { driverId: 'TX-02', vehicleId: 'XE-02' },
+      COORDINATOR,
+    );
+    expect(redispatched.status).toBe('Đang giao');
+    expect(redispatched.driverId).toBe('TX-02');
+    expect(redispatched.history).toHaveLength(4);
+    expect((await orders.findOne(order.id)).state).toBe('Đang giao');
     const delivered = await shipments.deliver(
       shipment.id,
       { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
@@ -194,7 +228,12 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     );
     expect(delivered.status).toBe('Đã giao');
     expect(delivered.proofPhotoKey).toBe('chung-tu/DH-1001/anh-giao.jpg');
-    expect(delivered.history).toHaveLength(3);
+    expect(delivered.history).toHaveLength(5);
+    expect((await orders.findOne(order.id)).state).toBe('Đã giao');
+    // Đơn đã giao xong thì không tạo được shipment mới nữa.
+    await expect(
+      shipments.create({ orderId: order.id }, COORDINATOR),
+    ).rejects.toThrow('chỉ tạo shipment khi đơn ở "Chờ điều xe"');
     expect((await audit.verify()).valid).toBe(true);
 
     // Mô phỏng khởi động lại API: app mới, cùng DB Postgres ảo.
@@ -212,8 +251,9 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
 
     const reopened = await secondShipments.get('GH-1001');
     expect(reopened.status).toBe('Đã giao');
-    expect(reopened.history).toHaveLength(3);
+    expect(reopened.history).toHaveLength(5);
     expect(reopened.proofPhotoKey).toBe('chung-tu/DH-1001/anh-giao.jpg');
+    expect((await secondOrders.findOne('DH-1001')).state).toBe('Đã giao');
     expect((await secondAudit.verify()).valid).toBe(true);
     const order2 = await secondOrders.create(
       {

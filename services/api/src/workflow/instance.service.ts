@@ -142,10 +142,15 @@ export class WorkflowInstanceService implements OnModuleInit {
     );
   }
 
+  // skipRoleCheck chỉ dùng cho chuyển đơn theo sự kiện shipment: vai đã
+  // kiểm ở quy tắc shipment (điều xe cần Điều phối viên, giao hàng cần
+  // Tài xế, giao thất bại cần 1 trong 2), còn chuyển đơn chỉ là hệ quả.
+  // Endpoint chuyển instance trực tiếp không bao giờ bỏ kiểm tra vai.
   async transition(
     id: string,
     input: TransitionInstanceInput,
     caller: Caller,
+    options?: { skipRoleCheck?: boolean },
   ): Promise<WorkflowInstance> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
@@ -172,7 +177,7 @@ export class WorkflowInstanceService implements OnModuleInit {
       instance.definitionId,
       instance.currentState,
       input.to,
-      caller.roles,
+      options?.skipRoleCheck ? undefined : caller.roles,
     );
     if (!check.allowed) {
       await deny(check.reason ?? 'Chuyển trạng thái không được phép.');

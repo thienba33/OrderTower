@@ -22,6 +22,10 @@ import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { InMemoryOrderStore, ORDER_STORE } from './orders.store';
 import type { OrderStore } from './orders.types';
+import {
+  ORDER_SHIPMENT_GATE,
+  type OrderShipmentGate,
+} from './order-shipment-gate';
 import type {
   CreateOrderInput,
   Order,
@@ -55,6 +59,11 @@ export class OrdersService implements OnModuleInit {
     @Optional()
     @Inject(ORDER_STORE)
     private readonly store: OrderStore = new InMemoryOrderStore(),
+    // Cổng đọc shipment tùy chọn: có khi chạy qua mô-đun (ShipmentsModule
+    // đăng ký adapter), không có khi dựng service bằng tay trong kiểm thử.
+    @Optional()
+    @Inject(ORDER_SHIPMENT_GATE)
+    private readonly shipmentGate?: OrderShipmentGate,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có DH-1001 thì đơn mới là DH-1002, không
@@ -158,10 +167,35 @@ export class OrdersService implements OnModuleInit {
     return copyOrder(order);
   }
 
+  // Chuyển trạng thái đơn qua endpoint: kiểm đủ vai theo định nghĩa.
   async transition(
     id: string,
     input: TransitionOrderInput,
     caller: Caller,
+  ): Promise<Order> {
+    return this.applyTransition(id, input, caller, true);
+  }
+
+  // Chuyển trạng thái đơn theo sự kiện shipment. Chỉ ShipmentsService gọi.
+  // Vai theo định nghĩa không kiểm ở đây vì vai đã kiểm ở quy tắc shipment
+  // (điều xe cần Điều phối viên, giao hàng cần Tài xế, giao thất bại cần
+  // 1 trong 2); việc chuyển đơn là hệ quả của sự kiện shipment, người báo
+  // cáo ghi vào audit làm actor. Đường chuyển trực tiếp (controller) vẫn
+  // kiểm vai đủ. Mọi rào chắn khác (trạng thái đóng, lý do, địa chỉ, tồn
+  // kho, bằng chứng shipment) vẫn chạy như đường trực tiếp.
+  async transitionForShipment(
+    id: string,
+    input: TransitionOrderInput,
+    caller: Caller,
+  ): Promise<Order> {
+    return this.applyTransition(id, input, caller, false);
+  }
+
+  private async applyTransition(
+    id: string,
+    input: TransitionOrderInput,
+    caller: Caller,
+    checkRole: boolean,
   ): Promise<Order> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
@@ -192,7 +226,7 @@ export class OrdersService implements OnModuleInit {
       'order-flow',
       order.state,
       input.to,
-      caller.roles,
+      checkRole ? caller.roles : undefined,
     );
     if (!check.allowed) {
       await deny(check.reason ?? 'Chuyển trạng thái không được phép.');
@@ -239,6 +273,39 @@ export class OrdersService implements OnModuleInit {
         }
         consumeStock = true;
       }
+      // Rào chắn bằng chứng shipment: chuyển sang Đang giao cần có shipment
+      // đang giao, chuyển sang Đã giao cần có shipment đã giao kèm ảnh bằng
+      // chứng. Không có cổng (dựng service bằng tay, không qua mô-đun) thì
+      // coi như không có bằng chứng, chặn luôn chứ không cho qua.
+      if (transition.guard.includes('đã điều xe')) {
+        const evidence = this.shipmentGate
+          ? await this.shipmentGate.findByOrderId(id)
+          : [];
+        const dispatched = evidence.some(
+          (item) => item.status === 'Đang giao',
+        );
+        if (!dispatched) {
+          await deny(
+            `Đơn ${id} chưa điều xe: không có shipment nào đang ở trạng thái "Đang giao".`,
+          );
+        }
+      }
+      if (transition.guard.includes('có ảnh bằng chứng')) {
+        const evidence = this.shipmentGate
+          ? await this.shipmentGate.findByOrderId(id)
+          : [];
+        const delivered = evidence.some(
+          (item) =>
+            item.status === 'Đã giao' &&
+            item.proofPhotoKey !== null &&
+            item.proofPhotoKey.trim() !== '',
+        );
+        if (!delivered) {
+          await deny(
+            `Đơn ${id} chưa có bằng chứng giao hàng: không có shipment nào ở trạng thái "Đã giao" kèm proofPhotoKey.`,
+          );
+        }
+      }
     }
     // Rào chắn qua rồi mới cho instance chuyển; trạng thái luồng đổi ở
     // instance, đơn đồng bộ lại trạng thái và lịch sử của mình.
@@ -254,6 +321,7 @@ export class OrdersService implements OnModuleInit {
         ...(input.handling ? { handling: input.handling } : {}),
       },
       caller,
+      { skipRoleCheck: !checkRole },
     );
     const from = order.state;
     order.state = updated.currentState;
