@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { AddressModule } from '../address/address.module';
 import { ApprovalsModule } from '../approvals/approval.module';
 import { AuditModule } from '../audit/audit.module';
 import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
 import { InventoryModule } from '../inventory/inventory.module';
+import { ShipmentsModule } from '../shipments/shipment.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
@@ -19,6 +20,11 @@ import { ORDER_STORE, PostgresOrderStore } from './orders.store';
     DbModule,
     InventoryModule,
     WorkflowModule,
+    // Lấy cổng đọc shipment từ ShipmentsModule. Hai mô-đun tham chiếu nhau
+    // (đơn cần bằng chứng shipment, shipment cần chuyển đơn) nên cả hai
+    // phía đều dùng forwardRef; vòng lặp chỉ ở mức mô-đun, mức service
+    // không lặp vì cổng đọc qua kho, không qua ShipmentsService.
+    forwardRef(() => ShipmentsModule),
   ],
   controllers: [OrdersController],
   providers: [

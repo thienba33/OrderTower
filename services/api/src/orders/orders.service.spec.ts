@@ -12,12 +12,15 @@ import { DbService } from '../db/db.service';
 import { createTestDbService } from '../db/test-helpers';
 import { InventoryService } from '../inventory/inventory.service';
 import { PostgresInventoryStore } from '../inventory/inventory.store';
+import { ShipmentsService } from '../shipments/shipment.service';
+import { InMemoryShipmentStore } from '../shipments/shipment.store';
 import { WorkflowInstanceService } from '../workflow/instance.service';
 import {
   InMemoryWorkflowInstanceStore,
   PostgresWorkflowInstanceStore,
 } from '../workflow/instance.store';
 import { WorkflowService } from '../workflow/workflow.service';
+import type { OrderShipmentEvidence } from './order-shipment-gate';
 import { OrdersService } from './orders.service';
 import { PostgresOrderStore } from './orders.store';
 
@@ -27,6 +30,10 @@ async function buildServices(): Promise<{
   inventory: InventoryService;
   instances: WorkflowInstanceService;
   approvals: ApprovalService;
+  shipments: ShipmentsService;
+  // Cổng bằng chứng dùng stub đổi được, để kiểm thử rào chắn trực tiếp
+  // mà không cần tạo shipment thật.
+  evidence: OrderShipmentEvidence[];
 }> {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
@@ -41,6 +48,23 @@ async function buildServices(): Promise<{
     new InMemoryWorkflowInstanceStore(),
   );
   const approvals = new ApprovalService(audit, new InMemoryApprovalStore());
+  // Cổng bằng chứng dùng stub đổi được (để kiểm thử rào chắn trực tiếp)
+  // GỘP với kho shipment thật, để chuyển đơn theo sự kiện shipment thật
+  // cũng thấy bằng chứng vừa lưu.
+  const evidence: OrderShipmentEvidence[] = [];
+  const shipmentStore = new InMemoryShipmentStore();
+  const gate = {
+    findByOrderId: async (orderId: string) => {
+      const fromStore = await shipmentStore.findByOrderId(orderId);
+      return [
+        ...fromStore.map((shipment) => ({
+          status: shipment.status,
+          proofPhotoKey: shipment.proofPhotoKey,
+        })),
+        ...evidence,
+      ];
+    },
+  };
   const orders = new OrdersService(
     workflow,
     audit,
@@ -48,8 +72,11 @@ async function buildServices(): Promise<{
     address,
     instances,
     approvals,
+    undefined,
+    gate,
   );
-  return { orders, audit, inventory, instances, approvals };
+  const shipments = new ShipmentsService(orders, audit, workflow, shipmentStore);
+  return { orders, audit, inventory, instances, approvals, shipments, evidence };
 }
 
 function createInput(key: string) {
@@ -119,44 +146,120 @@ describe('OrdersService', () => {
   });
 
   it('đơn đi tròn 9 trạng thái tới Hoàn', async () => {
-    const { orders, audit, instances } = await buildServices();
+    const { orders, audit, instances, shipments } = await buildServices();
     const order = await orders.create(createInput('key-1'), COORDINATOR);
     const steps: Array<{
       to: string;
       caller: Caller;
-      handling?: string;
     }> = [
       { to: 'Đã kiểm tra', caller: COORDINATOR },
       { to: 'Chờ kho', caller: COORDINATOR },
       { to: 'Đang đóng gói', caller: WAREHOUSE },
       { to: 'Chờ điều xe', caller: WAREHOUSE },
-      { to: 'Đang giao', caller: COORDINATOR },
-      { to: 'Đã giao', caller: DRIVER },
-      {
-        to: 'Hoàn',
-        caller: COORDINATOR,
-        handling: 'Đối soát xong, khách giữ hàng',
-      },
     ];
     let current = order;
     for (const step of steps) {
-      current = await orders.transition(
-        current.id,
-        {
-          to: step.to,
-          ...(step.handling ? { handling: step.handling } : {}),
-        },
-        step.caller,
-      );
+      current = await orders.transition(current.id, { to: step.to }, step.caller);
     }
+    // Hai chuyển qua vùng giao hàng đi qua shipment: điều xe rồi giao hàng
+    // có bằng chứng, đơn đi theo từng bước.
+    const shipment = await shipments.create({ orderId: order.id }, COORDINATOR);
+    await shipments.dispatch(
+      shipment.id,
+      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      COORDINATOR,
+    );
+    current = await orders.findOne(order.id);
+    expect(current.state).toBe('Đang giao');
+    await shipments.deliver(
+      shipment.id,
+      { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
+      DRIVER,
+    );
+    current = await orders.findOne(order.id);
+    expect(current.state).toBe('Đã giao');
+    current = await orders.transition(
+      current.id,
+      { to: 'Hoàn', handling: 'Đối soát xong, khách giữ hàng' },
+      COORDINATOR,
+    );
     expect(current.state).toBe('Hoàn');
     expect(current.history).toHaveLength(8);
-    expect(await audit.getAll()).toHaveLength(9);
+    // 2 lúc tạo + 4 chuyển đầu + tạo shipment 1 + điều xe 2 (shipment +
+    // chuyển đơn) + giao hàng 2 (shipment + chuyển đơn) + đóng đơn 1.
+    expect(await audit.getAll()).toHaveLength(12);
     expect((await audit.verify()).valid).toBe(true);
     const instance = await instances.findByBusinessKey('order-flow', order.id);
     expect(instance?.status).toBe('completed');
     expect(instance?.history).toHaveLength(8);
     expect(instance?.currentState).toBe('Hoàn');
+  });
+
+  it('chuyển sang Đang giao thiếu shipment thì chặn 409, có shipment đang giao thì qua', async () => {
+    const { orders, audit, evidence } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    for (const step of [
+      { to: 'Đã kiểm tra', caller: COORDINATOR },
+      { to: 'Chờ kho', caller: COORDINATOR },
+      { to: 'Đang đóng gói', caller: WAREHOUSE },
+      { to: 'Chờ điều xe', caller: WAREHOUSE },
+    ]) {
+      await orders.transition(order.id, { to: step.to }, step.caller);
+    }
+    await expect(
+      orders.transition(order.id, { to: 'Đang giao' }, COORDINATOR),
+    ).rejects.toThrow('chưa điều xe');
+    expect((await orders.findOne(order.id)).state).toBe('Chờ điều xe');
+    const denied = (await audit.getAll()).filter(
+      (record) => record.action === 'order.transition.denied',
+    );
+    expect(denied).toHaveLength(1);
+    // Shipment chỉ ở Chờ điều xe thì vẫn chưa đủ: cần shipment Đang giao.
+    evidence.push({ status: 'Chờ điều xe', proofPhotoKey: null });
+    await expect(
+      orders.transition(order.id, { to: 'Đang giao' }, COORDINATOR),
+    ).rejects.toThrow('chưa điều xe');
+    evidence.push({ status: 'Đang giao', proofPhotoKey: null });
+    const moved = await orders.transition(
+      order.id,
+      { to: 'Đang giao' },
+      COORDINATOR,
+    );
+    expect(moved.state).toBe('Đang giao');
+  });
+
+  it('chuyển sang Đã giao thiếu shipment đã giao có bằng chứng thì chặn 409', async () => {
+    const { orders, audit, evidence } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    for (const step of [
+      { to: 'Đã kiểm tra', caller: COORDINATOR },
+      { to: 'Chờ kho', caller: COORDINATOR },
+      { to: 'Đang đóng gói', caller: WAREHOUSE },
+      { to: 'Chờ điều xe', caller: WAREHOUSE },
+    ]) {
+      await orders.transition(order.id, { to: step.to }, step.caller);
+    }
+    evidence.push({ status: 'Đang giao', proofPhotoKey: null });
+    await orders.transition(order.id, { to: 'Đang giao' }, COORDINATOR);
+    // Shipment đang giao nhưng chưa giao xong thì chưa đủ.
+    await expect(
+      orders.transition(order.id, { to: 'Đã giao' }, DRIVER),
+    ).rejects.toThrow('chưa có bằng chứng giao hàng');
+    // Shipment đã giao nhưng không có ảnh bằng chứng thì vẫn chặn.
+    evidence.push({ status: 'Đã giao', proofPhotoKey: null });
+    await expect(
+      orders.transition(order.id, { to: 'Đã giao' }, DRIVER),
+    ).rejects.toThrow('chưa có bằng chứng giao hàng');
+    const denied = (await audit.getAll()).filter(
+      (record) => record.action === 'order.transition.denied',
+    );
+    expect(denied).toHaveLength(2);
+    evidence.push({
+      status: 'Đã giao',
+      proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg',
+    });
+    const moved = await orders.transition(order.id, { to: 'Đã giao' }, DRIVER);
+    expect(moved.state).toBe('Đã giao');
   });
 
   it('hủy đơn từ Mới tạo cần có lý do', async () => {
@@ -295,15 +398,13 @@ describe('OrdersService', () => {
   });
 
   it('đóng đơn thiếu hướng xử lý thì báo 400, có thì ghi vào lịch sử', async () => {
-    const { orders, audit } = await buildServices();
+    const { orders, audit, shipments } = await buildServices();
     const order = await orders.create(createInput('key-1'), COORDINATOR);
     const steps: Array<{ to: string; caller: Caller }> = [
       { to: 'Đã kiểm tra', caller: COORDINATOR },
       { to: 'Chờ kho', caller: COORDINATOR },
       { to: 'Đang đóng gói', caller: WAREHOUSE },
       { to: 'Chờ điều xe', caller: WAREHOUSE },
-      { to: 'Đang giao', caller: COORDINATOR },
-      { to: 'Đã giao', caller: DRIVER },
     ];
     let current = order;
     for (const step of steps) {
@@ -313,6 +414,19 @@ describe('OrdersService', () => {
         step.caller,
       );
     }
+    const shipment = await shipments.create({ orderId: order.id }, COORDINATOR);
+    await shipments.dispatch(
+      shipment.id,
+      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      COORDINATOR,
+    );
+    await shipments.deliver(
+      shipment.id,
+      { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
+      DRIVER,
+    );
+    current = await orders.findOne(order.id);
+    expect(current.state).toBe('Đã giao');
     await expect(
       orders.transition(current.id, { to: 'Hoàn' }, COORDINATOR),
     ).rejects.toThrow('hướng xử lý');

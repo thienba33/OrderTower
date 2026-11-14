@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { computeNextNumber } from '../db/id-counter';
 import { OrdersService } from '../orders/orders.service';
+import { WorkflowService } from '../workflow/workflow.service';
 import { InMemoryShipmentStore, SHIPMENT_STORE } from './shipment.store';
 import type {
   CancelShipmentInput,
@@ -53,8 +54,10 @@ function requireRole(caller: Caller, role: string, action: string): void {
 }
 
 // Quản lý vòng đời shipment: tạo, điều xe, giao hàng, giao thất bại, hủy.
-// Shipment đứng riêng: chưa đổi trạng thái đơn, việc nối vào chuyển trạng
-// thái đơn (rào chắn "đã điều xe") làm ở commit sau. Người gọi lấy từ token
+// Mỗi sự kiện shipment kéo theo chuyển trạng thái đơn qua
+// OrdersService.transitionForShipment (điều xe: Chờ điều xe -> Đang giao,
+// giao hàng: Đang giao -> Đã giao, giao thất bại: Đang giao -> Chờ điều
+// xe); hủy shipment không đổi trạng thái đơn. Người gọi lấy từ token
 // Keycloak, không nhận actor/role từ body.
 @Injectable()
 export class ShipmentsService implements OnModuleInit {
@@ -62,11 +65,14 @@ export class ShipmentsService implements OnModuleInit {
 
   // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị không cần
   // truyền gì thêm. Khi chạy trong NestJS, mô-đun tiêm kho Postgres.
-  // OrdersService do OrdersModule export, ShipmentsModule chỉ import nó nên
-  // không tạo vòng lặp mô-đun.
+  // OrdersService do OrdersModule export, ShipmentsModule lấy qua
+  // forwardRef (xem OrdersModule); ngược lại phía đơn chỉ đọc shipment qua
+  // cổng ORDER_SHIPMENT_GATE, không qua service này, nên mức service
+  // không có vòng lặp.
   constructor(
     private readonly orders: OrdersService,
     private readonly audit: AuditService,
+    private readonly workflow: WorkflowService,
     @Optional()
     @Inject(SHIPMENT_STORE)
     private readonly store: ShipmentStore = new InMemoryShipmentStore(),
@@ -166,6 +172,34 @@ export class ShipmentsService implements OnModuleInit {
     );
   }
 
+  // Kiểm tra trước khi đổi shipment: đơn phải ở đúng trạng thái nguồn và
+  // chuyển sang trạng thái đích phải hợp lệ theo định nghĩa. Chặn sớm để
+  // shipment chưa đổi mà đơn đã không theo được. Vai người gọi kiểm kèm
+  // theo định nghĩa, trừ giao thất bại: tài xế báo cáo không có vai Điều
+  // phối viên theo định nghĩa nên chỉ kiểm chuyển có tồn tại, vai đã kiểm
+  // ở quy tắc shipment. Rào chắn bằng chứng shipment (đã điều xe, có ảnh)
+  // kiểm ở lúc chuyển đơn, sau khi shipment đã lưu.
+  private async precheckOrderMove(
+    orderId: string,
+    to: string,
+    caller: Caller,
+    skipRoleCheck: boolean,
+    deny: (reason: string) => Promise<never>,
+  ): Promise<void> {
+    const order = await this.orders.findOne(orderId);
+    const check = this.workflow.canTransition(
+      'order-flow',
+      order.state,
+      to,
+      skipRoleCheck ? undefined : caller.roles,
+    );
+    if (!check.allowed) {
+      await deny(
+        `Đơn ${orderId} đang ở trạng thái "${order.state}", không chuyển sang "${to}" được: ${check.reason ?? 'chuyển trạng thái không được phép.'}`,
+      );
+    }
+  }
+
   async dispatch(
     id: string,
     input: DispatchShipmentInput,
@@ -203,6 +237,13 @@ export class ShipmentsService implements OnModuleInit {
     if (!caller.roles.includes(DISPATCHER_ROLE)) {
       await deny(`Điều xe cần vai ${DISPATCHER_ROLE}.`);
     }
+    await this.precheckOrderMove(
+      shipment.orderId,
+      'Đang giao',
+      caller,
+      false,
+      deny,
+    );
     const from = shipment.status;
     const now = new Date().toISOString();
     shipment.status = 'Đang giao';
@@ -226,6 +267,13 @@ export class ShipmentsService implements OnModuleInit {
       detail: `Tài xế ${driverId}, xe ${vehicleId}.`,
     });
     await this.store.save(shipment);
+    // Shipment đã lưu thì đơn mới theo được: rào chắn "đã điều xe" ở
+    // chuyển đơn đọc trạng thái shipment vừa lưu.
+    await this.orders.transitionForShipment(
+      shipment.orderId,
+      { to: 'Đang giao' },
+      caller,
+    );
     return copyShipment(shipment);
   }
 
@@ -259,6 +307,13 @@ export class ShipmentsService implements OnModuleInit {
     if (!caller.roles.includes(DRIVER_ROLE)) {
       await deny(`Giao hàng cần vai ${DRIVER_ROLE}.`);
     }
+    await this.precheckOrderMove(
+      shipment.orderId,
+      'Đã giao',
+      caller,
+      false,
+      deny,
+    );
     const from = shipment.status;
     const now = new Date().toISOString();
     shipment.status = 'Đã giao';
@@ -281,6 +336,13 @@ export class ShipmentsService implements OnModuleInit {
       detail: `Bằng chứng ${proofPhotoKey}.`,
     });
     await this.store.save(shipment);
+    // Shipment đã lưu thì đơn mới theo được: rào chắn "có ảnh bằng chứng"
+    // ở chuyển đơn đọc trạng thái và proofPhotoKey vừa lưu.
+    await this.orders.transitionForShipment(
+      shipment.orderId,
+      { to: 'Đã giao' },
+      caller,
+    );
     return copyShipment(shipment);
   }
 
@@ -319,6 +381,13 @@ export class ShipmentsService implements OnModuleInit {
         `Đánh dấu giao thất bại cần vai ${DRIVER_ROLE} hoặc ${DISPATCHER_ROLE}.`,
       );
     }
+    await this.precheckOrderMove(
+      shipment.orderId,
+      'Chờ điều xe',
+      caller,
+      true,
+      deny,
+    );
     const from = shipment.status;
     const now = new Date().toISOString();
     shipment.status = 'Giao thất bại';
@@ -341,6 +410,14 @@ export class ShipmentsService implements OnModuleInit {
       detail: `Lý do: ${reason}`,
     });
     await this.store.save(shipment);
+    // Đơn quay lại Chờ điều xe là hệ quả của báo cáo thất bại, không phải
+    // quyết định của Điều phối viên, nên chuyển đơn cũng do người báo cáo
+    // kéo theo (ghi audit với người báo cáo làm actor).
+    await this.orders.transitionForShipment(
+      shipment.orderId,
+      { to: 'Chờ điều xe', reason },
+      caller,
+    );
     return copyShipment(shipment);
   }
 

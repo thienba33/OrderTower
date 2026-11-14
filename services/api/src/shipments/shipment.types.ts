@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Trạng thái giao hàng của 1 shipment. Shipment không tự chạy luồng đơn:
-// trạng thái đơn vẫn do Workflow engine giữ, shipment chỉ ghi việc giao hàng.
+// Trạng thái giao hàng của 1 shipment. Sự kiện shipment kéo theo chuyển
+// trạng thái đơn qua OrdersService.transitionForShipment: điều xe thì đơn
+// sang Đang giao, giao hàng thì đơn sang Đã giao, giao thất bại thì đơn
+// quay lại Chờ điều xe. Trạng thái đơn vẫn do Workflow engine giữ, shipment
+// không tự ghi đè trạng thái đơn mà đi qua đúng đường chuyển của đơn.
 export type ShipmentStatus =
   | 'Chờ điều xe'
   | 'Đang giao'
