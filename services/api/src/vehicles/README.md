@@ -50,14 +50,16 @@ thì KHÔNG ghi audit vehicle riêng, vì audit `shipment.dispatched`,
 
 ## Hạn chế đã biết
 
-- Lưu shipment, lưu đơn và lưu xe là các bước nối tiếp, không chung 1 giao
-  dịch (cùng loại hạn chế với commit lưu bền Postgres): sự cố giữa các bước
-  có thể để shipment đi trước đơn, hoặc đơn đi trước xe. Khi đó chuyển
-  trực tiếp đơn vẫn qua được rào chắn bằng chứng shipment (shipment đã ở
-  trạng thái mới) nên Điều phối viên chuyển bù được; xe lệch thì dùng
-  endpoint maintenance/activate để đưa về đúng trạng thái, không sửa dữ
+- Lưu shipment, lưu đơn, lưu xe và lưu tài xế là các bước nối tiếp, không
+  chung 1 giao dịch (cùng loại hạn chế với commit lưu bền Postgres): sự cố
+  giữa các bước có thể để shipment đi trước đơn, hoặc đơn đi trước xe hay
+  tài xế. Khi đó chuyển trực tiếp đơn vẫn qua được rào chắn bằng chứng
+  shipment (shipment đã ở trạng thái mới) nên Điều phối viên chuyển bù
+  được; xe hay tài xế lệch thì dùng endpoint maintenance/activate của xe
+  hoặc rest/activate của tài xế để đưa về đúng trạng thái, không sửa dữ
   liệu tay. Trong khoảng lệch đó, xe đang ở "Sẵn sàng" trong khi shipment
   của nó đã "Đang giao" có thể bị điều cho đơn khác; lần giao hàng hoặc
   giao thất bại sau đó vẫn trả xe về "Sẵn sàng".
-- Chưa kiểm tra quyền sở hữu theo tài xế và chưa gắn tài xế với xe: việc
-  này làm cùng mô đun Driver sau.
+- Việc gán xe cho tài xế (driver.vehicleId) là thông tin xe tài xế thường
+  lái, KHÔNG ép phải bằng xe điều ở dispatch: dispatch vẫn gán tài xế và
+  xe độc lập với nhau (xem README của mô-đun driver).
