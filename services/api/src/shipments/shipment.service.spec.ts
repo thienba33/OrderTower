@@ -13,12 +13,15 @@ import { ShipmentGateAdapter } from './shipment-gate.adapter';
 import { ShipmentsService } from './shipment.service';
 import { InMemoryShipmentStore } from './shipment.store';
 import type { ShipmentStore } from './shipment.types';
+import { VehiclesService } from '../vehicles/vehicle.service';
+import { InMemoryVehicleStore } from '../vehicles/vehicle.store';
 
 async function buildServices(): Promise<{
   orders: OrdersService;
   audit: AuditService;
   shipments: ShipmentsService;
   shipmentStore: ShipmentStore;
+  vehicles: VehiclesService;
 }> {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
@@ -47,8 +50,18 @@ async function buildServices(): Promise<{
     undefined,
     gate,
   );
-  const shipments = new ShipmentsService(orders, audit, workflow, shipmentStore);
-  return { orders, audit, shipments, shipmentStore };
+  // Xe dùng chung cho ShipmentsService: dispatch chỉ nhận xe thật nên
+  // kiểm thử điều xe phải tạo xe trước, giống chạy thật qua mô-đun.
+  const vehicles = new VehiclesService(audit, new InMemoryVehicleStore());
+  await vehicles.onModuleInit();
+  const shipments = new ShipmentsService(
+    orders,
+    audit,
+    workflow,
+    shipmentStore,
+    vehicles,
+  );
+  return { orders, audit, shipments, shipmentStore, vehicles };
 }
 
 const COORDINATOR: Caller = {
@@ -113,6 +126,18 @@ async function createShipmentReady(
     COORDINATOR,
   );
   return { order, shipment };
+}
+
+// Tạo 1 xe sẵn sàng để điều: mỗi test có services mới nên biển số mặc
+// định dùng lại được; test nào cần xe thứ hai thì truyền biển số khác.
+async function createVehicleReady(
+  services: Awaited<ReturnType<typeof buildServices>>,
+  plate = '29A-12345',
+) {
+  return services.vehicles.create(
+    { plate, type: 'Xe máy' },
+    COORDINATOR,
+  );
 }
 
 async function deniedCount(audit: AuditService): Promise<number> {
@@ -190,14 +215,15 @@ describe('ShipmentsService', () => {
   it('điều xe từ Chờ điều xe sang Đang giao, lưu tài xế và xe, đơn cũng sang Đang giao', async () => {
     const services = await buildServices();
     const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     const dispatched = await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     expect(dispatched.status).toBe('Đang giao');
     expect(dispatched.driverId).toBe('TX-01');
-    expect(dispatched.vehicleId).toBe('XE-01');
+    expect(dispatched.vehicleId).toBe(vehicle.id);
     expect(dispatched.history).toHaveLength(2);
     expect(dispatched.history[1]).toMatchObject({
       from: 'Chờ điều xe',
@@ -205,6 +231,7 @@ describe('ShipmentsService', () => {
     });
     expect(await actionCount(services.audit, 'shipment.dispatched')).toBe(1);
     expect((await services.orders.findOne(order.id)).state).toBe('Đang giao');
+    expect((await services.vehicles.get(vehicle.id)).status).toBe('Đang giao');
   });
 
   it('điều xe thiếu driverId hoặc vehicleId thì báo 400', async () => {
@@ -213,7 +240,7 @@ describe('ShipmentsService', () => {
     await expect(
       services.shipments.dispatch(
         shipment.id,
-        { driverId: '', vehicleId: 'XE-01' },
+        { driverId: '', vehicleId: 'XE-1001' },
         COORDINATOR,
       ),
     ).rejects.toThrow('Điều xe cần có driverId');
@@ -229,18 +256,78 @@ describe('ShipmentsService', () => {
     );
   });
 
+  it('điều xe với xe không tồn tại thì báo 404, shipment không đổi', async () => {
+    const services = await buildServices();
+    const { shipment } = await createShipmentReady(services);
+    await expect(
+      services.shipments.dispatch(
+        shipment.id,
+        { driverId: 'TX-01', vehicleId: 'XE-9999' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('Không tìm thấy xe XE-9999');
+    expect((await services.shipments.get(shipment.id)).status).toBe(
+      'Chờ điều xe',
+    );
+    expect(await actionCount(services.audit, 'shipment.dispatched')).toBe(0);
+  });
+
+  it('điều xe với xe đang bận thì 409 và ghi audit denied, shipment không đổi', async () => {
+    const services = await buildServices();
+    const vehicle = await createVehicleReady(services);
+    const first = await createShipmentReady(services, 'key-1');
+    await services.shipments.dispatch(
+      first.shipment.id,
+      { driverId: 'TX-01', vehicleId: vehicle.id },
+      COORDINATOR,
+    );
+    expect((await services.vehicles.get(vehicle.id)).status).toBe('Đang giao');
+    const second = await createShipmentReady(services, 'key-2');
+    await expect(
+      services.shipments.dispatch(
+        second.shipment.id,
+        { driverId: 'TX-02', vehicleId: vehicle.id },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('đang ở trạng thái "Đang giao"');
+    expect(await deniedCount(services.audit)).toBe(1);
+    expect((await services.shipments.get(second.shipment.id)).status).toBe(
+      'Chờ điều xe',
+    );
+    expect((await services.vehicles.get(vehicle.id)).status).toBe('Đang giao');
+  });
+
+  it('điều xe với xe đang bảo trì thì 409 và ghi audit denied', async () => {
+    const services = await buildServices();
+    const vehicle = await createVehicleReady(services);
+    await services.vehicles.maintenance(vehicle.id, COORDINATOR);
+    const { shipment } = await createShipmentReady(services);
+    await expect(
+      services.shipments.dispatch(
+        shipment.id,
+        { driverId: 'TX-01', vehicleId: vehicle.id },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('đang ở trạng thái "Bảo trì"');
+    expect(await deniedCount(services.audit)).toBe(1);
+    expect((await services.shipments.get(shipment.id)).status).toBe(
+      'Chờ điều xe',
+    );
+  });
+
   it('điều xe từ Đang giao thì 409 và ghi audit denied', async () => {
     const services = await buildServices();
     const { shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     await expect(
       services.shipments.dispatch(
         shipment.id,
-        { driverId: 'TX-01', vehicleId: 'XE-01' },
+        { driverId: 'TX-01', vehicleId: vehicle.id },
         COORDINATOR,
       ),
     ).rejects.toThrow('không điều xe được');
@@ -250,10 +337,11 @@ describe('ShipmentsService', () => {
   it('điều xe bởi Tài xế thì 409 và ghi audit denied', async () => {
     const services = await buildServices();
     const { shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     await expect(
       services.shipments.dispatch(
         shipment.id,
-        { driverId: 'TX-01', vehicleId: 'XE-01' },
+        { driverId: 'TX-01', vehicleId: vehicle.id },
         DRIVER,
       ),
     ).rejects.toThrow('cần vai Điều phối viên');
@@ -301,10 +389,13 @@ describe('ShipmentsService', () => {
       createdAt: now,
       updatedAt: now,
     });
+    // Xe có thật và sẵn sàng để lần điều xe chỉ thất bại ở pre-check đơn,
+    // không thất bại ở kiểm tra xe.
+    const vehicle = await createVehicleReady(services);
     await expect(
       services.shipments.dispatch(
         'GH-9999',
-        { driverId: 'TX-01', vehicleId: 'XE-01' },
+        { driverId: 'TX-01', vehicleId: vehicle.id },
         COORDINATOR,
       ),
     ).rejects.toThrow('không chuyển sang "Đang giao" được');
@@ -320,12 +411,17 @@ describe('ShipmentsService', () => {
   it('giao thất bại rồi điều xe lại được, đơn đi theo từng bước', async () => {
     const services = await buildServices();
     const { order, shipment } = await createShipmentReady(services);
+    const firstVehicle = await createVehicleReady(services);
+    const secondVehicle = await createVehicleReady(services, '29B-67890');
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: firstVehicle.id },
       COORDINATOR,
     );
     expect((await services.orders.findOne(order.id)).state).toBe('Đang giao');
+    expect((await services.vehicles.get(firstVehicle.id)).status).toBe(
+      'Đang giao',
+    );
     const failed = await services.shipments.fail(
       shipment.id,
       { reason: 'Khách không nghe máy' },
@@ -335,23 +431,35 @@ describe('ShipmentsService', () => {
     expect((await services.orders.findOne(order.id)).state).toBe(
       'Chờ điều xe',
     );
+    // Giao thất bại trả xe đầu về Sẵn sàng, điều xe lại được phép đổi xe.
+    expect((await services.vehicles.get(firstVehicle.id)).status).toBe(
+      'Sẵn sàng',
+    );
     const redispatched = await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-02', vehicleId: 'XE-02' },
+      { driverId: 'TX-02', vehicleId: secondVehicle.id },
       COORDINATOR,
     );
     expect(redispatched.status).toBe('Đang giao');
     expect(redispatched.driverId).toBe('TX-02');
+    expect(redispatched.vehicleId).toBe(secondVehicle.id);
     expect(redispatched.history).toHaveLength(4);
     expect((await services.orders.findOne(order.id)).state).toBe('Đang giao');
+    expect((await services.vehicles.get(firstVehicle.id)).status).toBe(
+      'Sẵn sàng',
+    );
+    expect((await services.vehicles.get(secondVehicle.id)).status).toBe(
+      'Đang giao',
+    );
   });
 
   it('giao hàng từ Đang giao sang Đã giao, lưu bằng chứng, đơn cũng sang Đã giao', async () => {
     const services = await buildServices();
     const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     const delivered = await services.shipments.deliver(
@@ -364,14 +472,17 @@ describe('ShipmentsService', () => {
     expect(delivered.history).toHaveLength(3);
     expect(await actionCount(services.audit, 'shipment.delivered')).toBe(1);
     expect((await services.orders.findOne(order.id)).state).toBe('Đã giao');
+    // Giao hàng xong trả xe về Sẵn sàng.
+    expect((await services.vehicles.get(vehicle.id)).status).toBe('Sẵn sàng');
   });
 
   it('giao hàng xong thì không tạo được shipment mới cho đơn nữa', async () => {
     const services = await buildServices();
     const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     await services.shipments.deliver(
@@ -388,9 +499,10 @@ describe('ShipmentsService', () => {
   it('giao hàng thiếu bằng chứng thì báo 400', async () => {
     const services = await buildServices();
     const { shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     await expect(
@@ -401,9 +513,10 @@ describe('ShipmentsService', () => {
   it('giao hàng bởi Điều phối viên thì 409 và ghi audit denied', async () => {
     const services = await buildServices();
     const { shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     await expect(
@@ -432,9 +545,10 @@ describe('ShipmentsService', () => {
   it('giao thất bại cần lý do, Tài xế và Điều phối viên đều được, đơn quay lại Chờ điều xe', async () => {
     const services = await buildServices();
     const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     const failed = await services.shipments.fail(
@@ -452,6 +566,8 @@ describe('ShipmentsService', () => {
     expect((await services.orders.findOne(order.id)).state).toBe(
       'Chờ điều xe',
     );
+    // Giao thất bại trả xe về Sẵn sàng.
+    expect((await services.vehicles.get(vehicle.id)).status).toBe('Sẵn sàng');
     const failedAudit = (await services.audit.getAll()).filter(
       (record) => record.action === 'workflow.instance.transition',
     );
@@ -462,7 +578,7 @@ describe('ShipmentsService', () => {
     });
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     const failedAgain = await services.shipments.fail(
@@ -490,9 +606,10 @@ describe('ShipmentsService', () => {
         DRIVER,
       ),
     ).rejects.toThrow('không đánh dấu giao thất bại được');
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     await expect(
@@ -531,9 +648,10 @@ describe('ShipmentsService', () => {
     await expect(
       services.shipments.cancel(shipment.id, { reason: '' }, COORDINATOR),
     ).rejects.toThrow('Hủy shipment cần có lý do');
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     await expect(
@@ -583,9 +701,10 @@ describe('ShipmentsService', () => {
     expect(
       await services.shipments.list({ status: 'Chờ điều xe' }),
     ).toHaveLength(2);
+    const vehicle = await createVehicleReady(services);
     await services.shipments.dispatch(
       first.shipment.id,
-      { driverId: 'TX-01', vehicleId: 'XE-01' },
+      { driverId: 'TX-01', vehicleId: vehicle.id },
       COORDINATOR,
     );
     expect(

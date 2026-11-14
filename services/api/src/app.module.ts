@@ -8,6 +8,7 @@ import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { OrdersModule } from './orders/orders.module';
 import { ShipmentsModule } from './shipments/shipment.module';
+import { VehiclesModule } from './vehicles/vehicle.module';
 import { WorkflowModule } from './workflow/workflow.module';
 
 @Module({
@@ -17,6 +18,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     AuthModule,
     OrdersModule,
     ShipmentsModule,
+    VehiclesModule,
     WorkflowModule,
   ],
   controllers: [AppController],

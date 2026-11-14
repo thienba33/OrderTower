@@ -12,6 +12,8 @@ import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { computeNextNumber } from '../db/id-counter';
 import { OrdersService } from '../orders/orders.service';
+import { VehiclesService } from '../vehicles/vehicle.service';
+import type { Vehicle } from '../vehicles/vehicle.types';
 import { WorkflowService } from '../workflow/workflow.service';
 import { InMemoryShipmentStore, SHIPMENT_STORE } from './shipment.store';
 import type {
@@ -76,6 +78,11 @@ export class ShipmentsService implements OnModuleInit {
     @Optional()
     @Inject(SHIPMENT_STORE)
     private readonly store: ShipmentStore = new InMemoryShipmentStore(),
+    // Xe phục vụ điều xe tùy chọn: có khi chạy qua mô-đun (ShipmentsModule
+    // nhập VehiclesModule), không có khi dựng service bằng tay trong kiểm
+    // thử. Khi không có, điều xe bị chặn vì không kiểm tra được xe thật.
+    @Optional()
+    private readonly vehicles?: VehiclesService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có GH-1001 thì shipment mới là GH-1002,
@@ -200,6 +207,44 @@ export class ShipmentsService implements OnModuleInit {
     }
   }
 
+  // Kiểm tra xe ở giai đoạn pre-check: xe phải có thật và đang sẵn sàng.
+  // Không có thì VehiclesService ném 404, không ghi audit denied vì đây
+  // là tham chiếu thiếu, giống đơn không tồn tại lúc tạo shipment. Xe sai
+  // trạng thái thì 409 và ghi audit denied qua deny. Mô-đun xe vắng mặt
+  // (chỉ gặp khi dựng service bằng tay) thì chặn luôn bằng 409 trực tiếp:
+  // đó là lỗi nối mô-đun, không phải lỗi nghiệp vụ nên không ghi audit
+  // denied; khối throw này cũng để TypeScript thu hẹp kiểu vehicles.
+  private async requireReadyVehicle(
+    vehicleId: string,
+    deny: (reason: string) => Promise<never>,
+  ): Promise<Vehicle> {
+    const vehicles = this.vehicles;
+    if (vehicles === undefined) {
+      throw new ConflictException(
+        `Không kiểm tra được xe ${vehicleId} vì mô-đun xe chưa được nối.`,
+      );
+    }
+    const vehicle = await vehicles.get(vehicleId);
+    if (vehicle.status !== 'Sẵn sàng') {
+      await deny(
+        `Xe ${vehicleId} đang ở trạng thái "${vehicle.status}", chỉ điều xe đang sẵn sàng được.`,
+      );
+    }
+    return vehicle;
+  }
+
+  // Đổi trạng thái xe do shipment kéo theo, sau khi shipment và đơn đã
+  // xong. requireReadyVehicle đã chặn khi mô-đun xe vắng mặt nên tới đây
+  // vehicles luôn có; toán tử ?. chỉ để TypeScript chấp nhận tham số tùy
+  // chọn, không phải để bỏ qua âm thầm.
+  private async markVehicleBusy(vehicleId: string): Promise<void> {
+    await this.vehicles?.markBusy(vehicleId);
+  }
+
+  private async markVehicleAvailable(vehicleId: string): Promise<void> {
+    await this.vehicles?.markAvailable(vehicleId);
+  }
+
   async dispatch(
     id: string,
     input: DispatchShipmentInput,
@@ -237,6 +282,7 @@ export class ShipmentsService implements OnModuleInit {
     if (!caller.roles.includes(DISPATCHER_ROLE)) {
       await deny(`Điều xe cần vai ${DISPATCHER_ROLE}.`);
     }
+    const vehicle = await this.requireReadyVehicle(vehicleId, deny);
     await this.precheckOrderMove(
       shipment.orderId,
       'Đang giao',
@@ -274,6 +320,8 @@ export class ShipmentsService implements OnModuleInit {
       { to: 'Đang giao' },
       caller,
     );
+    // Đơn đã sang Đang giao thì xe mới sang Đang giao.
+    await this.markVehicleBusy(vehicle.id);
     return copyShipment(shipment);
   }
 
@@ -343,6 +391,10 @@ export class ShipmentsService implements OnModuleInit {
       { to: 'Đã giao' },
       caller,
     );
+    // Đơn đã sang Đã giao thì trả xe về Sẵn sàng.
+    if (shipment.vehicleId !== null) {
+      await this.markVehicleAvailable(shipment.vehicleId);
+    }
     return copyShipment(shipment);
   }
 
@@ -418,6 +470,11 @@ export class ShipmentsService implements OnModuleInit {
       { to: 'Chờ điều xe', reason },
       caller,
     );
+    // Đơn đã quay lại Chờ điều xe thì trả xe về Sẵn sàng, để điều xe lại
+    // được phép đổi xe khác.
+    if (shipment.vehicleId !== null) {
+      await this.markVehicleAvailable(shipment.vehicleId);
+    }
     return copyShipment(shipment);
   }
 

@@ -21,9 +21,10 @@ export interface ShipmentHistoryEntry {
   reason?: string;
 }
 
-// Một lượt giao 1 đơn. driverId và vehicleId là chuỗi tự do cho tới khi có
-// mô đun Driver và Vehicle riêng; proofPhotoKey là khóa tệp bằng chứng trong
-// kho đối tượng, bắt buộc khi giao thành công.
+// Một lượt giao 1 đơn. driverId là chuỗi tự do cho tới khi có mô đun
+// Driver riêng; vehicleId là id của 1 Vehicle có thật (xem mô-đun
+// vehicles), bắt buộc khi điều xe; proofPhotoKey là khóa tệp bằng chứng
+// trong kho đối tượng, bắt buộc khi giao thành công.
 export interface Shipment {
   id: string;
   orderId: string;
