@@ -5,6 +5,7 @@ import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
 import { ORDER_SHIPMENT_GATE } from '../orders/order-shipment-gate';
 import { OrdersModule } from '../orders/orders.module';
+import { VehiclesModule } from '../vehicles/vehicle.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { ShipmentGateAdapter } from './shipment-gate.adapter';
 import { ShipmentsController } from './shipment.controller';
@@ -22,6 +23,7 @@ import type { ShipmentStore } from './shipment.types';
     AuditModule,
     DbModule,
     forwardRef(() => OrdersModule),
+    VehiclesModule,
     WorkflowModule,
   ],
   controllers: [ShipmentsController],
