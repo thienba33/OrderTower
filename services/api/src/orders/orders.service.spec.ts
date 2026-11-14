@@ -14,6 +14,8 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PostgresInventoryStore } from '../inventory/inventory.store';
 import { ShipmentsService } from '../shipments/shipment.service';
 import { InMemoryShipmentStore } from '../shipments/shipment.store';
+import { DriversService } from '../drivers/driver.service';
+import { InMemoryDriverStore } from '../drivers/driver.store';
 import { VehiclesService } from '../vehicles/vehicle.service';
 import { InMemoryVehicleStore } from '../vehicles/vehicle.store';
 import { WorkflowInstanceService } from '../workflow/instance.service';
@@ -34,6 +36,7 @@ async function buildServices(): Promise<{
   approvals: ApprovalService;
   shipments: ShipmentsService;
   vehicles: VehiclesService;
+  drivers: DriversService;
   // Cổng bằng chứng dùng stub đổi được, để kiểm thử rào chắn trực tiếp
   // mà không cần tạo shipment thật.
   evidence: OrderShipmentEvidence[];
@@ -78,16 +81,24 @@ async function buildServices(): Promise<{
     undefined,
     gate,
   );
-  // Xe dùng chung cho ShipmentsService: dispatch chỉ nhận xe thật nên
-  // kiểm thử điều xe phải tạo xe trước, giống chạy thật qua mô-đun.
+  // Xe và tài xế dùng chung cho ShipmentsService: dispatch chỉ nhận xe
+  // thật và tài xế thật nên kiểm thử điều xe phải tạo xe và tài xế trước,
+  // giống chạy thật qua mô-đun.
   const vehicles = new VehiclesService(audit, new InMemoryVehicleStore());
   await vehicles.onModuleInit();
+  const drivers = new DriversService(
+    audit,
+    new InMemoryDriverStore(),
+    vehicles,
+  );
+  await drivers.onModuleInit();
   const shipments = new ShipmentsService(
     orders,
     audit,
     workflow,
     shipmentStore,
     vehicles,
+    drivers,
   );
   return {
     orders,
@@ -97,6 +108,7 @@ async function buildServices(): Promise<{
     approvals,
     shipments,
     vehicles,
+    drivers,
     evidence,
   };
 }
@@ -168,7 +180,7 @@ describe('OrdersService', () => {
   });
 
   it('đơn đi tròn 9 trạng thái tới Hoàn', async () => {
-    const { orders, audit, instances, shipments, vehicles } =
+    const { orders, audit, instances, shipments, vehicles, drivers } =
       await buildServices();
     const order = await orders.create(createInput('key-1'), COORDINATOR);
     const steps: Array<{
@@ -191,9 +203,15 @@ describe('OrdersService', () => {
       { plate: '29A-12345', type: 'Xe máy' },
       COORDINATOR,
     );
+    // Tài xế username 'nam' khớp caller DRIVER dùng lúc giao hàng, để
+    // kiểm tra quyền sở hữu thấy đúng người gọi.
+    const driver = await drivers.create(
+      { name: 'Nam', phone: '0901234567', username: 'nam' },
+      COORDINATOR,
+    );
     await shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: vehicle.id },
+      { driverId: driver.id, vehicleId: vehicle.id },
       COORDINATOR,
     );
     current = await orders.findOne(order.id);
@@ -212,10 +230,10 @@ describe('OrdersService', () => {
     );
     expect(current.state).toBe('Hoàn');
     expect(current.history).toHaveLength(8);
-    // 2 lúc tạo + 4 chuyển đầu + tạo xe 1 + tạo shipment 1 + điều xe 2
-    // (shipment + chuyển đơn) + giao hàng 2 (shipment + chuyển đơn) +
-    // đóng đơn 1.
-    expect(await audit.getAll()).toHaveLength(13);
+    // 2 lúc tạo + 4 chuyển đầu + tạo xe 1 + tạo tài xế 1 + tạo shipment 1
+    // + điều xe 2 (shipment + chuyển đơn) + giao hàng 2 (shipment +
+    // chuyển đơn) + đóng đơn 1.
+    expect(await audit.getAll()).toHaveLength(14);
     expect((await audit.verify()).valid).toBe(true);
     const instance = await instances.findByBusinessKey('order-flow', order.id);
     expect(instance?.status).toBe('completed');
@@ -426,7 +444,8 @@ describe('OrdersService', () => {
   });
 
   it('đóng đơn thiếu hướng xử lý thì báo 400, có thì ghi vào lịch sử', async () => {
-    const { orders, audit, shipments, vehicles } = await buildServices();
+    const { orders, audit, shipments, vehicles, drivers } =
+      await buildServices();
     const order = await orders.create(createInput('key-1'), COORDINATOR);
     const steps: Array<{ to: string; caller: Caller }> = [
       { to: 'Đã kiểm tra', caller: COORDINATOR },
@@ -447,9 +466,13 @@ describe('OrdersService', () => {
       { plate: '29A-12345', type: 'Xe máy' },
       COORDINATOR,
     );
+    const driver = await drivers.create(
+      { name: 'Nam', phone: '0901234567', username: 'nam' },
+      COORDINATOR,
+    );
     await shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: vehicle.id },
+      { driverId: driver.id, vehicleId: vehicle.id },
       COORDINATOR,
     );
     await shipments.deliver(

@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { DriversService } from '../drivers/driver.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { OrdersService } from '../orders/orders.service';
 import { ShipmentsService } from '../shipments/shipment.service';
@@ -24,6 +25,11 @@ const WAREHOUSE: Caller = {
 const DRIVER: Caller = {
   userId: 'user-nam',
   username: 'nam',
+  roles: ['Tài xế'],
+};
+const DRIVER_2: Caller = {
+  userId: 'user-tuan',
+  username: 'tuan',
   roles: ['Tài xế'],
 };
 
@@ -83,12 +89,19 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       );
     }
     // Hai chuyển qua vùng giao hàng đi qua shipment, đơn đi theo từng bước.
-    // Dispatch cần xe thật: tạo xe trước, xe theo shipment mà đổi trạng thái.
+    // Dispatch cần xe thật và tài xế thật: tạo xe và tài xế trước, xe và
+    // tài xế theo shipment mà đổi trạng thái.
     const vehicle = await vehicles.create(
       { plate: '29A-12345', type: 'Xe máy' },
       COORDINATOR,
     );
     expect(vehicle.id).toBe('XE-1001');
+    const drivers = app.get(DriversService);
+    const driver = await drivers.create(
+      { name: 'Nam', phone: '0901234567', username: 'nam' },
+      COORDINATOR,
+    );
+    expect(driver.id).toBe('TX-1001');
     const shipment = await shipments.create(
       { orderId: order.id },
       COORDINATOR,
@@ -96,12 +109,13 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(shipment.id).toBe('GH-1001');
     await shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: vehicle.id },
+      { driverId: driver.id, vehicleId: vehicle.id },
       COORDINATOR,
     );
     current = await orders.findOne(order.id);
     expect(current.state).toBe('Đang giao');
     expect((await vehicles.get(vehicle.id)).status).toBe('Đang giao');
+    expect((await drivers.get(driver.id)).status).toBe('Đang giao');
     await shipments.deliver(
       shipment.id,
       { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
@@ -110,6 +124,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     current = await orders.findOne(order.id);
     expect(current.state).toBe('Đã giao');
     expect((await vehicles.get(vehicle.id)).status).toBe('Sẵn sàng');
+    expect((await drivers.get(driver.id)).status).toBe('Sẵn sàng');
     current = await orders.transition(
       current.id,
       { to: 'Hoàn', handling: 'Đối soát xong, khách giữ hàng' },
@@ -139,6 +154,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const secondAudit = secondApp.get(AuditService);
     const secondInventory = secondApp.get(InventoryService);
     const secondVehicles = secondApp.get(VehiclesService);
+    const secondDrivers = secondApp.get(DriversService);
 
     const reopened = await secondOrders.findOne('DH-1001');
     expect(reopened.state).toBe('Hoàn');
@@ -150,6 +166,13 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     });
     // Xe vẫn còn sau khi khởi động lại, ở trạng thái cuối luồng.
     expect((await secondVehicles.get('XE-1001')).status).toBe('Sẵn sàng');
+    // Tài xế vẫn còn sau khi khởi động lại, ở trạng thái cuối luồng.
+    expect((await secondDrivers.get('TX-1001')).status).toBe('Sẵn sàng');
+    const nextDriver = await secondDrivers.create(
+      { name: 'Tuấn', phone: '0901234568', username: 'tuan' },
+      COORDINATOR,
+    );
+    expect(nextDriver.id).toBe('TX-1002');
     const nextVehicle = await secondVehicles.create(
       { plate: '29B-67890', type: 'Xe tải nhỏ' },
       COORDINATOR,
@@ -183,6 +206,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const shipments = app.get(ShipmentsService);
     const audit = app.get(AuditService);
     const vehicles = app.get(VehiclesService);
+    const drivers = app.get(DriversService);
 
     const order = await orders.create(
       {
@@ -218,16 +242,22 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       COORDINATOR,
     );
     expect(firstVehicle.id).toBe('XE-1001');
+    const firstDriver = await drivers.create(
+      { name: 'Nam', phone: '0901234567', username: 'nam' },
+      COORDINATOR,
+    );
+    expect(firstDriver.id).toBe('TX-1001');
     const dispatched = await shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-01', vehicleId: firstVehicle.id },
+      { driverId: firstDriver.id, vehicleId: firstVehicle.id },
       COORDINATOR,
     );
     expect(dispatched.status).toBe('Đang giao');
-    expect(dispatched.driverId).toBe('TX-01');
+    expect(dispatched.driverId).toBe(firstDriver.id);
     expect(dispatched.vehicleId).toBe(firstVehicle.id);
     expect((await orders.findOne(order.id)).state).toBe('Đang giao');
     expect((await vehicles.get(firstVehicle.id)).status).toBe('Đang giao');
+    expect((await drivers.get(firstDriver.id)).status).toBe('Đang giao');
     // Giao thất bại thì đơn quay lại Chờ điều xe, điều xe lại chính
     // shipment này (không tạo shipment mới).
     const failed = await shipments.fail(
@@ -238,33 +268,43 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(failed.status).toBe('Giao thất bại');
     expect((await orders.findOne(order.id)).state).toBe('Chờ điều xe');
     expect((await vehicles.get(firstVehicle.id)).status).toBe('Sẵn sàng');
-    // Điều xe lại được phép đổi xe khác.
+    expect((await drivers.get(firstDriver.id)).status).toBe('Sẵn sàng');
+    // Điều xe lại được phép đổi xe khác và đổi tài xế khác; giao hàng sau
+    // đó do tài xế mới thực hiện.
     const secondVehicle = await vehicles.create(
       { plate: '29B-67890', type: 'Xe tải nhỏ' },
       COORDINATOR,
     );
     expect(secondVehicle.id).toBe('XE-1002');
+    const secondDriver = await drivers.create(
+      { name: 'Tuấn', phone: '0901234568', username: 'tuan' },
+      COORDINATOR,
+    );
+    expect(secondDriver.id).toBe('TX-1002');
     const redispatched = await shipments.dispatch(
       shipment.id,
-      { driverId: 'TX-02', vehicleId: secondVehicle.id },
+      { driverId: secondDriver.id, vehicleId: secondVehicle.id },
       COORDINATOR,
     );
     expect(redispatched.status).toBe('Đang giao');
-    expect(redispatched.driverId).toBe('TX-02');
+    expect(redispatched.driverId).toBe(secondDriver.id);
     expect(redispatched.history).toHaveLength(4);
     expect((await orders.findOne(order.id)).state).toBe('Đang giao');
     expect((await vehicles.get(firstVehicle.id)).status).toBe('Sẵn sàng');
     expect((await vehicles.get(secondVehicle.id)).status).toBe('Đang giao');
+    expect((await drivers.get(firstDriver.id)).status).toBe('Sẵn sàng');
+    expect((await drivers.get(secondDriver.id)).status).toBe('Đang giao');
     const delivered = await shipments.deliver(
       shipment.id,
       { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
-      DRIVER,
+      DRIVER_2,
     );
     expect(delivered.status).toBe('Đã giao');
     expect(delivered.proofPhotoKey).toBe('chung-tu/DH-1001/anh-giao.jpg');
     expect(delivered.history).toHaveLength(5);
     expect((await orders.findOne(order.id)).state).toBe('Đã giao');
     expect((await vehicles.get(secondVehicle.id)).status).toBe('Sẵn sàng');
+    expect((await drivers.get(secondDriver.id)).status).toBe('Sẵn sàng');
     // Đơn đã giao xong thì không tạo được shipment mới nữa.
     await expect(
       shipments.create({ orderId: order.id }, COORDINATOR),
@@ -284,6 +324,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const secondShipments = secondApp.get(ShipmentsService);
     const secondAudit = secondApp.get(AuditService);
     const secondVehicles = secondApp.get(VehiclesService);
+    const secondDrivers = secondApp.get(DriversService);
 
     const reopened = await secondShipments.get('GH-1001');
     expect(reopened.status).toBe('Đã giao');
@@ -295,6 +336,15 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     // theo tiếp tục số thứ tự XE-1003.
     expect((await secondVehicles.get('XE-1001')).status).toBe('Sẵn sàng');
     expect((await secondVehicles.get('XE-1002')).status).toBe('Sẵn sàng');
+    // Cả 2 tài xế vẫn còn sau khi khởi động lại, đều về Sẵn sàng; tài xế
+    // tiếp theo tiếp tục số thứ tự TX-1003.
+    expect((await secondDrivers.get('TX-1001')).status).toBe('Sẵn sàng');
+    expect((await secondDrivers.get('TX-1002')).status).toBe('Sẵn sàng');
+    const nextDriver = await secondDrivers.create(
+      { name: 'Hùng', phone: '0901234569', username: 'hung' },
+      COORDINATOR,
+    );
+    expect(nextDriver.id).toBe('TX-1003');
     const nextVehicle = await secondVehicles.create(
       { plate: '29C-11111', type: 'Xe máy' },
       COORDINATOR,

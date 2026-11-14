@@ -14,6 +14,8 @@ import { computeNextNumber } from '../db/id-counter';
 import { OrdersService } from '../orders/orders.service';
 import { VehiclesService } from '../vehicles/vehicle.service';
 import type { Vehicle } from '../vehicles/vehicle.types';
+import { DriversService } from '../drivers/driver.service';
+import type { Driver } from '../drivers/driver.types';
 import { WorkflowService } from '../workflow/workflow.service';
 import { InMemoryShipmentStore, SHIPMENT_STORE } from './shipment.store';
 import type {
@@ -83,6 +85,12 @@ export class ShipmentsService implements OnModuleInit {
     // thử. Khi không có, điều xe bị chặn vì không kiểm tra được xe thật.
     @Optional()
     private readonly vehicles?: VehiclesService,
+    // Tài xế phục vụ điều xe và kiểm tra quyền sở hữu tùy chọn: có khi
+    // chạy qua mô-đun (ShipmentsModule nhập DriversModule), không có khi
+    // dựng service bằng tay trong kiểm thử. Khi không có, điều xe, giao
+    // hàng và giao thất bại đều bị chặn vì không kiểm tra được tài xế thật.
+    @Optional()
+    private readonly drivers?: DriversService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có GH-1001 thì shipment mới là GH-1002,
@@ -245,6 +253,88 @@ export class ShipmentsService implements OnModuleInit {
     await this.vehicles?.markAvailable(vehicleId);
   }
 
+  // Kiểm tra tài xế ở giai đoạn pre-check: tài xế phải có thật và đang
+  // sẵn sàng. Không có thì DriversService ném 404, không ghi audit denied
+  // vì đây là tham chiếu thiếu, giống xe không tồn tại và đơn không tồn
+  // tại lúc tạo shipment. Tài xế sai trạng thái thì 409 và ghi audit
+  // denied qua deny. Mô-đun tài xế vắng mặt (chỉ gặp khi dựng service
+  // bằng tay) thì chặn luôn bằng 409 trực tiếp: đó là lỗi nối mô-đun,
+  // không phải lỗi nghiệp vụ nên không ghi audit denied; khối throw này
+  // cũng để TypeScript thu hẹp kiểu drivers.
+  private async requireReadyDriver(
+    driverId: string,
+    deny: (reason: string) => Promise<never>,
+  ): Promise<Driver> {
+    const drivers = this.drivers;
+    if (drivers === undefined) {
+      throw new ConflictException(
+        `Không kiểm tra được tài xế ${driverId} vì mô-đun tài xế chưa được nối.`,
+      );
+    }
+    const driver = await drivers.get(driverId);
+    if (driver.status !== 'Sẵn sàng') {
+      await deny(
+        `Tài xế ${driverId} đang ở trạng thái "${driver.status}", chỉ điều tài xế đang sẵn sàng được.`,
+      );
+    }
+    return driver;
+  }
+
+  // Kiểm tra quyền sở hữu ở giao hàng và giao thất bại: tài xế của
+  // shipment phải đúng là người gọi. Tài xế không có trong kho, shipment
+  // chưa giao cho ai, hoặc người gọi không phải tài xế của shipment đều
+  // chặn 409 và ghi audit denied (fail-closed). Mô-đun tài xế vắng mặt
+  // (chỉ gặp khi dựng service bằng tay) thì chặn luôn bằng 409 trực tiếp
+  // như ở requireReadyDriver. Thông báo từ chối tính trước vào biến rồi
+  // mới gọi deny một lần, để TypeScript thu hẹp kiểu driver chắc chắn.
+  private async requireShipmentDriver(
+    shipment: Shipment,
+    caller: Caller,
+    deny: (reason: string) => Promise<never>,
+  ): Promise<Driver> {
+    const drivers = this.drivers;
+    if (drivers === undefined) {
+      throw new ConflictException(
+        `Không kiểm tra được tài xế của shipment ${shipment.id} vì mô-đun tài xế chưa được nối.`,
+      );
+    }
+    const driverId = shipment.driverId;
+    const driver: Driver | null =
+      driverId === null ? null : await drivers.findById(driverId);
+    let denied: string | null = null;
+    if (driver === null) {
+      denied =
+        driverId === null
+          ? `Shipment ${shipment.id} chưa giao cho tài xế nào.`
+          : `Không tìm thấy tài xế ${driverId} của shipment ${shipment.id}.`;
+    } else if (driver.username !== caller.username) {
+      denied = `Tài xế của shipment ${shipment.id} là ${driver.username}, không phải ${caller.username}.`;
+    }
+    if (denied !== null) {
+      await deny(denied);
+    }
+    if (driver === null) {
+      // Không tới được đây vì deny đã ném lỗi, chỉ để TypeScript thu hẹp
+      // kiểu driver sau khi đã kiểm hết các trường hợp từ chối.
+      throw new ConflictException(
+        `Không tìm thấy tài xế của shipment ${shipment.id}.`,
+      );
+    }
+    return driver;
+  }
+
+  // Đổi trạng thái tài xế do shipment kéo theo, sau khi shipment và đơn đã
+  // xong. requireReadyDriver và requireShipmentDriver đã chặn khi mô-đun
+  // tài xế vắng mặt nên tới đây drivers luôn có; toán tử ?. chỉ để
+  // TypeScript chấp nhận tham số tùy chọn, không phải để bỏ qua âm thầm.
+  private async markDriverBusy(driverId: string): Promise<void> {
+    await this.drivers?.markBusy(driverId);
+  }
+
+  private async markDriverAvailable(driverId: string): Promise<void> {
+    await this.drivers?.markAvailable(driverId);
+  }
+
   async dispatch(
     id: string,
     input: DispatchShipmentInput,
@@ -283,6 +373,9 @@ export class ShipmentsService implements OnModuleInit {
       await deny(`Điều xe cần vai ${DISPATCHER_ROLE}.`);
     }
     const vehicle = await this.requireReadyVehicle(vehicleId, deny);
+    // Kiểm tra xe trước rồi mới kiểm tra tài xế, để lần điều xe lỗi ở cả
+    // hai vẫn báo lỗi xe trước như trước đây.
+    const driver = await this.requireReadyDriver(driverId, deny);
     await this.precheckOrderMove(
       shipment.orderId,
       'Đang giao',
@@ -322,6 +415,8 @@ export class ShipmentsService implements OnModuleInit {
     );
     // Đơn đã sang Đang giao thì xe mới sang Đang giao.
     await this.markVehicleBusy(vehicle.id);
+    // Đơn đã sang Đang giao thì tài xế mới sang Đang giao.
+    await this.markDriverBusy(driver.id);
     return copyShipment(shipment);
   }
 
@@ -355,6 +450,8 @@ export class ShipmentsService implements OnModuleInit {
     if (!caller.roles.includes(DRIVER_ROLE)) {
       await deny(`Giao hàng cần vai ${DRIVER_ROLE}.`);
     }
+    // Chỉ đúng tài xế được giao cho shipment mới giao hàng được.
+    await this.requireShipmentDriver(shipment, caller, deny);
     await this.precheckOrderMove(
       shipment.orderId,
       'Đã giao',
@@ -395,6 +492,10 @@ export class ShipmentsService implements OnModuleInit {
     if (shipment.vehicleId !== null) {
       await this.markVehicleAvailable(shipment.vehicleId);
     }
+    // Đơn đã sang Đã giao thì trả tài xế về Sẵn sàng.
+    if (shipment.driverId !== null) {
+      await this.markDriverAvailable(shipment.driverId);
+    }
     return copyShipment(shipment);
   }
 
@@ -432,6 +533,12 @@ export class ShipmentsService implements OnModuleInit {
       await deny(
         `Đánh dấu giao thất bại cần vai ${DRIVER_ROLE} hoặc ${DISPATCHER_ROLE}.`,
       );
+    }
+    // Chỉ kiểm tra quyền sở hữu khi người gọi là tài xế: tài xế chỉ báo
+    // thất bại cho shipment giao cho mình. Điều phối viên báo thất bại
+    // cho shipment bất kỳ nên không kiểm tra.
+    if (caller.roles.includes(DRIVER_ROLE)) {
+      await this.requireShipmentDriver(shipment, caller, deny);
     }
     await this.precheckOrderMove(
       shipment.orderId,
@@ -474,6 +581,11 @@ export class ShipmentsService implements OnModuleInit {
     // được phép đổi xe khác.
     if (shipment.vehicleId !== null) {
       await this.markVehicleAvailable(shipment.vehicleId);
+    }
+    // Đơn đã quay lại Chờ điều xe thì trả tài xế về Sẵn sàng, để điều xe
+    // lại được phép đổi tài xế khác.
+    if (shipment.driverId !== null) {
+      await this.markDriverAvailable(shipment.driverId);
     }
     return copyShipment(shipment);
   }
