@@ -4,8 +4,15 @@
 import { useState } from "react";
 import { Menu } from "lucide-react";
 import { SearchInput } from "@/components/ui/SearchInput";
+import type { Session } from "@/lib/auth";
 
-export function Header({ onMenuClick }: { onMenuClick: () => void }) {
+export function Header({
+  onMenuClick,
+  session,
+}: {
+  onMenuClick: () => void;
+  session?: Session | null;
+}) {
   const [query, setQuery] = useState("");
 
   return (
@@ -30,19 +37,36 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
           ariaLabel="Tìm mã đơn, khách hàng"
         />
       </div>
-      <div className="flex shrink-0 items-center gap-2.5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-700 text-sm font-medium text-white">
-          S
+      {session ? (
+        <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-700 text-sm font-medium text-white">
+            {session.username.charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium leading-tight text-gray-900">
+              {session.username}
+            </p>
+            {session.roles.length > 0 ? (
+              <p className="truncate text-xs leading-tight text-gray-500">
+                {session.roles[0]}
+              </p>
+            ) : null}
+          </div>
+          <a
+            href="/api/auth/logout"
+            className="ml-1 text-sm text-gray-500 underline hover:text-gray-900"
+          >
+            Đăng xuất
+          </a>
         </div>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium leading-tight text-gray-900">
-            Son
-          </p>
-          <p className="truncate text-xs leading-tight text-gray-500">
-            Điều phối viên
-          </p>
-        </div>
-      </div>
+      ) : (
+        <a
+          href="/api/auth/login"
+          className="flex h-9 shrink-0 items-center rounded-md bg-red-700 px-3.5 text-sm font-medium text-white hover:bg-red-800"
+        >
+          Đăng nhập
+        </a>
+      )}
     </header>
   );
 }
