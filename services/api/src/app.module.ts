@@ -10,6 +10,7 @@ import { ChannelsModule } from './channels/channel.module';
 import { DeliveryEventsModule } from './delivery-events/delivery-event.module';
 import { DriversModule } from './drivers/driver.module';
 import { OrdersModule } from './orders/orders.module';
+import { ReturnsModule } from './returns/return.module';
 import { ShipmentsModule } from './shipments/shipment.module';
 import { VehiclesModule } from './vehicles/vehicle.module';
 import { WorkflowModule } from './workflow/workflow.module';
@@ -23,6 +24,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     DeliveryEventsModule,
     DriversModule,
     OrdersModule,
+    ReturnsModule,
     ShipmentsModule,
     VehiclesModule,
     WorkflowModule,
