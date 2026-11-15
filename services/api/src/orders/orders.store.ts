@@ -45,6 +45,9 @@ function mapOrderRow(
     // Kênh nguồn đơn, null khi đơn không ghi kênh (cột nullable, đơn cũ
     // tạo trước migration 006 cũng về null).
     channelId: (row.channel_id as string | null) ?? null,
+    // Khách hàng nhận đơn, null khi đơn không ghi khách (cột nullable,
+    // đơn cũ tạo trước migration 008 cũng về null).
+    customerId: (row.customer_id as string | null) ?? null,
     // AddressInput là object có các trường chuỗi tùy chọn; không có địa chỉ
     // thì đơn không mang khóa address, giống bản sao JSON của đơn trong bộ nhớ.
     ...(row.address ? { address: parseJson(row.address) } : {}),
@@ -62,7 +65,7 @@ function mapOrderRow(
 
 const ORDER_COLUMNS = `id, idempotency_key, customer, items, state, address,
   address_trust, address_level, workflow_instance_id, channel_id,
-  created_at, updated_at`;
+  customer_id, created_at, updated_at`;
 
 const ORDER_HISTORY_COLUMNS = `from_state, to_state, actor, role, reason,
   handling, created_at`;
@@ -107,8 +110,8 @@ export class PostgresOrderStore implements OrderStore {
         `INSERT INTO orders
            (id, idempotency_key, customer, items, state, address,
             address_trust, address_level, workflow_instance_id, channel_id,
-            created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            customer_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (id) DO UPDATE SET
            idempotency_key = EXCLUDED.idempotency_key,
            customer = EXCLUDED.customer,
@@ -119,6 +122,7 @@ export class PostgresOrderStore implements OrderStore {
            address_level = EXCLUDED.address_level,
            workflow_instance_id = EXCLUDED.workflow_instance_id,
            channel_id = EXCLUDED.channel_id,
+           customer_id = EXCLUDED.customer_id,
            created_at = EXCLUDED.created_at,
            updated_at = EXCLUDED.updated_at`,
         [
@@ -134,6 +138,7 @@ export class PostgresOrderStore implements OrderStore {
           order.addressLevel,
           order.workflowInstanceId,
           order.channelId,
+          order.customerId,
           order.createdAt,
           order.updatedAt,
         ],

@@ -22,9 +22,13 @@ export class OrdersController {
   }
 
   @Get()
-  list(@Query('channelId') channelId?: string): Promise<Order[]> {
+  list(
+    @Query('channelId') channelId?: string,
+    @Query('customerId') customerId?: string,
+  ): Promise<Order[]> {
     return this.orders.list({
       ...(channelId ? { channelId } : {}),
+      ...(customerId ? { customerId } : {}),
     });
   }
 

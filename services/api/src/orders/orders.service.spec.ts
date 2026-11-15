@@ -13,6 +13,11 @@ import {
   InMemoryChannelStore,
   PostgresChannelStore,
 } from '../channels/channel.store';
+import { CustomersService } from '../customers/customer.service';
+import {
+  InMemoryCustomerStore,
+  PostgresCustomerStore,
+} from '../customers/customer.store';
 import { DbService } from '../db/db.service';
 import { createTestDbService } from '../db/test-helpers';
 import { InventoryService } from '../inventory/inventory.service';
@@ -43,6 +48,7 @@ async function buildServices(): Promise<{
   vehicles: VehiclesService;
   drivers: DriversService;
   channels: ChannelsService;
+  customers: CustomersService;
   workflow: WorkflowService;
   address: AddressService;
   // Cổng bằng chứng dùng stub đổi được, để kiểm thử rào chắn trực tiếp
@@ -64,6 +70,11 @@ async function buildServices(): Promise<{
   const approvals = new ApprovalService(audit, new InMemoryApprovalStore());
   const channels = new ChannelsService(audit, new InMemoryChannelStore());
   await channels.onModuleInit();
+  const customers = new CustomersService(
+    audit,
+    new InMemoryCustomerStore(),
+  );
+  await customers.onModuleInit();
   // Cổng bằng chứng dùng stub đổi được (để kiểm thử rào chắn trực tiếp)
   // GỘP với kho shipment thật, để chuyển đơn theo sự kiện shipment thật
   // cũng thấy bằng chứng vừa lưu.
@@ -91,6 +102,7 @@ async function buildServices(): Promise<{
     undefined,
     gate,
     channels,
+    customers,
   );
   // Xe và tài xế dùng chung cho ShipmentsService: dispatch chỉ nhận xe
   // thật và tài xế thật nên kiểm thử điều xe phải tạo xe và tài xế trước,
@@ -121,6 +133,7 @@ async function buildServices(): Promise<{
     vehicles,
     drivers,
     channels,
+    customers,
     workflow,
     address,
     evidence,
@@ -790,6 +803,166 @@ describe('OrdersService', () => {
     ).toEqual(['DH-1002']);
     expect(await orders.list({ channelId: 'K-9999' })).toHaveLength(0);
   });
+
+  it('tạo đơn kèm khách hàng KH-1001 thì lưu customerId, không ghi thêm audit', async () => {
+    const { orders, audit, customers } = await buildServices();
+    const customer = await customers.create(
+      { name: 'Hộ nước mắm A', phone: '0901234567' },
+      COORDINATOR,
+    );
+    expect(customer.id).toBe('KH-1001');
+    const order = await orders.create(
+      { ...createInput('key-1'), customerId: 'KH-1001' },
+      COORDINATOR,
+    );
+    expect(order.customerId).toBe('KH-1001');
+    expect((await audit.getAll()).map((record) => record.action)).toEqual([
+      'customer.created',
+      'workflow.instance.started',
+      'order.created',
+    ]);
+  });
+
+  it('tạo đơn không kèm khách hàng thì customerId null', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(order.customerId).toBeNull();
+  });
+
+  it('tạo đơn kèm khách hàng không có thì 404', async () => {
+    const { orders } = await buildServices();
+    await expect(
+      orders.create(
+        { ...createInput('key-1'), customerId: 'KH-9999' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('Không tìm thấy khách hàng KH-9999');
+    expect(await orders.list()).toHaveLength(0);
+  });
+
+  it('tạo đơn kèm customerId rỗng thì 400', async () => {
+    const { orders } = await buildServices();
+    await expect(
+      orders.create(
+        { ...createInput('key-1'), customerId: '   ' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('customerId phải là chuỗi không rỗng');
+    expect(await orders.list()).toHaveLength(0);
+  });
+
+  it('tạo đơn kèm khách hàng khi mô-đun khách hàng vắng mặt thì 409', async () => {
+    const { workflow, audit, inventory, address, instances, approvals, channels } =
+      await buildServices();
+    const orders = new OrdersService(
+      workflow,
+      audit,
+      inventory,
+      address,
+      instances,
+      approvals,
+      undefined,
+      undefined,
+      channels,
+    );
+    await expect(
+      orders.create(
+        { ...createInput('key-1'), customerId: 'KH-1001' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('mô-đun khách hàng chưa được nối');
+  });
+
+  it('PATCH đổi khách hàng ở đơn mở, gỡ bằng null, khách sai thì chặn', async () => {
+    const { orders, customers } = await buildServices();
+    await customers.create(
+      { name: 'Hộ nước mắm A', phone: '0901234567' },
+      COORDINATOR,
+    );
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(order.customerId).toBeNull();
+    const withCustomer = await orders.update(
+      order.id,
+      { customerId: 'KH-1001' },
+      COORDINATOR,
+    );
+    expect(withCustomer.customerId).toBe('KH-1001');
+    const cleared = await orders.update(
+      order.id,
+      { customerId: null },
+      COORDINATOR,
+    );
+    expect(cleared.customerId).toBeNull();
+    await expect(
+      orders.update(order.id, { customerId: 'KH-9999' }, COORDINATOR),
+    ).rejects.toThrow('Không tìm thấy khách hàng KH-9999');
+    expect((await orders.findOne(order.id)).customerId).toBeNull();
+  });
+
+  it('PATCH khách hàng sai ở đơn đã đóng thì chặn trước khi tiêu phê duyệt', async () => {
+    const { orders, approvals, customers } = await buildServices();
+    await customers.create(
+      { name: 'Hộ nước mắm A', phone: '0901234567' },
+      COORDINATOR,
+    );
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    await orders.transition(order.id, { to: 'Hủy', reason: 'Khách đổi ý' }, COORDINATOR);
+    const approval = await approvals.request(
+      {
+        type: 'order.edit.closed',
+        subjectId: order.id,
+        reason: 'Gắn khách cho đúng sổ',
+      },
+      COORDINATOR,
+    );
+    await approvals.approve(approval.id, MANAGER, 'Đồng ý');
+    await expect(
+      orders.update(
+        order.id,
+        {
+          customerId: 'KH-9999',
+          reason: 'Gắn khách cho đúng sổ',
+          approvalId: approval.id,
+        },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('Không tìm thấy khách hàng KH-9999');
+    // Phê duyệt chưa bị tiêu vì kiểm tra khách chạy trước.
+    expect((await approvals.get(approval.id)).appliedAt).toBeNull();
+  });
+
+  it('list lọc theo customerId', async () => {
+    const { orders, customers } = await buildServices();
+    await customers.create(
+      { name: 'Hộ nước mắm A', phone: '0901234567' },
+      COORDINATOR,
+    );
+    await customers.create(
+      { name: 'Hộ nước mắm B', phone: '0901234568' },
+      COORDINATOR,
+    );
+    await orders.create(
+      { ...createInput('key-1'), customerId: 'KH-1001' },
+      COORDINATOR,
+    );
+    await orders.create(
+      { ...createInput('key-2'), customerId: 'KH-1002' },
+      COORDINATOR,
+    );
+    await orders.create(createInput('key-3'), COORDINATOR);
+    expect(await orders.list()).toHaveLength(3);
+    expect(
+      (await orders.list({ customerId: 'KH-1001' })).map(
+        (order) => order.id,
+      ),
+    ).toEqual(['DH-1001']);
+    expect(
+      (await orders.list({ customerId: 'KH-1002' })).map(
+        (order) => order.id,
+      ),
+    ).toEqual(['DH-1002']);
+    expect(await orders.list({ customerId: 'KH-9999' })).toHaveLength(0);
+  });
 });
 
 describe('PostgresOrderStore', () => {
@@ -820,6 +993,11 @@ describe('PostgresOrderStore', () => {
       new PostgresChannelStore(db),
     );
     await channels.onModuleInit();
+    const customers = new CustomersService(
+      audit,
+      new PostgresCustomerStore(db),
+    );
+    await customers.onModuleInit();
     const store = new PostgresOrderStore(db);
     const orders = new OrdersService(
       workflow,
@@ -831,9 +1009,10 @@ describe('PostgresOrderStore', () => {
       store,
       undefined,
       channels,
+      customers,
     );
     await orders.onModuleInit();
-    return { db, orders, audit, inventory, instances, approvals, store, channels };
+    return { db, orders, audit, inventory, instances, approvals, store, channels, customers };
   }
 
   it('tạo đơn rồi đọc lại giống hệt, kèm lịch sử và instance', async () => {
@@ -897,5 +1076,37 @@ describe('PostgresOrderStore', () => {
       COORDINATOR,
     );
     expect(next.id).toBe('K-1004');
+  });
+
+  it('tạo đơn kèm khách hàng rồi đọc lại, customerId lưu bền qua khởi động lại', async () => {
+    const first = await buildPostgresStack();
+    const customer = await first.customers.create(
+      { name: 'Hộ nước mắm A', phone: '0901234567' },
+      COORDINATOR,
+    );
+    expect(customer.id).toBe('KH-1001');
+    const one = await first.orders.create(
+      { ...createInput('key-1'), customerId: 'KH-1001' },
+      COORDINATOR,
+    );
+    expect(one.id).toBe('DH-1001');
+    expect(one.customerId).toBe('KH-1001');
+    const loaded = await first.store.findById('DH-1001');
+    expect(loaded).toEqual(one);
+    // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
+    const second = await buildPostgresStack(first.db);
+    const reopened = await second.orders.findOne('DH-1001');
+    expect(reopened.customerId).toBe('KH-1001');
+    // Khách hàng vẫn còn sau khi khởi động lại; khách tiếp theo nối số
+    // thứ tự KH-1002.
+    expect(await second.customers.get('KH-1001')).toMatchObject({
+      name: 'Hộ nước mắm A',
+      phone: '0901234567',
+    });
+    const next = await second.customers.create(
+      { name: 'Hộ nước mắm B', phone: '0901234568' },
+      COORDINATOR,
+    );
+    expect(next.id).toBe('KH-1002');
   });
 });

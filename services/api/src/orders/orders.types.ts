@@ -28,6 +28,9 @@ export interface Order {
   // Kênh nguồn đơn, null khi đơn không ghi kênh. Kênh phải có thật và
   // đang hoạt động thì đơn mới nhận, kiểm tra ở service.
   channelId: string | null;
+  // Khách hàng nhận đơn, null khi đơn không ghi khách. Khách phải có thật
+  // thì đơn mới nhận, kiểm tra ở service.
+  customerId: string | null;
   address?: AddressInput;
   // Mức tin cậy địa chỉ tính lúc tạo đơn, null khi đơn không có địa chỉ.
   addressTrust: number | null;
@@ -55,6 +58,7 @@ export interface CreateOrderInput {
   customer: string;
   items: OrderItem[];
   channelId?: string;
+  customerId?: string;
   address?: AddressInput;
 }
 
@@ -70,6 +74,7 @@ export interface UpdateOrderInput {
   customer?: string;
   items?: OrderItem[];
   channelId?: string | null;
+  customerId?: string | null;
   address?: AddressInput;
   reason?: string;
   // Id phê duyệt đã duyệt, bắt buộc khi sửa đơn đã đóng (thay chuỗi

@@ -4,6 +4,7 @@ import { AppModule } from '../app.module';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { ChannelsService } from '../channels/channel.service';
+import { CustomersService } from '../customers/customer.service';
 import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
 import { DriversService } from '../drivers/driver.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -75,6 +76,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const vehicles = app.get(VehiclesService);
     const events = app.get(DeliveryEventsService);
     const channels = app.get(ChannelsService);
+    const customers = app.get(CustomersService);
 
     // 3 kênh mẫu nạp từ seed lúc khởi động: Chat, Web, Điện thoại.
     expect((await channels.list()).map((channel) => channel.id)).toEqual([
@@ -86,12 +88,24 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       (await channels.list()).map((channel) => channel.name),
     ).toEqual(['Chat', 'Web', 'Điện thoại']);
 
+    // Khách hàng nhận đơn tạo qua API, không có dữ liệu mẫu nạp sẵn.
+    const customer = await customers.create(
+      {
+        name: 'Hộ nước mắm A',
+        phone: '0901234567',
+        address: 'Số 8 phố Hàng Bè, Hai Bà Trưng, Hà Nội',
+      },
+      COORDINATOR,
+    );
+    expect(customer.id).toBe('KH-1001');
+
     const order = await orders.create(
       {
         idempotencyKey: 'key-1',
         customer: 'Hộ nước mắm A',
         items: [{ sku: 'NM-40', quantity: 2 }],
         channelId: 'K-1001',
+        customerId: 'KH-1001',
         address: {
           province: 'Hà Nội',
           district: 'Hai Bà Trưng',
@@ -237,12 +251,25 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const secondShipments = secondApp.get(ShipmentsService);
     const secondEvents = secondApp.get(DeliveryEventsService);
     const secondChannels = secondApp.get(ChannelsService);
+    const secondCustomers = secondApp.get(CustomersService);
 
     const reopened = await secondOrders.findOne('DH-1001');
     expect(reopened.state).toBe('Hoàn');
     expect(reopened.history).toHaveLength(8);
     // Kênh của đơn vẫn còn sau khi khởi động lại.
     expect(reopened.channelId).toBe('K-1001');
+    // Khách hàng của đơn vẫn còn sau khi khởi động lại; khách tiếp theo
+    // nối số thứ tự KH-1002.
+    expect(reopened.customerId).toBe('KH-1001');
+    expect(await secondCustomers.get('KH-1001')).toMatchObject({
+      name: 'Hộ nước mắm A',
+      phone: '0901234567',
+    });
+    const nextCustomer = await secondCustomers.create(
+      { name: 'Hộ nước mắm B', phone: '0901234568' },
+      COORDINATOR,
+    );
+    expect(nextCustomer.id).toBe('KH-1002');
     // 3 kênh mẫu vẫn còn sau khi khởi động lại, không nạp seed lại; kênh
     // tạo tay tiếp theo nối số thứ tự K-1004.
     expect(
