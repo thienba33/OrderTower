@@ -8,6 +8,7 @@ import { DeliveryEventsService } from '../delivery-events/delivery-event.service
 import { DriversService } from '../drivers/driver.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { OrdersService } from '../orders/orders.service';
+import { ReturnsService } from '../returns/return.service';
 import { ShipmentsService } from '../shipments/shipment.service';
 import { VehiclesService } from '../vehicles/vehicle.service';
 import { WorkflowInstanceService } from '../workflow/instance.service';
@@ -33,6 +34,21 @@ const DRIVER_2: Caller = {
   userId: 'user-tuan',
   username: 'tuan',
   roles: ['Tài xế'],
+};
+const DRIVER_3: Caller = {
+  userId: 'user-hung',
+  username: 'hung',
+  roles: ['Tài xế'],
+};
+const CSKH: Caller = {
+  userId: 'user-lan',
+  username: 'lan',
+  roles: ['Nhân viên chăm sóc khách hàng'],
+};
+const MANAGER: Caller = {
+  userId: 'user-quanly',
+  username: 'quan-ly',
+  roles: ['Quản lý'],
 };
 
 // Kiểm thử lưu bền toàn app: khởi động AppModule thật trên Postgres ảo
@@ -325,6 +341,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const audit = app.get(AuditService);
     const vehicles = app.get(VehiclesService);
     const drivers = app.get(DriversService);
+    const returns = app.get(ReturnsService);
 
     const order = await orders.create(
       {
@@ -423,6 +440,18 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect((await orders.findOne(order.id)).state).toBe('Đã giao');
     expect((await vehicles.get(secondVehicle.id)).status).toBe('Sẵn sàng');
     expect((await drivers.get(secondDriver.id)).status).toBe('Sẵn sàng');
+    // Đơn đã giao thì CSKH tạo trả hàng, quản lý duyệt, điều phối viên
+    // hoàn tiền.
+    const ret = await returns.create(
+      { orderId: order.id, reason: 'Khách đổi ý, hàng còn nguyên' },
+      CSKH,
+    );
+    expect(ret.id).toBe('TH-1001');
+    expect(ret.status).toBe('Chờ xử lý');
+    const approved = await returns.approve(ret.id, MANAGER);
+    expect(approved.status).toBe('Đã duyệt');
+    const refunded = await returns.refund(ret.id, COORDINATOR);
+    expect(refunded.status).toBe('Đã hoàn tiền');
     // Đơn đã giao xong thì không tạo được shipment mới nữa.
     await expect(
       shipments.create({ orderId: order.id }, COORDINATOR),
@@ -443,6 +472,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const secondAudit = secondApp.get(AuditService);
     const secondVehicles = secondApp.get(VehiclesService);
     const secondDrivers = secondApp.get(DriversService);
+    const secondReturns = secondApp.get(ReturnsService);
 
     const reopened = await secondShipments.get('GH-1001');
     expect(reopened.status).toBe('Đã giao');
@@ -450,6 +480,10 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(reopened.proofPhotoKey).toBe('chung-tu/DH-1001/anh-giao.jpg');
     expect((await secondOrders.findOne('DH-1001')).state).toBe('Đã giao');
     expect((await secondAudit.verify()).valid).toBe(true);
+    // Trả hàng vẫn còn sau khi khởi động lại, ở trạng thái cuối luồng.
+    const keptReturn = await secondReturns.get('TH-1001');
+    expect(keptReturn.status).toBe('Đã hoàn tiền');
+    expect(keptReturn.orderId).toBe('DH-1001');
     // Cả 2 xe vẫn còn sau khi khởi động lại, đều về Sẵn sàng; xe tiếp
     // theo tiếp tục số thứ tự XE-1003.
     expect((await secondVehicles.get('XE-1001')).status).toBe('Sẵn sàng');
@@ -490,5 +524,24 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       COORDINATOR,
     );
     expect(next.id).toBe('GH-1002');
+    // Đơn mới đi tới giao hàng rồi trả hàng: trả hàng tiếp theo tiếp tục
+    // số thứ tự TH-1002.
+    await secondShipments.dispatch(
+      next.id,
+      { driverId: nextDriver.id, vehicleId: nextVehicle.id },
+      COORDINATOR,
+    );
+    await secondShipments.deliver(
+      next.id,
+      { proofPhotoKey: 'chung-tu/DH-1002/anh-giao.jpg' },
+      DRIVER_3,
+    );
+    expect((await secondOrders.findOne(order2.id)).state).toBe('Đã giao');
+    const nextReturn = await secondReturns.create(
+      { orderId: order2.id, reason: 'Hàng lỗi, khách yêu cầu trả' },
+      CSKH,
+    );
+    expect(nextReturn.id).toBe('TH-1002');
+    expect(nextReturn.status).toBe('Chờ xử lý');
   }, 60000);
 });
