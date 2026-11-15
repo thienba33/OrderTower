@@ -41,7 +41,15 @@ function mapOrderRow(
     id: row.id as string,
     idempotencyKey: row.idempotency_key as string,
     customer: row.customer as string,
+    // SĐT liên hệ giao hàng, null khi đơn không ghi (cột nullable, đơn cũ
+    // tạo trước migration 009 cũng về null).
+    phone: (row.phone as string | null) ?? null,
     items: parseJson(row.items),
+    // Tổng tiền do server tính (VND), cột NOT NULL DEFAULT 0 nên đơn cũ
+    // tạo trước migration 009 về 0.
+    total: row.total as number,
+    // Mốc giao hẹn dạng ISO-8601, null khi đơn không ghi.
+    deadline: row.deadline ? toIso(row.deadline) : null,
     // Kênh nguồn đơn, null khi đơn không ghi kênh (cột nullable, đơn cũ
     // tạo trước migration 006 cũng về null).
     channelId: (row.channel_id as string | null) ?? null,
@@ -63,9 +71,9 @@ function mapOrderRow(
   };
 }
 
-const ORDER_COLUMNS = `id, idempotency_key, customer, items, state, address,
-  address_trust, address_level, workflow_instance_id, channel_id,
-  customer_id, created_at, updated_at`;
+const ORDER_COLUMNS = `id, idempotency_key, customer, phone, items, total,
+  deadline, state, address, address_trust, address_level,
+  workflow_instance_id, channel_id, customer_id, created_at, updated_at`;
 
 const ORDER_HISTORY_COLUMNS = `from_state, to_state, actor, role, reason,
   handling, created_at`;
@@ -108,14 +116,18 @@ export class PostgresOrderStore implements OrderStore {
     await this.db.withTransaction(async (client) => {
       await client.query(
         `INSERT INTO orders
-           (id, idempotency_key, customer, items, state, address,
-            address_trust, address_level, workflow_instance_id, channel_id,
-            customer_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           (id, idempotency_key, customer, phone, items, total, deadline,
+            state, address, address_trust, address_level,
+            workflow_instance_id, channel_id, customer_id, created_at,
+            updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          ON CONFLICT (id) DO UPDATE SET
            idempotency_key = EXCLUDED.idempotency_key,
            customer = EXCLUDED.customer,
+           phone = EXCLUDED.phone,
            items = EXCLUDED.items,
+           total = EXCLUDED.total,
+           deadline = EXCLUDED.deadline,
            state = EXCLUDED.state,
            address = EXCLUDED.address,
            address_trust = EXCLUDED.address_trust,
@@ -129,9 +141,12 @@ export class PostgresOrderStore implements OrderStore {
           order.id,
           order.idempotencyKey,
           order.customer,
+          order.phone,
           // JSONB nhận chuỗi JSON: truyền mảng/object trực tiếp thì pg-mem
           // hiểu nhầm mảng thành mảng Postgres và làm mất vỏ mảng.
           JSON.stringify(order.items),
+          order.total,
+          order.deadline,
           order.state,
           order.address ? JSON.stringify(order.address) : null,
           order.addressTrust,

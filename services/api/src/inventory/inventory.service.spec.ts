@@ -40,6 +40,25 @@ describe('InventoryService', () => {
     expect(await service.get('XX-00')).toBeNull();
   });
 
+  it('seed nạp đúng giá: 4 SKU có giá, 7 SKU chưa có giá', async () => {
+    const service = await loadService();
+    expect((await service.get('NM-25'))?.unitPrice).toBe(93000);
+    expect((await service.get('NM-40'))?.unitPrice).toBe(142000);
+    expect((await service.get('NM-15'))?.unitPrice).toBe(64000);
+    expect((await service.get('HS-KHO'))?.unitPrice).toBe(105000);
+    for (const sku of [
+      'MT-08',
+      'CK-03',
+      'NM-30',
+      'NM-45',
+      'MT-12',
+      'HS-MUC',
+      'CK-07',
+    ]) {
+      expect((await service.get(sku))?.unitPrice).toBeNull();
+    }
+  });
+
   it('đủ hàng khi số lượng nhỏ hơn tồn kho', async () => {
     const service = await loadService();
     expect(
@@ -57,10 +76,10 @@ describe('InventoryService', () => {
     expect(unknown.lacking[0].available).toBeNull();
   });
 
-  it('giữ hàng trừ kho và tăng số đã giữ', async () => {
+  it('giữ hàng trừ kho và tăng số đã giữ, giá còn nguyên', async () => {
     const service = await loadService();
     await service.reserve([{ sku: 'NM-40', quantity: 2 }]);
-    expect(await service.get('NM-40')).toMatchObject({ stock: 450, reserved: 2 });
+    expect(await service.get('NM-40')).toMatchObject({ stock: 450, reserved: 2, unitPrice: 142000 });
     await expect(
       service.reserve([{ sku: 'NM-40', quantity: 9999 }]),
     ).rejects.toThrow('chỉ còn 450');
@@ -85,6 +104,19 @@ describe('InventoryService', () => {
     const service = new InventoryService();
     await expect(service.onModuleInit()).rejects.toThrow('số nguyên không âm');
   });
+
+  it('tệp seed sai giá thì chặn khởi động', async () => {
+    const path = join(tempDir, 'inventory-price.test.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        items: [{ sku: 'NM-40', name: 'Nước mắm', unit: 'chai', stock: 452, unitPrice: -1 }],
+      }),
+    );
+    process.env.INVENTORY_SEED_PATH = path;
+    const service = new InventoryService();
+    await expect(service.onModuleInit()).rejects.toThrow('số nguyên không âm');
+  });
 });
 
 describe('PostgresInventoryStore', () => {
@@ -97,6 +129,7 @@ describe('PostgresInventoryStore', () => {
       sku: 'NM-40',
       name: 'Nước mắm 40 độ 500ml',
       unit: 'chai',
+      unitPrice: 142000,
       stock: 452,
       reserved: 0,
     });
@@ -107,6 +140,7 @@ describe('PostgresInventoryStore', () => {
     expect(await service.get('NM-40')).toMatchObject({
       stock: 450,
       reserved: 2,
+      unitPrice: 142000,
     });
   });
 
@@ -121,6 +155,7 @@ describe('PostgresInventoryStore', () => {
     expect(await second.get('NM-40')).toMatchObject({
       stock: 450,
       reserved: 2,
+      unitPrice: 142000,
     });
   });
 

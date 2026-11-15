@@ -439,6 +439,71 @@ describe('OrdersService', () => {
     expect(order.addressLevel).toBe('Tin cậy cao');
   });
 
+  it('tạo đơn có phone và deadline, total tính từ giá tồn kho', async () => {
+    const { orders, audit } = await buildServices();
+    const order = await orders.create(
+      {
+        ...createInput('key-1'),
+        phone: ' 0901234567 ',
+        deadline: '2026-11-20T10:00:00.000Z',
+        items: [{ sku: 'NM-25', quantity: 2 }],
+      },
+      COORDINATOR,
+    );
+    expect(order.phone).toBe('0901234567');
+    expect(order.deadline).toBe('2026-11-20T10:00:00.000Z');
+    // NM-25 93000 x 2 = 186000.
+    expect(order.total).toBe(186000);
+    expect(await audit.getAll()).toHaveLength(2);
+  });
+
+  it('tạo đơn không có phone/deadline thì null, total tính từ items', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(order.phone).toBeNull();
+    expect(order.deadline).toBeNull();
+    // NM-40 142000 x 2 = 284000.
+    expect(order.total).toBe(284000);
+    const blank = await orders.create(
+      {
+        ...createInput('key-2'),
+        phone: '   ',
+        deadline: '',
+      },
+      COORDINATOR,
+    );
+    expect(blank.phone).toBeNull();
+    expect(blank.deadline).toBeNull();
+    expect(blank.total).toBe(284000);
+  });
+
+  it('deadline sai thì 400, đơn không được tạo', async () => {
+    const { orders } = await buildServices();
+    await expect(
+      orders.create(
+        { ...createInput('key-1'), deadline: 'không phải ngày' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('không parse được');
+    expect(await orders.list()).toHaveLength(0);
+  });
+
+  it('đơn chứa SKU không giá thì total chỉ tính phần có giá', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(
+      {
+        ...createInput('key-1'),
+        items: [
+          { sku: 'NM-25', quantity: 1 },
+          { sku: 'MT-08', quantity: 2 },
+        ],
+      },
+      COORDINATOR,
+    );
+    // NM-25 93000 x 1 + MT-08 chưa có giá x 2 = 93000.
+    expect(order.total).toBe(93000);
+  });
+
   it('địa chỉ yếu thì chặn ở chuyển sang Chờ kho', async () => {
     const { orders, audit } = await buildServices();
     const order = await orders.create({
@@ -576,6 +641,66 @@ describe('OrdersService', () => {
     }, COORDINATOR);
     expect(updated.addressTrust).toBe(40);
     expect(updated.addressLevel).toBe('Rủi ro cao');
+  });
+
+  it('PATCH đổi phone và deadline, total không đổi', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(order.total).toBe(284000);
+    const updated = await orders.update(
+      order.id,
+      { phone: '0901234567', deadline: '2026-11-21T09:30:00.000Z' },
+      COORDINATOR,
+    );
+    expect(updated.phone).toBe('0901234567');
+    expect(updated.deadline).toBe('2026-11-21T09:30:00.000Z');
+    expect(updated.total).toBe(284000);
+  });
+
+  it('PATCH null gỡ phone và deadline', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(
+      {
+        ...createInput('key-1'),
+        phone: '0901234567',
+        deadline: '2026-11-20T10:00:00.000Z',
+      },
+      COORDINATOR,
+    );
+    const updated = await orders.update(
+      order.id,
+      { phone: null, deadline: null },
+      COORDINATOR,
+    );
+    expect(updated.phone).toBeNull();
+    expect(updated.deadline).toBeNull();
+  });
+
+  it('PATCH đổi items tính lại total', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(order.total).toBe(284000);
+    const updated = await orders.update(
+      order.id,
+      { items: [{ sku: 'NM-25', quantity: 1 }] },
+      COORDINATOR,
+    );
+    expect(updated.items).toEqual([{ sku: 'NM-25', quantity: 1 }]);
+    expect(updated.total).toBe(93000);
+  });
+
+  it('PATCH deadline sai thì 400, đơn giữ nguyên', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(
+      { ...createInput('key-1'), deadline: '2026-11-20T10:00:00.000Z' },
+      COORDINATOR,
+    );
+    await expect(
+      orders.update(order.id, { deadline: 'ngày mai nhé' }, COORDINATOR),
+    ).rejects.toThrow('không parse được');
+    expect((await orders.findOne(order.id)).deadline).toBe(
+      '2026-11-20T10:00:00.000Z',
+    );
   });
 
   it('sửa đơn đã đóng thiếu lý do hoặc phê duyệt thì báo 400', async () => {
@@ -1108,5 +1233,30 @@ describe('PostgresOrderStore', () => {
       COORDINATOR,
     );
     expect(next.id).toBe('KH-1002');
+  });
+
+  it('tạo đơn có phone/deadline/total rồi đọc lại, lưu bền qua khởi động lại', async () => {
+    const first = await buildPostgresStack();
+    const one = await first.orders.create(
+      {
+        ...createInput('key-1'),
+        phone: '0901234567',
+        deadline: '2026-11-20T10:00:00.000Z',
+        items: [{ sku: 'NM-25', quantity: 2 }],
+      },
+      COORDINATOR,
+    );
+    expect(one.id).toBe('DH-1001');
+    expect(one.phone).toBe('0901234567');
+    expect(one.deadline).toBe('2026-11-20T10:00:00.000Z');
+    expect(one.total).toBe(186000);
+    const loaded = await first.store.findById('DH-1001');
+    expect(loaded).toEqual(one);
+    // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
+    const second = await buildPostgresStack(first.db);
+    const reopened = await second.orders.findOne('DH-1001');
+    expect(reopened.phone).toBe('0901234567');
+    expect(reopened.deadline).toBe('2026-11-20T10:00:00.000Z');
+    expect(reopened.total).toBe(186000);
   });
 });

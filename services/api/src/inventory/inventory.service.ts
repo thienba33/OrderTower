@@ -46,7 +46,11 @@ export class InventoryService implements OnModuleInit {
       return;
     }
     for (const item of seed) {
-      await this.store.save({ ...item, reserved: 0 });
+      await this.store.save({
+        ...item,
+        unitPrice: item.unitPrice ?? null,
+        reserved: 0,
+      });
     }
     this.logger.log(`Đã nạp tồn kho ${seed.length} SKU từ tệp seed.`);
   }
@@ -150,6 +154,16 @@ export class InventoryService implements OnModuleInit {
       }
       if (!Number.isInteger(entry.stock) || (entry.stock as number) < 0) {
         throw new Error(`Tệp seed tồn kho tại ${path} không hợp lệ: stock của ${String(entry.sku)} phải là số nguyên không âm.`);
+      }
+      // unitPrice vắng hoặc null nghĩa là SKU chưa biết giá; nếu có thì
+      // phải là số nguyên không âm.
+      if (
+        entry.unitPrice !== undefined &&
+        entry.unitPrice !== null &&
+        (!Number.isInteger(entry.unitPrice) ||
+          (entry.unitPrice as number) < 0)
+      ) {
+        throw new Error(`Tệp seed tồn kho tại ${path} không hợp lệ: unitPrice của ${String(entry.sku)} phải là số nguyên không âm hoặc null.`);
       }
       if (seen.has(entry.sku as string)) {
         throw new Error(`Tệp seed tồn kho tại ${path} không hợp lệ: SKU ${String(entry.sku)} bị trùng.`);
