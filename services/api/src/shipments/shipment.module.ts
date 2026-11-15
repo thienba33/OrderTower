@@ -3,6 +3,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
+import { DeliveryEventsModule } from '../delivery-events/delivery-event.module';
 import { DriversModule } from '../drivers/driver.module';
 import { ORDER_SHIPMENT_GATE } from '../orders/order-shipment-gate';
 import { OrdersModule } from '../orders/orders.module';
@@ -23,6 +24,7 @@ import type { ShipmentStore } from './shipment.types';
   imports: [
     AuditModule,
     DbModule,
+    DeliveryEventsModule,
     DriversModule,
     forwardRef(() => OrdersModule),
     VehiclesModule,

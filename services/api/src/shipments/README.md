@@ -76,17 +76,40 @@ mức mô-đun, mức service không lặp. `OrdersService` tiêm cổng tùy ch
 khi cổng không có (dựng service bằng tay trong kiểm thử, không qua
 mô-đun), 2 chuyển có rào chắn bằng chứng shipment đều bị chặn.
 
+## Sự kiện giao hàng tự động
+
+Điều xe, giao hàng và giao thất bại ghi thêm 1 sự kiện tự động vào nhật
+ký giao hàng (mô-đun delivery-event), sau khi đơn đã chuyển xong và
+xe/tài xế đã đổi trạng thái:
+
+- Điều xe thành công: sự kiện "Nhận đơn", người ghi là Điều phối viên.
+- Giao hàng thành công: sự kiện "Đã giao", kèm proofPhotoKey.
+- Giao thất bại: sự kiện "Giao thất bại", note là lý do thất bại.
+
+Sự kiện tự động không ghi audit riêng: audit `shipment.dispatched`,
+`shipment.delivered` và `shipment.failed` đã bao phủ. `ShipmentsService`
+lấy `DeliveryEventsService` dạng tùy chọn (`@Optional()`): khi chạy qua
+mô-đun thì luôn có (ShipmentsModule nhập DeliveryEventsModule); khi dựng
+service bằng tay trong kiểm thử mà không truyền thì điều xe, giao hàng
+và giao thất bại vẫn chạy bình thường, chỉ không ghi sự kiện tự động, vì
+sự kiện là nhật ký chứ không phải rào chắn. Mốc do tài xế hoặc điều phối
+viên ghi bằng tay ("Lấy hàng", "Đang giao", "Ghi chú") thuộc mô-đun
+delivery-event, xem README của mô-đun đó.
+
 ## Hạn chế đã biết
 
-- Lưu shipment, lưu đơn, lưu xe và lưu tài xế là các bước nối tiếp,
-  không chung 1 giao dịch (cùng loại hạn chế với commit lưu bền Postgres):
-  sự cố giữa các bước có thể để shipment đi trước đơn, hoặc đơn đi trước
-  xe hay tài xế. Khi đó chuyển trực tiếp đơn vẫn qua được rào chắn bằng
-  chứng shipment (shipment đã ở trạng thái mới) nên Điều phối viên chuyển
-  bù được; xe hay tài xế lệch thì dùng endpoint maintenance/activate của
-  xe hoặc rest/activate của tài xế để đưa về đúng trạng thái, không sửa dữ
-  liệu tay. Trong khoảng lệch đó, xe hay tài xế đang ở "Sẵn sàng" trong
-  khi shipment của mình đã "Đang giao" có thể bị điều cho đơn khác; lần
+- Lưu shipment, lưu đơn, lưu xe, lưu tài xế và lưu sự kiện giao hàng là
+  các bước nối tiếp, không chung 1 giao dịch (cùng loại hạn chế với
+  commit lưu bền Postgres): sự cố giữa các bước có thể để shipment đi
+  trước đơn, hoặc đơn đi trước xe hay tài xế, hoặc sự kiện tự động chưa
+  kịp ghi trong khi shipment đã đi trước. Khi đó chuyển trực tiếp đơn
+  vẫn qua được rào chắn bằng chứng shipment (shipment đã ở trạng thái
+  mới) nên Điều phối viên chuyển bù được; xe hay tài xế lệch thì dùng
+  endpoint maintenance/activate của xe hoặc rest/activate của tài xế để
+  đưa về đúng trạng thái, không sửa dữ liệu tay; sự kiện tự động thiếu
+  thì đọc lại lịch sử của shipment, vốn vẫn giữ đủ các mốc chuyển trạng
+  thái. Trong khoảng lệch đó, xe hay tài xế đang ở "Sẵn sàng" trong khi
+  shipment của mình đã "Đang giao" có thể bị điều cho đơn khác; lần
   giao hàng hoặc giao thất bại sau đó vẫn trả xe và tài xế về "Sẵn sàng".
 - Việc gán xe cho tài xế (driver.vehicleId) là thông tin xe tài xế thường
   lái, KHÔNG ép phải bằng xe điều ở dispatch: dispatch vẫn gán tài xế và
