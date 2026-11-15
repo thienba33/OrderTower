@@ -15,6 +15,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { ChannelsService } from '../channels/channel.service';
+import { CustomersService } from '../customers/customer.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { ApprovalService } from '../approvals/approval.service';
 import type { Approval } from '../approvals/approval.types';
@@ -71,6 +72,12 @@ export class OrdersService implements OnModuleInit {
     // tra được kênh thật.
     @Optional()
     private readonly channels?: ChannelsService,
+    // Khách hàng tùy chọn, đặt cuối cùng: có khi chạy qua mô-đun
+    // (OrdersModule nhập CustomersModule), không có khi dựng service bằng
+    // tay trong kiểm thử. Khi không có mà đơn kèm customerId thì chặn luôn
+    // vì không kiểm tra được khách thật.
+    @Optional()
+    private readonly customers?: CustomersService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có DH-1001 thì đơn mới là DH-1002, không
@@ -127,6 +134,20 @@ export class OrdersService implements OnModuleInit {
       }
       channelId = await this.requireActiveChannel(input.channelId.trim());
     }
+    // Khách hàng nhận đơn (nếu có): phải là khách thật. Khách không có
+    // thì 404, không ghi audit vì đây là lỗi lúc tạo, giống kênh nguồn.
+    let customerId: string | null = null;
+    if (input.customerId !== undefined && input.customerId !== null) {
+      if (
+        typeof input.customerId !== 'string' ||
+        input.customerId.trim() === ''
+      ) {
+        throw new BadRequestException(
+          'customerId phải là chuỗi không rỗng khi có.',
+        );
+      }
+      customerId = await this.requireCustomer(input.customerId.trim());
+    }
     const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
     // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
     // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
@@ -147,6 +168,7 @@ export class OrdersService implements OnModuleInit {
         quantity: item.quantity,
       })),
       channelId,
+      customerId,
       address: input.address ? { ...input.address } : undefined,
       addressTrust: evaluation ? evaluation.trust : null,
       addressLevel: evaluation ? evaluation.level : null,
@@ -180,14 +202,17 @@ export class OrdersService implements OnModuleInit {
   async list(
     filters: {
       channelId?: string;
+      customerId?: string;
     } = {},
   ): Promise<Order[]> {
     const orders = await this.store.list();
     return orders
       .filter(
         (order) =>
-          filters.channelId === undefined ||
-          order.channelId === filters.channelId,
+          (filters.channelId === undefined ||
+            order.channelId === filters.channelId) &&
+          (filters.customerId === undefined ||
+            order.customerId === filters.customerId),
       )
       .map(copyOrder);
   }
@@ -401,6 +426,24 @@ export class OrdersService implements OnModuleInit {
     return channelId;
   }
 
+  // Kiểm tra khách hàng có thật, dùng chung cho tạo đơn và sửa đơn. Khách
+  // không có thì 404, không ghi audit vì đây là lỗi lúc nhập, giống kênh
+  // nguồn. Mô-đun khách hàng vắng mặt (chỉ gặp khi dựng service bằng tay)
+  // thì chặn luôn vì không kiểm tra được khách thật.
+  private async requireCustomer(customerId: string): Promise<string> {
+    const customers = this.customers;
+    if (customers === undefined) {
+      throw new ConflictException(
+        `Không kiểm tra được khách hàng ${customerId} vì mô-đun khách hàng chưa được nối.`,
+      );
+    }
+    const customer = await customers.findById(customerId);
+    if (!customer) {
+      throw new NotFoundException(`Không tìm thấy khách hàng ${customerId}.`);
+    }
+    return customerId;
+  }
+
   // Sửa dữ liệu đơn. Đơn mở sửa trực tiếp; đơn đã đóng chỉ sửa khi có lý do
   // và người phê duyệt, mọi lần sửa đều ghi audit. Sửa mặt hàng làm đổi
   // lượng hàng đã giữ nên chỉ được khi đơn chưa giữ hàng, hoặc đơn đã đóng
@@ -418,10 +461,11 @@ export class OrdersService implements OnModuleInit {
       input.customer === undefined &&
       input.items === undefined &&
       input.channelId === undefined &&
+      input.customerId === undefined &&
       input.address === undefined
     ) {
       throw new BadRequestException(
-        'Cần ít nhất 1 trường để sửa: customer, items, channelId hoặc address.',
+        'Cần ít nhất 1 trường để sửa: customer, items, channelId, customerId hoặc address.',
       );
     }
     if (input.customer !== undefined) {
@@ -452,6 +496,26 @@ export class OrdersService implements OnModuleInit {
       } else {
         newChannelId = await this.requireActiveChannel(
           input.channelId.trim(),
+        );
+      }
+    }
+    // Đổi khách hàng (nếu có): null thì gỡ khách khỏi đơn, chuỗi thì
+    // phải là khách thật. Kiểm tra trước khi sửa để đơn sai không tiêu
+    // phê duyệt của đơn đã đóng.
+    let newCustomerId: string | null | undefined;
+    if (input.customerId !== undefined) {
+      if (input.customerId === null) {
+        newCustomerId = null;
+      } else if (
+        typeof input.customerId !== 'string' ||
+        input.customerId.trim() === ''
+      ) {
+        throw new BadRequestException(
+          'customerId phải là chuỗi không rỗng hoặc null khi có.',
+        );
+      } else {
+        newCustomerId = await this.requireCustomer(
+          input.customerId.trim(),
         );
       }
     }
@@ -511,6 +575,9 @@ export class OrdersService implements OnModuleInit {
     }
     if (newChannelId !== undefined) {
       order.channelId = newChannelId;
+    }
+    if (newCustomerId !== undefined) {
+      order.customerId = newCustomerId;
     }
     let evaluation = null;
     if (input.address !== undefined) {

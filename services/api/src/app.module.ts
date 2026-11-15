@@ -7,6 +7,7 @@ import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { ChannelsModule } from './channels/channel.module';
+import { CustomersModule } from './customers/customer.module';
 import { DeliveryEventsModule } from './delivery-events/delivery-event.module';
 import { DriversModule } from './drivers/driver.module';
 import { OrdersModule } from './orders/orders.module';
@@ -21,6 +22,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     AuditModule,
     AuthModule,
     ChannelsModule,
+    CustomersModule,
     DeliveryEventsModule,
     DriversModule,
     OrdersModule,
