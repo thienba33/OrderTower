@@ -14,6 +14,7 @@ import {
 } from '../address/address.service';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { ChannelsService } from '../channels/channel.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { ApprovalService } from '../approvals/approval.service';
 import type { Approval } from '../approvals/approval.types';
@@ -64,6 +65,12 @@ export class OrdersService implements OnModuleInit {
     @Optional()
     @Inject(ORDER_SHIPMENT_GATE)
     private readonly shipmentGate?: OrderShipmentGate,
+    // Kênh bán tùy chọn, đặt cuối: có khi chạy qua mô-đun (OrdersModule
+    // nhập ChannelsModule), không có khi dựng service bằng tay trong kiểm
+    // thử. Khi không có mà đơn kèm channelId thì chặn luôn vì không kiểm
+    // tra được kênh thật.
+    @Optional()
+    private readonly channels?: ChannelsService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có DH-1001 thì đơn mới là DH-1002, không
@@ -105,6 +112,21 @@ export class OrdersService implements OnModuleInit {
         `Đơn với idempotencyKey "${input.idempotencyKey}" đã tồn tại (${duplicate.id}).`,
       );
     }
+    // Kênh nguồn đơn (nếu có): phải là kênh thật và đang hoạt động. Kênh
+    // không có thì 404, kênh tạm dừng thì 409, cả 2 đều không ghi audit vì
+    // đây là lỗi lúc tạo, giống đơn trùng idempotencyKey.
+    let channelId: string | null = null;
+    if (input.channelId !== undefined && input.channelId !== null) {
+      if (
+        typeof input.channelId !== 'string' ||
+        input.channelId.trim() === ''
+      ) {
+        throw new BadRequestException(
+          'channelId phải là chuỗi không rỗng khi có.',
+        );
+      }
+      channelId = await this.requireActiveChannel(input.channelId.trim());
+    }
     const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
     // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
     // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
@@ -124,6 +146,7 @@ export class OrdersService implements OnModuleInit {
         sku: item.sku,
         quantity: item.quantity,
       })),
+      channelId,
       address: input.address ? { ...input.address } : undefined,
       addressTrust: evaluation ? evaluation.trust : null,
       addressLevel: evaluation ? evaluation.level : null,
@@ -154,9 +177,19 @@ export class OrdersService implements OnModuleInit {
     return copyOrder(order);
   }
 
-  async list(): Promise<Order[]> {
+  async list(
+    filters: {
+      channelId?: string;
+    } = {},
+  ): Promise<Order[]> {
     const orders = await this.store.list();
-    return orders.map(copyOrder);
+    return orders
+      .filter(
+        (order) =>
+          filters.channelId === undefined ||
+          order.channelId === filters.channelId,
+      )
+      .map(copyOrder);
   }
 
   async findOne(id: string): Promise<Order> {
@@ -344,6 +377,30 @@ export class OrdersService implements OnModuleInit {
     return copyOrder(order);
   }
 
+  // Kiểm tra kênh có thật và đang hoạt động, dùng chung cho tạo đơn và
+  // sửa đơn. Kênh không có thì 404, kênh tạm dừng thì 409, cả 2 đều không
+  // ghi audit vì đây là lỗi lúc nhập, giống đơn trùng idempotencyKey.
+  // Mô-đun kênh vắng mặt (chỉ gặp khi dựng service bằng tay) thì chặn
+  // luôn vì không kiểm tra được kênh thật.
+  private async requireActiveChannel(channelId: string): Promise<string> {
+    const channels = this.channels;
+    if (channels === undefined) {
+      throw new ConflictException(
+        `Không kiểm tra được kênh ${channelId} vì mô-đun kênh chưa được nối.`,
+      );
+    }
+    const channel = await channels.findById(channelId);
+    if (!channel) {
+      throw new NotFoundException(`Không tìm thấy kênh ${channelId}.`);
+    }
+    if (channel.status !== 'Hoạt động') {
+      throw new ConflictException(
+        `Kênh ${channelId} đang ở trạng thái "${channel.status}", chỉ nhận đơn khi kênh đang hoạt động.`,
+      );
+    }
+    return channelId;
+  }
+
   // Sửa dữ liệu đơn. Đơn mở sửa trực tiếp; đơn đã đóng chỉ sửa khi có lý do
   // và người phê duyệt, mọi lần sửa đều ghi audit. Sửa mặt hàng làm đổi
   // lượng hàng đã giữ nên chỉ được khi đơn chưa giữ hàng, hoặc đơn đã đóng
@@ -360,10 +417,11 @@ export class OrdersService implements OnModuleInit {
     if (
       input.customer === undefined &&
       input.items === undefined &&
+      input.channelId === undefined &&
       input.address === undefined
     ) {
       throw new BadRequestException(
-        'Cần ít nhất 1 trường để sửa: customer, items hoặc address.',
+        'Cần ít nhất 1 trường để sửa: customer, items, channelId hoặc address.',
       );
     }
     if (input.customer !== undefined) {
@@ -376,6 +434,26 @@ export class OrdersService implements OnModuleInit {
     }
     if (input.address !== undefined) {
       validateAddress(input.address);
+    }
+    // Đổi kênh (nếu có): null thì gỡ kênh khỏi đơn, chuỗi thì phải là kênh
+    // thật và đang hoạt động. Kiểm tra trước khi sửa để đơn sai không tiêu
+    // phê duyệt của đơn đã đóng.
+    let newChannelId: string | null | undefined;
+    if (input.channelId !== undefined) {
+      if (input.channelId === null) {
+        newChannelId = null;
+      } else if (
+        typeof input.channelId !== 'string' ||
+        input.channelId.trim() === ''
+      ) {
+        throw new BadRequestException(
+          'channelId phải là chuỗi không rỗng hoặc null khi có.',
+        );
+      } else {
+        newChannelId = await this.requireActiveChannel(
+          input.channelId.trim(),
+        );
+      }
     }
     const closed = CLOSED_STATES.includes(order.state);
     if (closed) {
@@ -430,6 +508,9 @@ export class OrdersService implements OnModuleInit {
         sku: item.sku,
         quantity: item.quantity,
       }));
+    }
+    if (newChannelId !== undefined) {
+      order.channelId = newChannelId;
     }
     let evaluation = null;
     if (input.address !== undefined) {

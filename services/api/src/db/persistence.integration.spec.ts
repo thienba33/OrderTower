@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { ChannelsService } from '../channels/channel.service';
 import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
 import { DriversService } from '../drivers/driver.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -57,12 +58,24 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const shipments = app.get(ShipmentsService);
     const vehicles = app.get(VehiclesService);
     const events = app.get(DeliveryEventsService);
+    const channels = app.get(ChannelsService);
+
+    // 3 kênh mẫu nạp từ seed lúc khởi động: Chat, Web, Điện thoại.
+    expect((await channels.list()).map((channel) => channel.id)).toEqual([
+      'K-1001',
+      'K-1002',
+      'K-1003',
+    ]);
+    expect(
+      (await channels.list()).map((channel) => channel.name),
+    ).toEqual(['Chat', 'Web', 'Điện thoại']);
 
     const order = await orders.create(
       {
         idempotencyKey: 'key-1',
         customer: 'Hộ nước mắm A',
         items: [{ sku: 'NM-40', quantity: 2 }],
+        channelId: 'K-1001',
         address: {
           province: 'Hà Nội',
           district: 'Hai Bà Trưng',
@@ -207,10 +220,23 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const secondDrivers = secondApp.get(DriversService);
     const secondShipments = secondApp.get(ShipmentsService);
     const secondEvents = secondApp.get(DeliveryEventsService);
+    const secondChannels = secondApp.get(ChannelsService);
 
     const reopened = await secondOrders.findOne('DH-1001');
     expect(reopened.state).toBe('Hoàn');
     expect(reopened.history).toHaveLength(8);
+    // Kênh của đơn vẫn còn sau khi khởi động lại.
+    expect(reopened.channelId).toBe('K-1001');
+    // 3 kênh mẫu vẫn còn sau khi khởi động lại, không nạp seed lại; kênh
+    // tạo tay tiếp theo nối số thứ tự K-1004.
+    expect(
+      (await secondChannels.list()).map((channel) => channel.id),
+    ).toEqual(['K-1001', 'K-1002', 'K-1003']);
+    const nextChannel = await secondChannels.create(
+      { name: 'Sàn thương mại' },
+      COORDINATOR,
+    );
+    expect(nextChannel.id).toBe('K-1004');
     expect((await secondAudit.verify()).valid).toBe(true);
     expect(await secondInventory.get('NM-40')).toMatchObject({
       stock: 450,

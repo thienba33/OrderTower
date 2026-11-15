@@ -15,7 +15,7 @@ describe('DbService', () => {
     }
   });
 
-  it('migration 001, 002, 003, 004 và 005 áp dụng được và chạy lại là không làm gì thêm', async () => {
+  it('migration 001, 002, 003, 004, 005 và 006 áp dụng được và chạy lại là không làm gì thêm', async () => {
     const db = await createTestDbService();
     const first = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
@@ -26,6 +26,7 @@ describe('DbService', () => {
       '003_vehicles',
       '004_drivers',
       '005_delivery_events',
+      '006_channels',
     ]);
     for (const table of [
       'audit_log',
@@ -40,6 +41,7 @@ describe('DbService', () => {
       'vehicles',
       'drivers',
       'delivery_events',
+      'channels',
       'schema_migrations',
     ]) {
       // Bảng tồn tại khi truy vấn được, dù chưa có hàng nào.
@@ -50,13 +52,14 @@ describe('DbService', () => {
     const second = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(second.rows).toHaveLength(5);
+    expect(second.rows).toHaveLength(6);
     expect((second.rows as Array<{ version: string }>).map((row) => row.version)).toEqual([
       '001_init',
       '002_shipments',
       '003_vehicles',
       '004_drivers',
       '005_delivery_events',
+      '006_channels',
     ]);
   });
 });

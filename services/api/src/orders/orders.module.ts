@@ -3,6 +3,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { AddressModule } from '../address/address.module';
 import { ApprovalsModule } from '../approvals/approval.module';
 import { AuditModule } from '../audit/audit.module';
+import { ChannelsModule } from '../channels/channel.module';
 import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
 import { InventoryModule } from '../inventory/inventory.module';
@@ -17,6 +18,7 @@ import { ORDER_STORE, PostgresOrderStore } from './orders.store';
     AddressModule,
     ApprovalsModule,
     AuditModule,
+    ChannelsModule,
     DbModule,
     InventoryModule,
     WorkflowModule,

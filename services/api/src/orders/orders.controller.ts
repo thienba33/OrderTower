@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
 import { OrdersService } from './orders.service';
 import type {
@@ -22,8 +22,10 @@ export class OrdersController {
   }
 
   @Get()
-  list(): Promise<Order[]> {
-    return this.orders.list();
+  list(@Query('channelId') channelId?: string): Promise<Order[]> {
+    return this.orders.list({
+      ...(channelId ? { channelId } : {}),
+    });
   }
 
   @Get(':id')
