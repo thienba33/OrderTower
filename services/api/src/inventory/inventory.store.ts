@@ -22,12 +22,14 @@ function mapInventoryRow(row: Record<string, unknown>): InventoryItem {
     sku: row.sku as string,
     name: row.name as string,
     unit: row.unit as string,
+    // Cột unit_price thêm ở migration 009; hàng nạp trước đó về null.
+    unitPrice: (row.unit_price as number | null) ?? null,
     stock: row.stock as number,
     reserved: row.reserved as number,
   };
 }
 
-const INVENTORY_COLUMNS = 'sku, name, unit, stock, reserved, updated_at';
+const INVENTORY_COLUMNS = 'sku, name, unit, unit_price, stock, reserved, updated_at';
 
 // Lưu tồn kho trong bộ nhớ. Mọi bản sao trả ra đều tách khỏi kho.
 @Injectable()
@@ -74,15 +76,16 @@ export class PostgresInventoryStore implements InventoryStore {
 
   async save(item: InventoryItem): Promise<void> {
     await this.db.query(
-      `INSERT INTO inventory (sku, name, unit, stock, reserved)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO inventory (sku, name, unit, unit_price, stock, reserved)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (sku) DO UPDATE SET
          name = EXCLUDED.name,
          unit = EXCLUDED.unit,
+         unit_price = EXCLUDED.unit_price,
          stock = EXCLUDED.stock,
          reserved = EXCLUDED.reserved,
          updated_at = now()`,
-      [item.sku, item.name, item.unit, item.stock, item.reserved],
+      [item.sku, item.name, item.unit, item.unitPrice, item.stock, item.reserved],
     );
   }
 }

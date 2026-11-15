@@ -31,6 +31,7 @@ import {
 import type {
   CreateOrderInput,
   Order,
+  OrderItem,
   TransitionOrderInput,
   UpdateOrderInput,
 } from './orders.types';
@@ -119,6 +120,12 @@ export class OrdersService implements OnModuleInit {
         `Đơn với idempotencyKey "${input.idempotencyKey}" đã tồn tại (${duplicate.id}).`,
       );
     }
+    // SĐT liên hệ giao hàng: trim, rỗng thì null, không kiểm tra định
+    // dạng. Mốc giao hẹn: chuỗi Date.parse được thì chuẩn hóa ISO, rỗng
+    // thì null, không parse được thì 400. Kiểm tra sau rào chắn trùng
+    // idempotencyKey, giống kiểm tra kênh/khách bên dưới.
+    const phone = normalizePhone(input.phone);
+    const deadline = parseDeadline(input.deadline);
     // Kênh nguồn đơn (nếu có): phải là kênh thật và đang hoạt động. Kênh
     // không có thì 404, kênh tạm dừng thì 409, cả 2 đều không ghi audit vì
     // đây là lỗi lúc tạo, giống đơn trùng idempotencyKey.
@@ -148,6 +155,8 @@ export class OrdersService implements OnModuleInit {
       }
       customerId = await this.requireCustomer(input.customerId.trim());
     }
+    // Tổng tiền do server tính từ giá từng SKU trong kho, client không gửi.
+    const total = await this.computeTotal(input.items);
     const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
     // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
     // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
@@ -163,10 +172,13 @@ export class OrdersService implements OnModuleInit {
       id,
       idempotencyKey: input.idempotencyKey,
       customer: input.customer,
+      phone,
       items: input.items.map((item) => ({
         sku: item.sku,
         quantity: item.quantity,
       })),
+      total,
+      deadline,
       channelId,
       customerId,
       address: input.address ? { ...input.address } : undefined,
@@ -402,6 +414,18 @@ export class OrdersService implements OnModuleInit {
     return copyOrder(order);
   }
 
+  // Tổng tiền đơn do server tính: tổng (unitPrice ?? 0) * quantity trên
+  // từng item. SKU không có trong kho hoặc chưa có giá đóng góp 0; tạo
+  // đơn không kiểm tra SKU tồn tại (rào chắn tồn kho chạy lúc đóng gói).
+  private async computeTotal(items: OrderItem[]): Promise<number> {
+    let total = 0;
+    for (const item of items) {
+      const held = await this.inventory.get(item.sku);
+      total += (held?.unitPrice ?? 0) * item.quantity;
+    }
+    return total;
+  }
+
   // Kiểm tra kênh có thật và đang hoạt động, dùng chung cho tạo đơn và
   // sửa đơn. Kênh không có thì 404, kênh tạm dừng thì 409, cả 2 đều không
   // ghi audit vì đây là lỗi lúc nhập, giống đơn trùng idempotencyKey.
@@ -459,13 +483,15 @@ export class OrdersService implements OnModuleInit {
     }
     if (
       input.customer === undefined &&
+      input.phone === undefined &&
       input.items === undefined &&
       input.channelId === undefined &&
       input.customerId === undefined &&
-      input.address === undefined
+      input.address === undefined &&
+      input.deadline === undefined
     ) {
       throw new BadRequestException(
-        'Cần ít nhất 1 trường để sửa: customer, items, channelId, customerId hoặc address.',
+        'Cần ít nhất 1 trường để sửa: customer, phone, items, channelId, customerId, address hoặc deadline.',
       );
     }
     if (input.customer !== undefined) {
@@ -519,6 +545,18 @@ export class OrdersService implements OnModuleInit {
         );
       }
     }
+    // Đổi SĐT/mốc giao hẹn (nếu có): null thì gỡ khỏi đơn. Kiểm tra
+    // trước khi sửa để đơn sai không tiêu phê duyệt của đơn đã đóng,
+    // giống kiểm tra kênh/khách bên trên.
+    let newPhone: string | null | undefined;
+    if (input.phone !== undefined) {
+      newPhone = input.phone === null ? null : normalizePhone(input.phone);
+    }
+    let newDeadline: string | null | undefined;
+    if (input.deadline !== undefined) {
+      newDeadline =
+        input.deadline === null ? null : parseDeadline(input.deadline);
+    }
     const closed = CLOSED_STATES.includes(order.state);
     if (closed) {
       if (input.reason === undefined || input.reason.trim() === '') {
@@ -567,11 +605,19 @@ export class OrdersService implements OnModuleInit {
     if (input.customer !== undefined) {
       order.customer = input.customer;
     }
+    if (newPhone !== undefined) {
+      order.phone = newPhone;
+    }
     if (input.items !== undefined) {
       order.items = input.items.map((item) => ({
         sku: item.sku,
         quantity: item.quantity,
       }));
+      // Đổi mặt hàng thì tính lại tổng tiền từ giá hiện tại trong kho.
+      order.total = await this.computeTotal(order.items);
+    }
+    if (newDeadline !== undefined) {
+      order.deadline = newDeadline;
     }
     if (newChannelId !== undefined) {
       order.channelId = newChannelId;
@@ -613,6 +659,41 @@ export class OrdersService implements OnModuleInit {
     }
     return copyOrder(order);
   }
+}
+
+// SĐT liên hệ: trim, chuỗi rỗng/toàn khoảng trắng về null, không kiểm
+// tra định dạng. undefined nghĩa là client không gửi (chỉ gặp ở create).
+function normalizePhone(value: unknown): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new BadRequestException('phone phải là chuỗi khi có.');
+  }
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+// Mốc giao hẹn: chuỗi Date.parse được thì chuẩn hóa ISO-8601, chuỗi rỗng
+// về null, không parse được thì 400. Không kiểm tra trong quá khứ.
+function parseDeadline(value: unknown): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new BadRequestException('deadline phải là chuỗi ngày giờ khi có.');
+  }
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    return null;
+  }
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new BadRequestException(
+      `deadline "${value}" không parse được thành ngày giờ.`,
+    );
+  }
+  return parsed.toISOString();
 }
 
 function validateItems(items: unknown): void {

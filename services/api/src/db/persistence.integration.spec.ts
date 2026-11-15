@@ -103,6 +103,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       {
         idempotencyKey: 'key-1',
         customer: 'Hộ nước mắm A',
+        phone: '0901234567',
         items: [{ sku: 'NM-40', quantity: 2 }],
         channelId: 'K-1001',
         customerId: 'KH-1001',
@@ -112,10 +113,15 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
           ward: 'Phường Phạm Đình Hổ',
           street: 'Số 8 phố Hàng Bè',
         },
+        deadline: '2026-11-20T10:00:00.000Z',
       },
       COORDINATOR,
     );
     expect(order.id).toBe('DH-1001');
+    expect(order.phone).toBe('0901234567');
+    expect(order.deadline).toBe('2026-11-20T10:00:00.000Z');
+    // NM-40 142000 x 2 = 284000.
+    expect(order.total).toBe(284000);
     const steps: Array<{
       to: string;
       caller: Caller;
@@ -256,6 +262,10 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const reopened = await secondOrders.findOne('DH-1001');
     expect(reopened.state).toBe('Hoàn');
     expect(reopened.history).toHaveLength(8);
+    // SĐT, mốc giao hẹn và tổng tiền vẫn còn sau khi khởi động lại.
+    expect(reopened.phone).toBe('0901234567');
+    expect(reopened.deadline).toBe('2026-11-20T10:00:00.000Z');
+    expect(reopened.total).toBe(284000);
     // Kênh của đơn vẫn còn sau khi khởi động lại.
     expect(reopened.channelId).toBe('K-1001');
     // Khách hàng của đơn vẫn còn sau khi khởi động lại; khách tiếp theo
@@ -314,6 +324,10 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       COORDINATOR,
     );
     expect(next.id).toBe('DH-1002');
+    // Đơn không ghi phone/deadline thì null, total tính từ items.
+    expect(next.phone).toBeNull();
+    expect(next.deadline).toBeNull();
+    expect(next.total).toBe(142000);
     // Sự kiện giao hàng vẫn còn sau khi khởi động lại, đủ 5 mốc.
     const kept = await secondEvents.list({ shipmentId: 'GH-1001' });
     expect(kept).toHaveLength(5);
