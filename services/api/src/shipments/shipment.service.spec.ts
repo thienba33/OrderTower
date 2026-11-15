@@ -15,16 +15,25 @@ import { InMemoryShipmentStore } from './shipment.store';
 import type { ShipmentStore } from './shipment.types';
 import { DriversService } from '../drivers/driver.service';
 import { InMemoryDriverStore } from '../drivers/driver.store';
+import type { DriverStore } from '../drivers/driver.types';
+import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
+import { InMemoryDeliveryEventStore } from '../delivery-events/delivery-event.store';
+import type { DeliveryEventStore } from '../delivery-events/delivery-event.types';
 import { VehiclesService } from '../vehicles/vehicle.service';
 import { InMemoryVehicleStore } from '../vehicles/vehicle.store';
 
-async function buildServices(): Promise<{
+async function buildServices(options: {
+  withDeliveryEvents?: boolean;
+} = {}): Promise<{
   orders: OrdersService;
   audit: AuditService;
   shipments: ShipmentsService;
   shipmentStore: ShipmentStore;
+  driverStore: DriverStore;
   vehicles: VehiclesService;
   drivers: DriversService;
+  events: DeliveryEventsService;
+  eventStore: DeliveryEventStore;
 }> {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
@@ -58,12 +67,26 @@ async function buildServices(): Promise<{
   // trước, giống chạy thật qua mô-đun.
   const vehicles = new VehiclesService(audit, new InMemoryVehicleStore());
   await vehicles.onModuleInit();
+  const driverStore = new InMemoryDriverStore();
   const drivers = new DriversService(
     audit,
-    new InMemoryDriverStore(),
+    driverStore,
     vehicles,
   );
   await drivers.onModuleInit();
+  // Kho sự kiện, kho shipment và kho tài xế dùng chung cho cả
+  // DeliveryEventsService và ShipmentsService, để sự kiện tự động theo
+  // chuyển shipment thấy cùng 1 dữ liệu. withDeliveryEvents: false thì
+  // ShipmentsService dựng không có service sự kiện, để kiểm tra luồng
+  // giao hàng vẫn chạy khi mô-đun sự kiện vắng mặt.
+  const eventStore = new InMemoryDeliveryEventStore();
+  const events = new DeliveryEventsService(
+    audit,
+    eventStore,
+    shipmentStore,
+    driverStore,
+  );
+  await events.onModuleInit();
   const shipments = new ShipmentsService(
     orders,
     audit,
@@ -71,8 +94,19 @@ async function buildServices(): Promise<{
     shipmentStore,
     vehicles,
     drivers,
+    options.withDeliveryEvents === false ? undefined : events,
   );
-  return { orders, audit, shipments, shipmentStore, vehicles, drivers };
+  return {
+    orders,
+    audit,
+    shipments,
+    shipmentStore,
+    driverStore,
+    vehicles,
+    drivers,
+    events,
+    eventStore,
+  };
 }
 
 const COORDINATOR: Caller = {
@@ -895,6 +929,133 @@ describe('ShipmentsService', () => {
     expect(await deniedCount(services.audit)).toBe(1);
     expect((await services.shipments.get(shipment.id)).status).toBe(
       'Đang giao',
+    );
+  });
+
+  it('điều xe ghi sự kiện tự động Nhận đơn, không ghi audit riêng', async () => {
+    const services = await buildServices();
+    const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
+    const driver = await createDriverReady(services);
+    await services.shipments.dispatch(
+      shipment.id,
+      { driverId: driver.id, vehicleId: vehicle.id },
+      COORDINATOR,
+    );
+    const listed = await services.events.list({ shipmentId: shipment.id });
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      id: 'SK-1001',
+      type: 'Nhận đơn',
+      orderId: order.id,
+      by: 'son',
+      role: 'Điều phối viên',
+    });
+    expect(await actionCount(services.audit, 'delivery-event.created')).toBe(
+      0,
+    );
+    expect(await actionCount(services.audit, 'shipment.dispatched')).toBe(1);
+  });
+
+  it('giao hàng ghi sự kiện tự động Đã giao kèm bằng chứng, không ghi audit riêng', async () => {
+    const services = await buildServices();
+    const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
+    const driver = await createDriverReady(services);
+    await services.shipments.dispatch(
+      shipment.id,
+      { driverId: driver.id, vehicleId: vehicle.id },
+      COORDINATOR,
+    );
+    await services.shipments.deliver(
+      shipment.id,
+      { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
+      DRIVER,
+    );
+    const listed = await services.events.list({ shipmentId: shipment.id });
+    expect(listed).toHaveLength(2);
+    expect(listed.map((event) => event.type)).toEqual([
+      'Nhận đơn',
+      'Đã giao',
+    ]);
+    expect(listed[1]).toMatchObject({
+      id: 'SK-1002',
+      type: 'Đã giao',
+      orderId: order.id,
+      proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg',
+      by: 'nam',
+      role: 'Tài xế',
+    });
+    expect(await actionCount(services.audit, 'delivery-event.created')).toBe(
+      0,
+    );
+    expect(await actionCount(services.audit, 'shipment.delivered')).toBe(1);
+  });
+
+  it('giao thất bại ghi sự kiện tự động Giao thất bại kèm lý do, không ghi audit riêng', async () => {
+    const services = await buildServices();
+    const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
+    const driver = await createDriverReady(services);
+    await services.shipments.dispatch(
+      shipment.id,
+      { driverId: driver.id, vehicleId: vehicle.id },
+      COORDINATOR,
+    );
+    await services.shipments.fail(
+      shipment.id,
+      { reason: 'Khách không nghe máy' },
+      DRIVER,
+    );
+    const listed = await services.events.list({ shipmentId: shipment.id });
+    expect(listed).toHaveLength(2);
+    expect(listed.map((event) => event.type)).toEqual([
+      'Nhận đơn',
+      'Giao thất bại',
+    ]);
+    expect(listed[1]).toMatchObject({
+      id: 'SK-1002',
+      type: 'Giao thất bại',
+      orderId: order.id,
+      note: 'Khách không nghe máy',
+      by: 'nam',
+      role: 'Tài xế',
+    });
+    expect(await actionCount(services.audit, 'delivery-event.created')).toBe(
+      0,
+    );
+    expect(await actionCount(services.audit, 'shipment.failed')).toBe(1);
+  });
+
+  it('điều xe, giao thất bại, điều xe lại và giao hàng vẫn chạy khi mô-đun sự kiện vắng mặt', async () => {
+    const services = await buildServices({ withDeliveryEvents: false });
+    const { order, shipment } = await createShipmentReady(services);
+    const vehicle = await createVehicleReady(services);
+    const driver = await createDriverReady(services);
+    await services.shipments.dispatch(
+      shipment.id,
+      { driverId: driver.id, vehicleId: vehicle.id },
+      COORDINATOR,
+    );
+    await services.shipments.fail(
+      shipment.id,
+      { reason: 'Khách không nghe máy' },
+      DRIVER,
+    );
+    await services.shipments.dispatch(
+      shipment.id,
+      { driverId: driver.id, vehicleId: vehicle.id },
+      COORDINATOR,
+    );
+    await services.shipments.deliver(
+      shipment.id,
+      { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
+      DRIVER,
+    );
+    expect((await services.shipments.get(shipment.id)).status).toBe('Đã giao');
+    expect((await services.orders.findOne(order.id)).state).toBe('Đã giao');
+    expect(await services.events.list({ shipmentId: shipment.id })).toEqual(
+      [],
     );
   });
 });

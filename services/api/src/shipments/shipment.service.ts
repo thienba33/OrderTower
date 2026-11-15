@@ -11,6 +11,8 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { computeNextNumber } from '../db/id-counter';
+import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
+import type { DeliveryEventType } from '../delivery-events/delivery-event.types';
 import { OrdersService } from '../orders/orders.service';
 import { VehiclesService } from '../vehicles/vehicle.service';
 import type { Vehicle } from '../vehicles/vehicle.types';
@@ -91,6 +93,13 @@ export class ShipmentsService implements OnModuleInit {
     // hàng và giao thất bại đều bị chặn vì không kiểm tra được tài xế thật.
     @Optional()
     private readonly drivers?: DriversService,
+    // Sự kiện giao hàng tự động tùy chọn: có khi chạy qua mô-đun
+    // (ShipmentsModule nhập DeliveryEventsModule), không có khi dựng
+    // service bằng tay trong kiểm thử. Khi không có, điều xe, giao hàng
+    // và giao thất bại vẫn chạy bình thường, chỉ không ghi sự kiện tự
+    // động: sự kiện là nhật ký, không phải rào chắn.
+    @Optional()
+    private readonly deliveryEvents?: DeliveryEventsService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có GH-1001 thì shipment mới là GH-1002,
@@ -335,6 +344,30 @@ export class ShipmentsService implements OnModuleInit {
     await this.drivers?.markAvailable(driverId);
   }
 
+  // Ghi sự kiện tự động theo chuyển shipment, sau khi đơn đã chuyển xong
+  // và xe/tài xế đã đổi trạng thái. Mô-đun sự kiện vắng mặt (chỉ gặp khi
+  // dựng service bằng tay) thì bỏ qua: sự kiện là nhật ký, không phải
+  // rào chắn, nên thiếu nhật ký không chặn được luồng giao hàng. Sự kiện
+  // tự động không ghi audit riêng, audit shipment đã bao phủ.
+  private async recordAutoEvent(
+    shipment: Shipment,
+    type: DeliveryEventType,
+    by: string,
+    role: string,
+    note?: string,
+    proofPhotoKey?: string,
+  ): Promise<void> {
+    await this.deliveryEvents?.recordAuto({
+      shipmentId: shipment.id,
+      orderId: shipment.orderId,
+      type,
+      by,
+      role,
+      ...(note !== undefined ? { note } : {}),
+      ...(proofPhotoKey !== undefined ? { proofPhotoKey } : {}),
+    });
+  }
+
   async dispatch(
     id: string,
     input: DispatchShipmentInput,
@@ -417,6 +450,13 @@ export class ShipmentsService implements OnModuleInit {
     await this.markVehicleBusy(vehicle.id);
     // Đơn đã sang Đang giao thì tài xế mới sang Đang giao.
     await this.markDriverBusy(driver.id);
+    // Đơn đã sang Đang giao thì ghi sự kiện Nhận đơn.
+    await this.recordAutoEvent(
+      shipment,
+      'Nhận đơn',
+      caller.username,
+      DISPATCHER_ROLE,
+    );
     return copyShipment(shipment);
   }
 
@@ -496,6 +536,15 @@ export class ShipmentsService implements OnModuleInit {
     if (shipment.driverId !== null) {
       await this.markDriverAvailable(shipment.driverId);
     }
+    // Đơn đã sang Đã giao thì ghi sự kiện Đã giao kèm bằng chứng.
+    await this.recordAutoEvent(
+      shipment,
+      'Đã giao',
+      caller.username,
+      DRIVER_ROLE,
+      undefined,
+      proofPhotoKey,
+    );
     return copyShipment(shipment);
   }
 
@@ -587,6 +636,14 @@ export class ShipmentsService implements OnModuleInit {
     if (shipment.driverId !== null) {
       await this.markDriverAvailable(shipment.driverId);
     }
+    // Đơn đã quay lại Chờ điều xe thì ghi sự kiện Giao thất bại kèm lý do.
+    await this.recordAutoEvent(
+      shipment,
+      'Giao thất bại',
+      caller.username,
+      caller.roles[0] ?? '',
+      reason,
+    );
     return copyShipment(shipment);
   }
 

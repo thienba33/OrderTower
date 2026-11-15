@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
 import { DriversService } from '../drivers/driver.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { OrdersService } from '../orders/orders.service';
@@ -55,6 +56,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const instances = app.get(WorkflowInstanceService);
     const shipments = app.get(ShipmentsService);
     const vehicles = app.get(VehiclesService);
+    const events = app.get(DeliveryEventsService);
 
     const order = await orders.create(
       {
@@ -116,6 +118,40 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(current.state).toBe('Đang giao');
     expect((await vehicles.get(vehicle.id)).status).toBe('Đang giao');
     expect((await drivers.get(driver.id)).status).toBe('Đang giao');
+    // Điều xe ghi sự kiện tự động Nhận đơn; tài xế ghi thêm mốc Lấy hàng,
+    // Đang giao và Ghi chú khi shipment đang giao.
+    const afterDispatch = await events.list({ shipmentId: shipment.id });
+    expect(afterDispatch).toHaveLength(1);
+    expect(afterDispatch[0]).toMatchObject({
+      id: 'SK-1001',
+      type: 'Nhận đơn',
+      orderId: order.id,
+      by: 'son',
+      role: 'Điều phối viên',
+    });
+    const pickup = await events.create(
+      { shipmentId: shipment.id, type: 'Lấy hàng' },
+      DRIVER,
+    );
+    expect(pickup.id).toBe('SK-1002');
+    const enRoute = await events.create(
+      {
+        shipmentId: shipment.id,
+        type: 'Đang giao',
+        note: 'Đang trên đường giao',
+      },
+      DRIVER,
+    );
+    expect(enRoute.id).toBe('SK-1003');
+    const note = await events.create(
+      {
+        shipmentId: shipment.id,
+        type: 'Ghi chú',
+        note: 'Khách hẹn giao sau 14:00',
+      },
+      DRIVER,
+    );
+    expect(note.id).toBe('SK-1004');
     await shipments.deliver(
       shipment.id,
       { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
@@ -125,6 +161,20 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(current.state).toBe('Đã giao');
     expect((await vehicles.get(vehicle.id)).status).toBe('Sẵn sàng');
     expect((await drivers.get(driver.id)).status).toBe('Sẵn sàng');
+    // Giao hàng ghi sự kiện tự động Đã giao kèm bằng chứng.
+    const afterDeliver = await events.list({ shipmentId: shipment.id });
+    expect(afterDeliver).toHaveLength(5);
+    expect(afterDeliver.map((event) => event.type)).toEqual([
+      'Nhận đơn',
+      'Lấy hàng',
+      'Đang giao',
+      'Ghi chú',
+      'Đã giao',
+    ]);
+    expect(afterDeliver[4]).toMatchObject({
+      id: 'SK-1005',
+      proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg',
+    });
     current = await orders.transition(
       current.id,
       { to: 'Hoàn', handling: 'Đối soát xong, khách giữ hàng' },
@@ -155,6 +205,8 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const secondInventory = secondApp.get(InventoryService);
     const secondVehicles = secondApp.get(VehiclesService);
     const secondDrivers = secondApp.get(DriversService);
+    const secondShipments = secondApp.get(ShipmentsService);
+    const secondEvents = secondApp.get(DeliveryEventsService);
 
     const reopened = await secondOrders.findOne('DH-1001');
     expect(reopened.state).toBe('Hoàn');
@@ -183,10 +235,50 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
         idempotencyKey: 'key-2',
         customer: 'Hộ nước mắm B',
         items: [{ sku: 'NM-40', quantity: 1 }],
+        address: {
+          province: 'Hà Nội',
+          district: 'Hai Bà Trưng',
+          ward: 'Phường Phạm Đình Hổ',
+          street: 'Số 8 phố Hàng Bè',
+        },
       },
       COORDINATOR,
     );
     expect(next.id).toBe('DH-1002');
+    // Sự kiện giao hàng vẫn còn sau khi khởi động lại, đủ 5 mốc.
+    const kept = await secondEvents.list({ shipmentId: 'GH-1001' });
+    expect(kept).toHaveLength(5);
+    expect(kept.map((event) => event.type)).toEqual([
+      'Nhận đơn',
+      'Lấy hàng',
+      'Đang giao',
+      'Ghi chú',
+      'Đã giao',
+    ]);
+    // Đơn mới đi tới giao hàng: sự kiện tiếp theo tiếp tục số thứ tự
+    // SK-1006.
+    for (const step of steps) {
+      await secondOrders.transition(next.id, { to: step.to }, step.caller);
+    }
+    const nextShipment = await secondShipments.create(
+      { orderId: next.id },
+      COORDINATOR,
+    );
+    expect(nextShipment.id).toBe('GH-1002');
+    await secondShipments.dispatch(
+      nextShipment.id,
+      { driverId: nextDriver.id, vehicleId: nextVehicle.id },
+      COORDINATOR,
+    );
+    const nextEvents = await secondEvents.list({
+      shipmentId: nextShipment.id,
+    });
+    expect(nextEvents).toHaveLength(1);
+    expect(nextEvents[0]).toMatchObject({
+      id: 'SK-1006',
+      type: 'Nhận đơn',
+      orderId: 'DH-1002',
+    });
     // Không gọi app.close(): 2 app dùng chung 1 pool pg-mem, đóng pool rồi
     // thì app còn lại không dùng được nữa; pg-mem không giữ socket thật nên
     // không cần đóng để Jest thoát.
