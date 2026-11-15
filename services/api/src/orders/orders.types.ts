@@ -25,6 +25,9 @@ export interface Order {
   idempotencyKey: string;
   customer: string;
   items: OrderItem[];
+  // Kênh nguồn đơn, null khi đơn không ghi kênh. Kênh phải có thật và
+  // đang hoạt động thì đơn mới nhận, kiểm tra ở service.
+  channelId: string | null;
   address?: AddressInput;
   // Mức tin cậy địa chỉ tính lúc tạo đơn, null khi đơn không có địa chỉ.
   addressTrust: number | null;
@@ -51,6 +54,7 @@ export interface CreateOrderInput {
   idempotencyKey: string;
   customer: string;
   items: OrderItem[];
+  channelId?: string;
   address?: AddressInput;
 }
 
@@ -65,6 +69,7 @@ export interface TransitionOrderInput {
 export interface UpdateOrderInput {
   customer?: string;
   items?: OrderItem[];
+  channelId?: string | null;
   address?: AddressInput;
   reason?: string;
   // Id phê duyệt đã duyệt, bắt buộc khi sửa đơn đã đóng (thay chuỗi

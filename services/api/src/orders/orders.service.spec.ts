@@ -8,6 +8,11 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { PostgresAuditStore } from '../audit/audit.store';
 import type { Caller } from '../auth/auth.types';
+import { ChannelsService } from '../channels/channel.service';
+import {
+  InMemoryChannelStore,
+  PostgresChannelStore,
+} from '../channels/channel.store';
 import { DbService } from '../db/db.service';
 import { createTestDbService } from '../db/test-helpers';
 import { InventoryService } from '../inventory/inventory.service';
@@ -37,6 +42,9 @@ async function buildServices(): Promise<{
   shipments: ShipmentsService;
   vehicles: VehiclesService;
   drivers: DriversService;
+  channels: ChannelsService;
+  workflow: WorkflowService;
+  address: AddressService;
   // Cổng bằng chứng dùng stub đổi được, để kiểm thử rào chắn trực tiếp
   // mà không cần tạo shipment thật.
   evidence: OrderShipmentEvidence[];
@@ -54,6 +62,8 @@ async function buildServices(): Promise<{
     new InMemoryWorkflowInstanceStore(),
   );
   const approvals = new ApprovalService(audit, new InMemoryApprovalStore());
+  const channels = new ChannelsService(audit, new InMemoryChannelStore());
+  await channels.onModuleInit();
   // Cổng bằng chứng dùng stub đổi được (để kiểm thử rào chắn trực tiếp)
   // GỘP với kho shipment thật, để chuyển đơn theo sự kiện shipment thật
   // cũng thấy bằng chứng vừa lưu.
@@ -80,6 +90,7 @@ async function buildServices(): Promise<{
     approvals,
     undefined,
     gate,
+    channels,
   );
   // Xe và tài xế dùng chung cho ShipmentsService: dispatch chỉ nhận xe
   // thật và tài xế thật nên kiểm thử điều xe phải tạo xe và tài xế trước,
@@ -109,6 +120,9 @@ async function buildServices(): Promise<{
     shipments,
     vehicles,
     drivers,
+    channels,
+    workflow,
+    address,
     evidence,
   };
 }
@@ -656,6 +670,126 @@ describe('OrdersService', () => {
       }, COORDINATOR),
     ).rejects.toThrow('số nguyên dương');
   });
+
+  it('tạo đơn kèm kênh Chat thì lưu channelId, không ghi thêm audit', async () => {
+    const { orders, audit } = await buildServices();
+    const order = await orders.create(
+      { ...createInput('key-1'), channelId: 'K-1001' },
+      COORDINATOR,
+    );
+    expect(order.channelId).toBe('K-1001');
+    expect(await audit.getAll()).toHaveLength(2);
+    expect((await audit.getAll()).map((record) => record.action)).toEqual([
+      'workflow.instance.started',
+      'order.created',
+    ]);
+  });
+
+  it('tạo đơn không kèm kênh thì channelId null', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(order.channelId).toBeNull();
+  });
+
+  it('tạo đơn kèm kênh không có thì 404', async () => {
+    const { orders } = await buildServices();
+    await expect(
+      orders.create(
+        { ...createInput('key-1'), channelId: 'K-9999' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('Không tìm thấy kênh K-9999');
+    expect(await orders.list()).toHaveLength(0);
+  });
+
+  it('tạo đơn kèm kênh tạm dừng thì 409, không ghi audit', async () => {
+    const { orders, audit, channels } = await buildServices();
+    await channels.pause('K-1002', COORDINATOR);
+    await expect(
+      orders.create(
+        { ...createInput('key-1'), channelId: 'K-1002' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('chỉ nhận đơn khi kênh đang hoạt động');
+    expect(await orders.list()).toHaveLength(0);
+    expect(
+      (await audit.getAll()).filter(
+        (record) => record.action === 'order.created',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('tạo đơn kèm kênh khi mô-đun kênh vắng mặt thì 409', async () => {
+    const { workflow, audit, inventory, address, instances, approvals } =
+      await buildServices();
+    const orders = new OrdersService(
+      workflow,
+      audit,
+      inventory,
+      address,
+      instances,
+      approvals,
+      undefined,
+      undefined,
+    );
+    await expect(
+      orders.create(
+        { ...createInput('key-1'), channelId: 'K-1001' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('mô-đun kênh chưa được nối');
+  });
+
+  it('PATCH đổi kênh ở đơn mở, gỡ kênh bằng null, kênh sai thì chặn', async () => {
+    const { orders, channels } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(order.channelId).toBeNull();
+    const withChannel = await orders.update(
+      order.id,
+      { channelId: 'K-1001' },
+      COORDINATOR,
+    );
+    expect(withChannel.channelId).toBe('K-1001');
+    const cleared = await orders.update(
+      order.id,
+      { channelId: null },
+      COORDINATOR,
+    );
+    expect(cleared.channelId).toBeNull();
+    await expect(
+      orders.update(order.id, { channelId: 'K-9999' }, COORDINATOR),
+    ).rejects.toThrow('Không tìm thấy kênh K-9999');
+    await channels.pause('K-1002', COORDINATOR);
+    await expect(
+      orders.update(order.id, { channelId: 'K-1002' }, COORDINATOR),
+    ).rejects.toThrow('chỉ nhận đơn khi kênh đang hoạt động');
+    expect((await orders.findOne(order.id)).channelId).toBeNull();
+  });
+
+  it('list lọc theo channelId', async () => {
+    const { orders } = await buildServices();
+    await orders.create(
+      { ...createInput('key-1'), channelId: 'K-1001' },
+      COORDINATOR,
+    );
+    await orders.create(
+      { ...createInput('key-2'), channelId: 'K-1002' },
+      COORDINATOR,
+    );
+    await orders.create(createInput('key-3'), COORDINATOR);
+    expect(await orders.list()).toHaveLength(3);
+    expect(
+      (await orders.list({ channelId: 'K-1001' })).map(
+        (order) => order.id,
+      ),
+    ).toEqual(['DH-1001']);
+    expect(
+      (await orders.list({ channelId: 'K-1002' })).map(
+        (order) => order.id,
+      ),
+    ).toEqual(['DH-1002']);
+    expect(await orders.list({ channelId: 'K-9999' })).toHaveLength(0);
+  });
 });
 
 describe('PostgresOrderStore', () => {
@@ -681,6 +815,11 @@ describe('PostgresOrderStore', () => {
       new PostgresApprovalStore(db),
     );
     await approvals.onModuleInit();
+    const channels = new ChannelsService(
+      audit,
+      new PostgresChannelStore(db),
+    );
+    await channels.onModuleInit();
     const store = new PostgresOrderStore(db);
     const orders = new OrdersService(
       workflow,
@@ -690,9 +829,11 @@ describe('PostgresOrderStore', () => {
       instances,
       approvals,
       store,
+      undefined,
+      channels,
     );
     await orders.onModuleInit();
-    return { db, orders, audit, inventory, instances, approvals, store };
+    return { db, orders, audit, inventory, instances, approvals, store, channels };
   }
 
   it('tạo đơn rồi đọc lại giống hệt, kèm lịch sử và instance', async () => {
@@ -730,5 +871,31 @@ describe('PostgresOrderStore', () => {
     expect(old.state).toBe('Đã kiểm tra');
     expect(old.history).toHaveLength(2);
     expect((await second.audit.verify()).valid).toBe(true);
+  });
+
+  it('tạo đơn kèm kênh rồi đọc lại, channelId lưu bền qua khởi động lại', async () => {
+    const first = await buildPostgresStack();
+    const one = await first.orders.create(
+      { ...createInput('key-1'), channelId: 'K-1001' },
+      COORDINATOR,
+    );
+    expect(one.id).toBe('DH-1001');
+    expect(one.channelId).toBe('K-1001');
+    const loaded = await first.store.findById('DH-1001');
+    expect(loaded).toEqual(one);
+    // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
+    const second = await buildPostgresStack(first.db);
+    const reopened = await second.orders.findOne('DH-1001');
+    expect(reopened.channelId).toBe('K-1001');
+    // Kênh mẫu vẫn còn sau khi khởi động lại, không nạp seed lại.
+    expect(
+      (await second.channels.list()).map((channel) => channel.id),
+    ).toEqual(['K-1001', 'K-1002', 'K-1003']);
+    // Kênh tạo tay tiếp theo nối số thứ tự K-1004.
+    const next = await second.channels.create(
+      { name: 'Sàn thương mại' },
+      COORDINATOR,
+    );
+    expect(next.id).toBe('K-1004');
   });
 });
