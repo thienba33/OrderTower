@@ -10,7 +10,7 @@ services:
       KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
       ORDERTOWER_DB_PASSWORD: ${ORDERTOWER_DB_PASSWORD:?ORDERTOWER_DB_PASSWORD is required}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Khởi tạo database Keycloak và user ứng dụng khi volume còn trống.
