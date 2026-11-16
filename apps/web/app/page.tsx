@@ -1,140 +1,264 @@
-"use client";
-
 // SPDX-License-Identifier: Apache-2.0
-import { useState } from "react";
 import Link from "next/link";
-import { Pagination } from "@/components/ui/Pagination";
-import { Table, type TableColumn } from "@/components/ui/Table";
-import {
-  APPROVAL_QUEUE,
-  BI_ANOMALIES,
-  DX_AXES,
-  DX_SCORE_TOTAL,
-  GUARDRAIL_BLOCKS,
-  ORDER_FLOW_STATES,
-  OVERVIEW_KPIS,
-  SLA_RISK_ORDERS,
-  type SlaRiskOrder,
-} from "@/data/overview";
+import { ApiError, apiFetch } from "@/lib/api";
+import { getSession } from "@/lib/auth";
+import OverviewClient from "./overview-client";
+import { approvalTypeLabel } from "./approval-queue/approval-queue-types";
+import type { ApiApproval } from "./approval-queue/approval-queue-types";
+import type { ApiAuditRecord, ApiWorkflowDefinition } from "./orders/[id]/order-detail-types";
+import type { ApiOrder } from "./orders/orders-types";
+import type { OverviewView, SlaRiskRow } from "./overview-types";
 
-const SLA_PAGE_SIZE = 5;
+const VN_TIMEZONE = "Asia/Ho_Chi_Minh";
+const TERMINAL_STATES = ["Hoàn", "Hủy"];
+const SLA_DAY_MS = 24 * 60 * 60 * 1000;
 
-const SLA_COLUMNS: TableColumn<SlaRiskOrder>[] = [
-  { key: "id", header: "Mã đơn", render: (row) => row.id, cellClassName: "text-xs font-medium text-gray-900", headerClassName: "w-[109px]" },
-  { key: "customer", header: "Khách hàng", render: (row) => row.customer, cellClassName: "text-xs text-gray-700", headerClassName: "w-[149px]" },
-  { key: "status", header: "Trạng thái", render: (row) => row.status, cellClassName: "text-xs text-gray-700", headerClassName: "w-[169px]" },
-  { key: "deadline", header: "Mốc giao hẹn", render: (row) => row.deadline, cellClassName: "text-xs text-gray-700", headerClassName: "w-[139px]" },
-  { key: "risk", header: "Nguy cơ", render: (row) => row.risk, cellClassName: "text-xs text-red-700", headerClassName: "w-[299px]" },
-  { key: "action", header: "Hành động gợi ý", render: (row) => row.action, cellClassName: "text-xs text-gray-700", headerClassName: "w-[288px]" },
+// 5 loại duyệt hiện trong hàng đợi, theo đúng thứ tự của bản mẫu.
+const APPROVAL_ROW_TYPES = [
+  "address.low-trust",
+  "customer.restrict",
+  "order.overload",
+  "sales.regulate",
+  "ai.proposal",
 ];
 
-export default function OverviewPage() {
-  const [slaPage, setSlaPage] = useState(1);
-  const slaTotalPages = Math.ceil(SLA_RISK_ORDERS.length / SLA_PAGE_SIZE);
-  const slaRows = SLA_RISK_ORDERS.slice((slaPage - 1) * SLA_PAGE_SIZE, slaPage * SLA_PAGE_SIZE);
+// 4 loại rào chắn hiện trong dashboard, theo đúng thứ tự của bản mẫu.
+const GUARDRAIL_LABELS = [
+  "Chuyển trạng thái trái phép",
+  "Tồn kho không đủ",
+  "Đơn trùng",
+  "Địa chỉ chưa đạt mức tối thiểu",
+];
 
-  return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold text-gray-900">Tổng quan điều hành</h1>
+// Ngày theo giờ Việt Nam dạng YYYY-MM-DD để so sánh "hôm nay".
+const dayKeyFormat = new Intl.DateTimeFormat("en-CA", {
+  timeZone: VN_TIMEZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
-      <section aria-label="Chỉ số hôm nay" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {OVERVIEW_KPIS.map((kpi) => (
-          <div key={kpi.label} className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-5">
-            <p className="text-sm font-medium text-gray-600">{kpi.label}</p>
-            <p className="text-2xl font-semibold text-gray-900">{kpi.value}</p>
-          </div>
-        ))}
-      </section>
+function isToday(iso: string, today: string): boolean {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+  return dayKeyFormat.format(date) === today;
+}
 
-      <section aria-label="Luồng đơn hàng" className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-gray-900">Luồng đơn hàng - 9 trạng thái</h2>
-        <div className="flex gap-2">
-          {ORDER_FLOW_STATES.map((state) => (
-            <div
-              key={state.label}
-              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg border px-1 py-3 text-center ${
-                state.highlight ? "border-red-200 bg-red-50" : "border-gray-200 bg-gray-50"
-              }`}
-            >
-              <p className={`text-xl font-semibold ${state.highlight ? "text-red-700" : "text-gray-900"}`}>{state.count}</p>
-              <p className="text-[11px] text-gray-700">{state.label}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+// ISO -> "DD/MM HH:mm" giờ Việt Nam, sai thì "-".
+function formatShortDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  const parts = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: VN_TIMEZONE,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("day")}/${get("month")} ${get("hour")}:${get("minute")}`;
+}
 
-      <div className="flex flex-col gap-3 xl:flex-row">
-        <section aria-label="Hàng đợi duyệt" className="flex min-w-0 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4 xl:w-[58.6%]">
-          <h2 className="text-sm font-semibold text-gray-900">Chờ duyệt (8) - con người quyết, hệ thống không tự quyết</h2>
-          {APPROVAL_QUEUE.map((item) => (
-            <div key={item.label} className="flex items-center gap-2">
-              <p className="min-w-0 flex-1 text-[13px] text-gray-700">{item.label}</p>
-              <p className="text-sm font-semibold text-gray-900">{item.count}</p>
-              <Link href="/approval-queue" className="whitespace-nowrap text-xs font-medium text-red-700 underline">
-                Xem hàng đợi
-              </Link>
-            </div>
-          ))}
-        </section>
+// Phân loại 1 lần chặn (audit denial) bằng chuỗi con trong detail.
+// So khớp không phân biệt hoa thường vì API ghi detail dạng câu
+// ("Tồn kho không đủ: ...", "Địa chỉ của đơn ... chỉ đạt mức tin cậy ...").
+function classifyGuardrail(detail: string): string {
+  const text = detail.toLowerCase();
+  if (text.includes("tồn kho")) {
+    return "Tồn kho không đủ";
+  }
+  if (text.includes("trùng")) {
+    return "Đơn trùng";
+  }
+  if (text.includes("tin cậy") || text.includes("địa chỉ")) {
+    return "Địa chỉ chưa đạt mức tối thiểu";
+  }
+  return "Chuyển trạng thái trái phép";
+}
 
-        <section aria-label="Rào chắn backend" className="flex min-w-0 flex-1 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-gray-900">Rào chắn backend hôm nay (6)</h2>
-          {GUARDRAIL_BLOCKS.map((item) => (
-            <div key={item.label} className="flex items-center gap-2">
-              <p className="min-w-0 flex-1 text-[13px] text-gray-700">{item.label}</p>
-              <p className="text-sm font-semibold text-red-700">{item.count}</p>
-            </div>
-          ))}
-        </section>
-      </div>
+function buildSlaRows(orders: ApiOrder[], now: number): SlaRiskRow[] {
+  const candidates: { deadlineMs: number | null; row: SlaRiskRow }[] = [];
+  for (const order of orders) {
+    if (TERMINAL_STATES.includes(order.state)) {
+      continue;
+    }
+    const deadlineMs = order.deadline ? Date.parse(order.deadline) : NaN;
+    const hasDeadline = Number.isFinite(deadlineMs);
+    const overdue = hasDeadline && deadlineMs <= now;
+    const soon = hasDeadline && deadlineMs > now && deadlineMs - now <= SLA_DAY_MS;
+    const lowTrust = order.addressTrust !== null && order.addressTrust < 70;
+    if (!overdue && !soon && !lowTrust) {
+      continue;
+    }
+    // Đơn thỏa cả 2 điều kiện thì ưu tiên hiển thị lý do deadline.
+    const risk = overdue
+      ? "Quá SLA giao hẹn"
+      : soon
+        ? "Sắp quá SLA giao hẹn"
+        : "Địa chỉ tin cậy thấp";
+    const action = lowTrust
+      ? "Xác nhận ĐC"
+      : order.state === "Chờ kho" || order.state === "Đang đóng gói"
+        ? "Ưu tiên kho"
+        : "Gọi khách";
+    candidates.push({
+      deadlineMs: hasDeadline ? deadlineMs : null,
+      row: {
+        action,
+        customer: order.customer,
+        deadline: order.deadline ? formatShortDateTime(order.deadline) : "-",
+        id: order.id,
+        risk,
+        status: order.state,
+      },
+    });
+  }
+  // Mốc quá hạn (thời gian trong quá khứ) tự lên trước khi xếp theo mốc
+  // tăng dần; đơn không có mốc xuống cuối.
+  candidates.sort((a, b) => (a.deadlineMs ?? Infinity) - (b.deadlineMs ?? Infinity));
+  return candidates.map((candidate) => candidate.row);
+}
 
-      <section aria-label="Đơn quá SLA" className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-        <h2 className="flex h-11 items-center border-b border-gray-200 px-4 text-sm font-semibold text-gray-900">
-          Đơn quá SLA / có nguy cơ trễ (7)
-        </h2>
-        <Table bare columns={SLA_COLUMNS} rows={slaRows} rowKey={(row) => row.id} />
-        <div className="border-t border-gray-200">
-          <Pagination
-            page={slaPage}
-            totalPages={slaTotalPages}
-            onPageChange={setSlaPage}
-            range={{
-              end: Math.min(slaPage * SLA_PAGE_SIZE, SLA_RISK_ORDERS.length),
-              start: (slaPage - 1) * SLA_PAGE_SIZE + 1,
-              total: SLA_RISK_ORDERS.length,
-            }}
-          />
-        </div>
-      </section>
+function buildView(
+  orders: ApiOrder[],
+  approvals: ApiApproval[],
+  audit: ApiAuditRecord[],
+  definition: ApiWorkflowDefinition,
+): OverviewView {
+  const today = dayKeyFormat.format(new Date());
+  const now = Date.now();
 
-      <div className="flex flex-col gap-3 xl:flex-row">
-        <section aria-label="Lớp BI" className="flex min-w-0 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4 xl:w-[58.6%]">
-          <h2 className="text-sm font-semibold text-gray-900">Lớp BI - 3 bất thường cần quyết</h2>
-          {BI_ANOMALIES.map((item) => (
-            <div key={item.title} className="flex flex-col gap-1">
-              <p className="text-[13px] font-medium text-gray-900">{item.title}</p>
-              <p className="text-xs text-gray-500">{item.detail}</p>
-            </div>
-          ))}
-        </section>
-
-        <section aria-label="DX-Score" className="flex min-w-0 flex-1 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
-          <div className="flex items-center gap-2">
-            <h2 className="flex-1 text-sm font-semibold text-gray-900">DX-Score (đo từ log)</h2>
-            <p className="text-base font-semibold text-red-700">{DX_SCORE_TOTAL}</p>
-          </div>
-          {DX_AXES.map((axis) => (
-            <div key={axis.key} className="flex items-center gap-2">
-              <p className="text-xs text-gray-700">{axis.key}</p>
-              <div className="h-2 min-w-0 flex-1 rounded-full bg-gray-200">
-                <div className="h-2 rounded-full bg-red-700" style={{ width: `${axis.percent}%` }} />
-              </div>
-              <p className="whitespace-nowrap text-xs font-semibold text-gray-900">{axis.value}</p>
-              <p className="whitespace-nowrap text-xs text-gray-500">tối đa 30%</p>
-            </div>
-          ))}
-        </section>
-      </div>
-    </div>
+  const slaRows = buildSlaRows(orders, now);
+  const denialsToday = audit.filter(
+    (record) => record.action.endsWith(".denied") && isToday(record.at, today),
   );
+
+  const counts = definition.states.map(
+    (state) => orders.filter((order) => order.state === state).length,
+  );
+  const maxCount = counts.length > 0 ? Math.max(...counts) : 0;
+  const firstMax = counts.indexOf(maxCount);
+
+  return {
+    kpis: [
+      {
+        label: "Đơn hôm nay",
+        value: orders.filter((order) => isToday(order.createdAt, today)).length,
+      },
+      {
+        label: "Đơn đang chạy",
+        value: orders.filter((order) => !TERMINAL_STATES.includes(order.state)).length,
+      },
+      { label: "Chờ duyệt", value: approvals.length },
+      { label: "Quá SLA / sắp quá", value: slaRows.length },
+      { label: "Rào chắn hôm nay", value: denialsToday.length },
+    ],
+    flowStates: definition.states.map((label, index) => ({
+      count: counts[index],
+      highlight: index === firstMax,
+      label,
+    })),
+    approvalRows: APPROVAL_ROW_TYPES.map((type) => ({
+      count: approvals.filter((approval) => approval.type === type).length,
+      label: approvalTypeLabel(type),
+    })),
+    pendingTotal: approvals.length,
+    guardrailRows: GUARDRAIL_LABELS.map((label) => ({
+      count: denialsToday.filter((record) => classifyGuardrail(record.detail) === label).length,
+      label,
+    })),
+    guardrailTotal: denialsToday.length,
+    slaRows,
+  };
+}
+
+// Lấy 1 danh sách từ API. Lỗi HTTP hoặc dữ liệu không phải mảng thì ném
+// ApiError để trang quyết định hiện nhắc đăng nhập hay báo lỗi.
+async function fetchList<T>(path: string): Promise<T[]> {
+  const response = await apiFetch(path);
+  if (!response.ok) {
+    throw new ApiError(response.status, `API trả về ${response.status}.`);
+  }
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) {
+    throw new ApiError(response.status, "API trả về dữ liệu không đúng dạng.");
+  }
+  return data as T[];
+}
+
+async function fetchDefinition(): Promise<ApiWorkflowDefinition> {
+  const response = await apiFetch("/workflow/definition?definitionId=order-flow");
+  if (!response.ok) {
+    throw new ApiError(response.status, `API trả về ${response.status}.`);
+  }
+  const data: unknown = await response.json();
+  if (
+    data === null ||
+    typeof data !== "object" ||
+    !Array.isArray((data as ApiWorkflowDefinition).states)
+  ) {
+    throw new ApiError(response.status, "API trả về dữ liệu không đúng dạng.");
+  }
+  return data as ApiWorkflowDefinition;
+}
+
+export default async function OverviewPage() {
+  const session = await getSession();
+  if (!session) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="text-2xl font-semibold text-gray-900">Tổng quan điều hành</h1>
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+          Bạn chưa đăng nhập.{" "}
+          <Link href="/api/auth/login" className="font-medium text-red-700 underline">
+            Đăng nhập
+          </Link>{" "}
+          để xem tổng quan từ API.
+        </p>
+      </div>
+    );
+  }
+
+  let view: OverviewView;
+  try {
+    const [orders, approvals, audit, definition] = await Promise.all([
+      fetchList<ApiOrder>("/orders"),
+      fetchList<ApiApproval>("/approvals?status=pending"),
+      fetchList<ApiAuditRecord>("/audit"),
+      fetchDefinition(),
+    ]);
+    view = buildView(orders, approvals, audit, definition);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      return (
+        <div className="flex flex-col gap-4">
+          <h1 className="text-2xl font-semibold text-gray-900">Tổng quan điều hành</h1>
+          <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+            Phiên đăng nhập đã hết hạn.{" "}
+            <Link href="/api/auth/login" className="font-medium text-red-700 underline">
+              Đăng nhập lại
+            </Link>{" "}
+            để xem tổng quan từ API.
+          </p>
+        </div>
+      );
+    }
+    const message =
+      error instanceof Error ? error.message : "Không tải được tổng quan.";
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="text-2xl font-semibold text-gray-900">Tổng quan điều hành</h1>
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+          Không tải được tổng quan: {message}
+        </p>
+      </div>
+    );
+  }
+
+  return <OverviewClient view={view} />;
 }
