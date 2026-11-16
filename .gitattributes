@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# File shell luôn dùng LF trên mọi máy, kể cả Windows (autocrlf).
+# Script init của Postgres chạy trong container Linux: CRLF làm shebang
+# thành "bash\r" nên entrypoint không chạy được script, user và database
+# mẫu không được tạo.
+*.sh text eol=lf
