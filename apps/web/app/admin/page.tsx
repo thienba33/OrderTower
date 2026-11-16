@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import AdminClient from "./admin-client";
 import type { AdminView, ApiAuditVerifyResult } from "./admin-types";
 import type {
@@ -76,6 +78,10 @@ export default async function QuanTriPage() {
         </p>
       </div>
     );
+  }
+
+  if (!canAccessScreen("/admin", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Quản trị hệ thống" />;
   }
 
   let audit: ApiAuditRecord[];

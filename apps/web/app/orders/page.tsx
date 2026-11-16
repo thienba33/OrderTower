@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import OrdersClient from "./orders-client";
 import type { ApiChannel, ApiInventoryItem, ApiOrder } from "./orders-types";
 
@@ -34,6 +36,10 @@ export default async function OrdersPage() {
         </p>
       </div>
     );
+  }
+
+  if (!canAccessScreen("/orders", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Đơn hàng" />;
   }
 
   let orders: ApiOrder[];

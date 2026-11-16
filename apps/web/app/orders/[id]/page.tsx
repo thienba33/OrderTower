@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import OrderDetailClient from "./order-detail-client";
 import type {
   ApiAuditRecord,
@@ -65,6 +67,10 @@ export default async function OrderDetailPage({ params }: { params: { id: string
   const session = await getSession();
   if (!session) {
     return loginView("Bạn chưa đăng nhập.");
+  }
+
+  if (!canAccessScreen("/orders", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Chi tiết đơn hàng" />;
   }
 
   const [

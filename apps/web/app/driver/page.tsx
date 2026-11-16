@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import DriverClient from "./driver-client";
 import type {
   ApiDriver,
@@ -43,6 +45,12 @@ export default async function DriverPage() {
   const session = await getSession();
   if (!session) {
     return <DriverClient view={{ kind: "login" }} />;
+  }
+
+  // Vai không được xem màn Tài xế thì chặn trước khi khớp tài xế theo
+  // username; Tài xế chỉ thấy shipment của mình.
+  if (!canAccessScreen("/driver", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Tài xế" />;
   }
 
   // Tài xế khớp theo username đăng nhập; API không lọc theo username nên

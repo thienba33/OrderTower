@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import AddressSplitClient from "./address-split-client";
 import type { ApiOrderDetail } from "../orders/[id]/order-detail-types";
 
@@ -34,6 +36,10 @@ export default async function AddressSplitPage() {
         </p>
       </div>
     );
+  }
+
+  if (!canAccessScreen("/address-split", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Phân tách địa chỉ" />;
   }
 
   let orders: ApiOrderDetail[];

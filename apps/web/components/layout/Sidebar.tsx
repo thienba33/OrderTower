@@ -7,6 +7,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, X } from "lucide-react";
 import { NAV_SECTIONS, NAV_TOP, type NavLeaf } from "./navigation";
+import { allowedScreens } from "@/lib/roles";
+import type { Session } from "@/lib/auth";
 
 function NavRow({ item, onNavigate }: { item: NavLeaf; onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -44,10 +46,22 @@ function NavRow({ item, onNavigate }: { item: NavLeaf; onNavigate?: () => void }
 function SidebarBody({
   headerAction,
   onNavigate,
+  session,
 }: {
   headerAction?: ReactNode;
   onNavigate?: () => void;
+  session?: Session | null;
 }) {
+  // Chưa đăng nhập thì giữ nguyên toàn bộ menu như trước; đã đăng nhập
+  // thì chỉ hiện màn trong bản đồ vai của (các) vai đang đăng nhập.
+  const allowed = session ? allowedScreens(session.roles) : null;
+  const isVisible = (href: string): boolean =>
+    allowed === null || allowed.includes(href);
+  const visibleSections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => isVisible(item.href)),
+  })).filter((section) => section.items.length > 0);
+  const showTop = isVisible(NAV_TOP.href);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(NAV_SECTIONS.map((section) => [section.label, true])),
   );
@@ -75,10 +89,12 @@ function SidebarBody({
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="space-y-1">
-          <li>
-            <NavRow item={NAV_TOP} onNavigate={onNavigate} />
-          </li>
-          {NAV_SECTIONS.map((section) => {
+          {showTop ? (
+            <li>
+              <NavRow item={NAV_TOP} onNavigate={onNavigate} />
+            </li>
+          ) : null}
+          {visibleSections.map((section) => {
             const open = openSections[section.label] ?? true;
             return (
               <li key={section.label} className="space-y-1">
@@ -126,7 +142,15 @@ function SidebarBody({
   );
 }
 
-export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function Sidebar({
+  open,
+  onClose,
+  session,
+}: {
+  open: boolean;
+  onClose: () => void;
+  session?: Session | null;
+}) {
   useEffect(() => {
     if (!open) {
       return;
@@ -147,7 +171,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   return (
     <>
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r bg-white md:flex">
-        <SidebarBody />
+        <SidebarBody session={session} />
       </aside>
       {open && (
         <div className="fixed inset-0 z-50 md:hidden">
@@ -159,6 +183,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           />
           <aside className="absolute inset-y-0 left-0 flex h-full w-60 flex-col bg-white">
             <SidebarBody
+              session={session}
               onNavigate={onClose}
               headerAction={
                 <button

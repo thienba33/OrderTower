@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen, firstAllowedScreen } from "@/lib/roles";
+import { redirect } from "next/navigation";
 import OverviewClient from "./overview-client";
 import { approvalTypeLabel } from "./approval-queue/approval-queue-types";
 import type { ApiApproval } from "./approval-queue/approval-queue-types";
@@ -222,6 +224,13 @@ export default async function OverviewPage() {
         </p>
       </div>
     );
+  }
+
+  // Trang chủ là màn Tổng quan; vai không được xem Tổng quan thì chuyển
+  // về màn đầu tiên được phép của vai đó (Tài xế -> /driver, Khách hàng
+  // mô phỏng -> /tracking).
+  if (!canAccessScreen("/", session.roles)) {
+    redirect(firstAllowedScreen(session.roles));
   }
 
   let view: OverviewView;
