@@ -106,6 +106,15 @@ services:
     build: ./apps/web
     ports:
       - "3000:3000"
+    environment:
+      KEYCLOAK_URL: ${KEYCLOAK_URL:-http://localhost:9080}
+      # URL nội bộ để web đổi token và lấy discovery (localhost:9080 từ
+      # trong container web không tới được APISIX/Keycloak).
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-ordertower}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-ordertower-web}
+      # Web gọi API qua APISIX (cửa trước), giống mặc định khi chạy dev.
+      API_BASE_URL: http://apisix:9080/api
     depends_on:
       - api
 
