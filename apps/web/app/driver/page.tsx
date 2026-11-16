@@ -1,169 +1,147 @@
 // SPDX-License-Identifier: Apache-2.0
+import { apiFetch } from "@/lib/api";
+import { getSession } from "@/lib/auth";
+import DriverClient from "./driver-client";
+import type {
+  ApiDriver,
+  ApiOrderDetail,
+  ApiShipment,
+  ApiVehicle,
+  DriverListView,
+  DriverOrderCard,
+} from "./driver-types";
 
-"use client";
-
-import { useMemo, useState } from "react";
-import Link from "next/link";
-import { DriverPhone, type DriverTab } from "@/components/driver/DriverPhone";
-import {
-  DRIVER_DATE,
-  DRIVER_NAME,
-  DRIVER_ORDERS,
-  DRIVER_STATUS_PILL,
-  DRIVER_VEHICLE,
-  type DriverOrder,
-} from "@/data/driver";
-
-function MobileHeader({ title }: { title: string }) {
-  return (
-    <div className="flex h-14 shrink-0 items-center gap-3 px-4">
-      <Link href="/" aria-label="Quay lại Tổng quan" className="shrink-0 text-lg font-medium text-gray-700">
-        {"<"}
-      </Link>
-      <p className="min-w-0 flex-1 text-base font-semibold text-gray-900">{title}</p>
-      <p className="shrink-0 text-[13px] text-gray-500">{DRIVER_VEHICLE}</p>
-    </div>
-  );
+// Gọi API, lỗi mạng thì trả null để trang quyết định hiện báo lỗi.
+async function safeFetch(path: string): Promise<Response | null> {
+  try {
+    return await apiFetch(path);
+  } catch {
+    return null;
+  }
 }
 
-function ProgressCard({ orders }: { orders: DriverOrder[] }) {
-  const delivered = orders.filter((order) => order.status === "Đã giao").length;
-  const percent = orders.length === 0 ? 0 : Math.round((delivered / orders.length) * 100);
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
-      <div className="flex items-center gap-2 text-[13px]">
-        <p className="min-w-0 flex-1 font-medium text-gray-800">
-          Đã giao {delivered}/{orders.length} đơn
-        </p>
-        <p className="shrink-0 font-semibold text-red-700">{percent}%</p>
-      </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
-        <div className="h-2 rounded-full bg-red-700" style={{ width: `${percent}%` }} />
-      </div>
-    </div>
-  );
+async function fetchJson(path: string): Promise<unknown> {
+  const res = await safeFetch(path);
+  if (res === null || !res.ok) {
+    return null;
+  }
+  return res.json().catch(() => null);
 }
 
-function OrderCard({
-  order,
-  primary,
-  onStart,
-}: {
-  order: DriverOrder;
-  primary: boolean;
-  onStart: (id: string) => void;
-}) {
-  const buttonClass = `flex h-9 w-full items-center justify-center rounded-md text-sm font-medium ${
-    primary ? "bg-red-700 text-white hover:bg-red-800" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-  }`;
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3">
-      <div className="flex items-center gap-2">
-        <p className="min-w-0 flex-1 text-sm font-semibold text-gray-900">{order.id}</p>
-        <span className={`flex h-[22px] shrink-0 items-center justify-center rounded-full px-2.5 text-xs font-medium ${DRIVER_STATUS_PILL[order.status]}`}>
-          {order.status}
-        </span>
-      </div>
-      <p className="text-xs text-gray-600">{order.address}</p>
-      <div className="flex items-center gap-2 text-xs">
-        <p className="min-w-0 flex-1 text-gray-500">Mốc giao: {order.deadline}</p>
-        <p className="shrink-0 text-gray-700">
-          {order.sku} x{order.quantity}
-        </p>
-      </div>
-      {order.status === "Chờ điều xe" ? (
-        <button type="button" onClick={() => onStart(order.id)} className={buttonClass}>
-          Bắt đầu giao
-        </button>
-      ) : (
-        <Link href={`/driver/${order.id}`} className={buttonClass}>
-          {order.status === "Đã giao" ? "Xem bằng chứng" : "Xem chi tiết"}
-        </Link>
-      )}
-    </div>
-  );
+// Địa chỉ nối đủ cấp, thiếu thì "-".
+function joinAddress(order: ApiOrderDetail): string {
+  const parts = [
+    order.address?.street,
+    order.address?.ward,
+    order.address?.district,
+    order.address?.province,
+  ].filter((part) => part !== undefined && part.trim() !== "");
+  return parts.length > 0 ? parts.join(", ") : "-";
 }
 
-export default function DriverPage() {
-  const [orders, setOrders] = useState<DriverOrder[]>(DRIVER_ORDERS);
-  const [tab, setTab] = useState<DriverTab>("orders");
+export default async function DriverPage() {
+  const session = await getSession();
+  if (!session) {
+    return <DriverClient view={{ kind: "login" }} />;
+  }
 
-  // Nut do danh cho don dang giao va don cho dieu xe co moc giao som nhat;
-  // cac don con lai dung nut trang.
-  const earliestWaitingId = useMemo(() => {
-    const waiting = orders.filter((order) => order.status === "Chờ điều xe").sort((a, b) => a.deadline.localeCompare(b.deadline));
-    return waiting.length === 0 ? null : waiting[0].id;
-  }, [orders]);
+  // Tài xế khớp theo username đăng nhập; API không lọc theo username nên
+  // lấy toàn bộ rồi khớp ở phía web.
+  const driversRaw = await fetchJson("/drivers");
+  if (!Array.isArray(driversRaw)) {
+    return (
+      <DriverClient
+        view={{ kind: "error", message: "Không tải được danh sách tài xế." }}
+      />
+    );
+  }
+  const drivers = driversRaw as ApiDriver[];
+  const driver = drivers.find((item) => item.username === session.username);
+  if (!driver) {
+    return <DriverClient view={{ kind: "no-driver" }} />;
+  }
 
-  const startDelivery = (id: string) => {
-    setOrders((prev) => prev.map((order) => (order.id === id ? { ...order, status: "Đang giao" } : order)));
+  // Xe tài xế thường lái, lấy từ bản ghi driver; không gắn xe thì báo rõ.
+  let vehicleLabel = "Chưa gắn xe";
+  if (driver.vehicleId) {
+    const vehicleRaw = await fetchJson(`/vehicles/${encodeURIComponent(driver.vehicleId)}`);
+    if (vehicleRaw !== null && typeof vehicleRaw === "object") {
+      const vehicle = vehicleRaw as ApiVehicle;
+      vehicleLabel = `${vehicle.plate} (${vehicle.type})`;
+    } else {
+      vehicleLabel = driver.vehicleId;
+    }
+  }
+
+  // Shipment của tài xế: API không lọc theo driverId nên lấy toàn bộ rồi
+  // lọc ở phía web.
+  const shipmentsRaw = await fetchJson("/shipments");
+  if (!Array.isArray(shipmentsRaw)) {
+    return (
+      <DriverClient
+        view={{ kind: "error", message: "Không tải được danh sách giao hàng." }}
+      />
+    );
+  }
+  const shipments = (shipmentsRaw as ApiShipment[]).filter(
+    (shipment) => shipment.driverId === driver.id,
+  );
+
+  // Thông tin đơn cho từng shipment; đơn nào lỗi tải thì bỏ thẻ đó và báo
+  // ghi chú, không lỗi cả danh sách.
+  const settled = await Promise.allSettled(
+    shipments.map(async (shipment) => {
+      const orderRaw = await fetchJson(`/orders/${encodeURIComponent(shipment.orderId)}`);
+      if (orderRaw === null || typeof orderRaw !== "object") {
+        return null;
+      }
+      return { shipment, order: orderRaw as ApiOrderDetail };
+    }),
+  );
+  let loadFailed = false;
+  const cards: DriverOrderCard[] = [];
+  for (const result of settled) {
+    if (result.status !== "fulfilled" || result.value === null) {
+      loadFailed = true;
+      continue;
+    }
+    const { shipment, order } = result.value;
+    cards.push({
+      orderId: order.id,
+      shipmentId: shipment.id,
+      shipmentStatus: shipment.status,
+      address: joinAddress(order),
+      deadline: order.deadline,
+      itemsText: order.items.map((item) => `${item.sku} x${item.quantity}`).join(", "),
+      customer: order.customer,
+      phone: order.phone,
+      total: order.total,
+    });
+  }
+  // Đơn giao sớm lên trước; đơn không có mốc giao hẹn xuống cuối.
+  cards.sort((a, b) => {
+    if (a.deadline === null && b.deadline === null) return 0;
+    if (a.deadline === null) return 1;
+    if (b.deadline === null) return -1;
+    return a.deadline.localeCompare(b.deadline);
+  });
+
+  const dateLabel = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date());
+
+  const view: DriverListView = {
+    kind: "ok",
+    driver,
+    vehicleLabel,
+    dateLabel: `Hôm nay, ${dateLabel}`,
+    cards,
+    loadNote: loadFailed
+      ? "Không tải được thông tin một số đơn, thử tải lại trang."
+      : null,
   };
-
-  const deliveredOrders = orders.filter((order) => order.status === "Đã giao");
-  const deliveringCount = orders.filter((order) => order.status === "Đang giao").length;
-  const waitingCount = orders.filter((order) => order.status === "Chờ điều xe").length;
-
-  return (
-    <DriverPhone activeTab={tab} onTab={setTab}>
-      {tab === "orders" && (
-        <>
-          <MobileHeader title="Đơn của tôi" />
-          <div className="h-px shrink-0 bg-gray-200" />
-          <div className="flex flex-1 flex-col gap-3 p-4">
-            <p className="text-sm font-semibold text-gray-900">
-              {DRIVER_NAME} - {DRIVER_DATE}
-            </p>
-            <ProgressCard orders={orders} />
-            {orders.map((order) => (
-              <OrderCard
-                key={order.id}
-                order={order}
-                primary={order.status === "Đang giao" || order.id === earliestWaitingId}
-                onStart={startDelivery}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
-      {tab === "history" && (
-        <>
-          <MobileHeader title="Lịch sử" />
-          <div className="h-px shrink-0 bg-gray-200" />
-          <div className="flex flex-1 flex-col gap-3 p-4">
-            <p className="text-sm font-semibold text-gray-900">
-              {DRIVER_NAME} - {DRIVER_DATE}
-            </p>
-            {deliveredOrders.length === 0 ? (
-              <p className="text-sm text-gray-500">Chưa có đơn đã giao.</p>
-            ) : (
-              deliveredOrders.map((order) => (
-                <OrderCard key={order.id} order={order} primary={false} onStart={startDelivery} />
-              ))
-            )}
-          </div>
-        </>
-      )}
-
-      {tab === "profile" && (
-        <>
-          <MobileHeader title="Tôi" />
-          <div className="h-px shrink-0 bg-gray-200" />
-          <div className="flex flex-1 flex-col gap-3 p-4">
-            <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-3">
-              <p className="text-base font-semibold text-gray-900">{DRIVER_NAME}</p>
-              <p className="text-sm text-gray-500">Tài xế - {DRIVER_VEHICLE}</p>
-              <p className="text-sm text-gray-500">{DRIVER_DATE}</p>
-            </div>
-            <ProgressCard orders={orders} />
-            <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-700">
-              <p>Đang giao: {deliveringCount} đơn</p>
-              <p>Chờ điều xe: {waitingCount} đơn</p>
-              <p>Đã giao: {deliveredOrders.length} đơn</p>
-            </div>
-          </div>
-        </>
-      )}
-    </DriverPhone>
-  );
+  return <DriverClient view={view} />;
 }
