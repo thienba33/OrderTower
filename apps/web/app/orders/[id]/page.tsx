@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
 import { canAccessScreen } from "@/lib/roles";
@@ -66,7 +67,7 @@ export default async function OrderDetailPage({ params }: { params: { id: string
   const id = params.id;
   const session = await getSession();
   if (!session) {
-    return loginView("Bạn chưa đăng nhập.");
+    redirect("/api/auth/login");
   }
 
   if (!canAccessScreen("/orders", session.roles)) {

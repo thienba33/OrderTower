@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { apiFetch } from "@/lib/api";
+import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { canAccessScreen } from "@/lib/roles";
 import { AccessDenied } from "@/components/layout/AccessDenied";
@@ -44,7 +45,7 @@ function joinAddress(order: ApiOrderDetail): string {
 export default async function DriverPage() {
   const session = await getSession();
   if (!session) {
-    return <DriverClient view={{ kind: "login" }} />;
+    redirect("/api/auth/login");
   }
 
   // Vai không được xem màn Tài xế thì chặn trước khi khớp tài xế theo
