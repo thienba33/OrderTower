@@ -17,7 +17,10 @@ import {
 import type { ApiChannel, ApiInventoryItem } from "../orders-types";
 import type {
   ApiAuditRecord,
+  ApiDriver,
   ApiOrderDetail,
+  ApiShipment,
+  ApiVehicle,
   ApiWorkflowTransition,
 } from "./order-detail-types";
 
@@ -87,6 +90,10 @@ export default function OrderDetailClient({
   audit,
   channels,
   products,
+  shipments,
+  drivers,
+  vehicles,
+  shipmentLoadFailed,
 }: {
   order: ApiOrderDetail;
   transitions: ApiWorkflowTransition[];
@@ -94,6 +101,10 @@ export default function OrderDetailClient({
   audit: ApiAuditRecord[];
   channels: ApiChannel[];
   products: ApiInventoryItem[];
+  shipments: ApiShipment[];
+  drivers: ApiDriver[];
+  vehicles: ApiVehicle[];
+  shipmentLoadFailed: boolean;
 }) {
   const router = useRouter();
 
@@ -201,6 +212,119 @@ export default function OrderDetailClient({
       setSubmitting(false);
     }
   };
+
+  // Giao hàng: shipment đang hoạt động là shipment mới nhất trong các
+  // trạng thái Chờ điều xe | Đang giao | Giao thất bại; không có shipment
+  // đang hoạt động thì hiện shipment mới nhất (ví dụ Đã giao, Đã hủy).
+  // Ẩn/hiện theo vai chỉ là tiện ích giao diện; API kiểm tra lại vai trò,
+  // quyền sở hữu shipment và rào chắn ở mỗi thao tác.
+  const ACTIVE_SHIPMENT_STATUSES = ["Chờ điều xe", "Đang giao", "Giao thất bại"];
+  const sortedShipments = useMemo(
+    () =>
+      [...shipments].sort((a, b) =>
+        a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+      ),
+    [shipments],
+  );
+  const currentShipment =
+    sortedShipments.find((shipment) =>
+      ACTIVE_SHIPMENT_STATUSES.includes(shipment.status),
+    ) ?? sortedShipments[0];
+  const hasActiveShipment =
+    currentShipment !== undefined &&
+    ACTIVE_SHIPMENT_STATUSES.includes(currentShipment.status);
+  const isDispatcher = roles.includes("Điều phối viên");
+  const isDriver = roles.includes("Tài xế");
+  const canCreateShipment =
+    order.state === "Chờ điều xe" && !hasActiveShipment && isDispatcher;
+  const canDispatch =
+    currentShipment !== undefined &&
+    (currentShipment.status === "Chờ điều xe" ||
+      currentShipment.status === "Giao thất bại") &&
+    isDispatcher;
+  const canDeliver =
+    currentShipment?.status === "Đang giao" && isDriver;
+  const canFail =
+    currentShipment?.status === "Đang giao" && (isDriver || isDispatcher);
+  const canCancel =
+    currentShipment?.status === "Chờ điều xe" && isDispatcher;
+
+  const driverName =
+    currentShipment?.driverId === null || currentShipment?.driverId === undefined
+      ? "-"
+      : drivers.find((driver) => driver.id === currentShipment.driverId)?.name ??
+        currentShipment.driverId;
+  const vehiclePlate =
+    currentShipment?.vehicleId === null || currentShipment?.vehicleId === undefined
+      ? "-"
+      : vehicles.find((vehicle) => vehicle.id === currentShipment.vehicleId)
+          ?.plate ?? currentShipment.vehicleId;
+
+  const [dispatchDriverId, setDispatchDriverId] = useState("");
+  const [dispatchVehicleId, setDispatchVehicleId] = useState("");
+  const [proofPhotoKey, setProofPhotoKey] = useState("");
+  const [failReason, setFailReason] = useState("");
+  const [cancelReason, setCancelReason] = useState("");
+  const [shipmentError, setShipmentError] = useState("");
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+
+  const postShipment = async (
+    path: string,
+    body: unknown,
+    action: string,
+  ) => {
+    setBusyAction(action);
+    setShipmentError("");
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setShipmentError(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Thao tác giao hàng lỗi (${response.status}).`,
+        );
+        return;
+      }
+      if (action === "dispatch") {
+        setDispatchDriverId("");
+        setDispatchVehicleId("");
+      }
+      if (action === "deliver") {
+        setProofPhotoKey("");
+      }
+      if (action === "fail") {
+        setFailReason("");
+      }
+      if (action === "cancel") {
+        setCancelReason("");
+      }
+      router.refresh();
+    } catch {
+      setShipmentError("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const shipmentInfoRows: { label: string; value: string }[] =
+    currentShipment === undefined
+      ? []
+      : [
+          { label: "Mã shipment", value: currentShipment.id },
+          { label: "Trạng thái", value: currentShipment.status },
+          { label: "Tài xế", value: driverName },
+          { label: "Xe", value: vehiclePlate },
+          {
+            label: "Khóa bằng chứng",
+            value: currentShipment.proofPhotoKey ?? "-",
+          },
+        ];
 
   const infoRows: { label: string; value: string; tone?: string }[] = [
     { label: "Khách hàng", value: order.customer },
@@ -373,8 +497,8 @@ export default function OrderDetailClient({
               </div>
               {needsShipment && (
                 <p className="text-xs text-gray-500">
-                  Chuyển này cần có shipment (điều xe/giao hàng làm ở commit sau); cứ
-                  bấm thử, API sẽ báo lỗi nếu chưa đủ điều kiện.
+                  Chuyển này cần có shipment; dùng section Giao hàng (Shipment) bên
+                  dưới để điều xe hoặc giao hàng trước.
                 </p>
               )}
               {needsReason && (
@@ -405,6 +529,245 @@ export default function OrderDetailClient({
           )}
         </section>
       )}
+
+      <section aria-label="Giao hàng" className="rounded-lg border border-gray-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-gray-900">Giao hàng (Shipment)</h2>
+        <div className="flex flex-col gap-3">
+          {shipmentLoadFailed && (
+            <p className="text-sm text-gray-600">
+              Không tải được danh sách giao hàng, thử tải lại trang.
+            </p>
+          )}
+          {shipmentError !== "" && (
+            <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              {shipmentError}
+            </p>
+          )}
+          {currentShipment === undefined ? (
+            <p className="text-sm text-gray-600">Chưa có shipment cho đơn này.</p>
+          ) : (
+            <>
+              <div className="flex flex-col gap-3">
+                {shipmentInfoRows.map((row) => (
+                  <div key={row.label} className="flex items-start gap-2 text-[13px]">
+                    <p className="w-[130px] shrink-0 text-gray-500">{row.label}</p>
+                    <p className="min-w-0 flex-1 text-gray-800">{row.value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col gap-3">
+                {currentShipment.history.length === 0 && (
+                  <p className="text-xs text-gray-500">Chưa có lịch sử giao hàng.</p>
+                )}
+                {currentShipment.history.map((entry, index) => {
+                  const description =
+                    entry.reason !== undefined && entry.reason.trim() !== ""
+                      ? `${entry.by} (${entry.role}) - ${entry.reason}`
+                      : `${entry.by} (${entry.role})`;
+                  return (
+                    <div key={`${entry.at}-${entry.to}-${index}`} className="flex items-center gap-3">
+                      <span className="size-2.5 shrink-0 rounded-full bg-green-600" aria-hidden="true" />
+                      <p className="w-11 shrink-0 text-xs text-gray-500">{formatTime(entry.at)}</p>
+                      <p className="w-[180px] shrink-0 text-[13px] font-medium text-gray-900">
+                        {entry.from === null ? entry.to : `${entry.from} -> ${entry.to}`}
+                      </p>
+                      <p className="min-w-0 flex-1 text-xs text-gray-600">{description}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {canCreateShipment && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm font-medium text-gray-700">Tạo shipment</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm text-gray-600">
+                  Đơn đang chờ điều xe, chưa có shipment.
+                </p>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() =>
+                    postShipment("/api/shipments", { orderId: order.id }, "create")
+                  }
+                  className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busyAction === "create" ? "Đang tạo..." : "Tạo shipment"}
+                </button>
+              </div>
+            </div>
+          )}
+          {canDispatch && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm font-medium text-gray-700">Điều xe</p>
+              {drivers.length === 0 || vehicles.length === 0 ? (
+                <p className="text-sm text-gray-600">Chưa có tài xế/xe sẵn sàng.</p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative w-[280px] max-w-full">
+                    <select
+                      value={dispatchDriverId}
+                      onChange={(event) => setDispatchDriverId(event.target.value)}
+                      aria-label="Chọn tài xế"
+                      className="h-10 w-full appearance-none rounded-md border border-gray-300 bg-white pl-3 pr-8 text-sm text-gray-700 outline-none focus:border-gray-500"
+                    >
+                      <option value="">Chọn tài xế</option>
+                      {drivers.map((driver) => (
+                        <option key={driver.id} value={driver.id}>
+                          {driver.name} - {driver.username}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      size={16}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                    />
+                  </div>
+                  <div className="relative w-[280px] max-w-full">
+                    <select
+                      value={dispatchVehicleId}
+                      onChange={(event) => setDispatchVehicleId(event.target.value)}
+                      aria-label="Chọn xe"
+                      className="h-10 w-full appearance-none rounded-md border border-gray-300 bg-white pl-3 pr-8 text-sm text-gray-700 outline-none focus:border-gray-500"
+                    >
+                      <option value="">Chọn xe</option>
+                      {vehicles.map((vehicle) => (
+                        <option key={vehicle.id} value={vehicle.id}>
+                          {vehicle.plate} ({vehicle.type})
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      size={16}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={
+                      dispatchDriverId === "" ||
+                      dispatchVehicleId === "" ||
+                      busyAction !== null
+                    }
+                    onClick={() =>
+                      postShipment(
+                        `/api/shipments/${currentShipment.id}/dispatch`,
+                        { driverId: dispatchDriverId, vehicleId: dispatchVehicleId },
+                        "dispatch",
+                      )
+                    }
+                    className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busyAction === "dispatch" ? "Đang điều xe..." : "Điều xe"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {canDeliver && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm font-medium text-gray-700">Giao hàng</p>
+              <label className="flex min-w-0 flex-col gap-1.5">
+                <span className="text-sm font-medium text-gray-700">
+                  Khóa tệp bằng chứng (bắt buộc)
+                </span>
+                <input
+                  type="text"
+                  value={proofPhotoKey}
+                  onChange={(event) => setProofPhotoKey(event.target.value)}
+                  placeholder="Nhập khóa tệp bằng chứng"
+                  className={INPUT_CLASS}
+                />
+              </label>
+              <p className="text-xs text-gray-500">
+                Nhập khóa tệp bằng chứng đã lưu trong kho đối tượng; upload file
+                làm sau.
+              </p>
+              <div>
+                <button
+                  type="button"
+                  disabled={proofPhotoKey.trim() === "" || busyAction !== null}
+                  onClick={() =>
+                    postShipment(
+                      `/api/shipments/${currentShipment.id}/deliver`,
+                      { proofPhotoKey: proofPhotoKey.trim() },
+                      "deliver",
+                    )
+                  }
+                  className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busyAction === "deliver" ? "Đang giao..." : "Xác nhận đã giao"}
+                </button>
+              </div>
+            </div>
+          )}
+          {canFail && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm font-medium text-gray-700">Giao thất bại</p>
+              <label className="flex min-w-0 flex-col gap-1.5">
+                <span className="text-sm font-medium text-gray-700">Lý do (bắt buộc)</span>
+                <input
+                  type="text"
+                  value={failReason}
+                  onChange={(event) => setFailReason(event.target.value)}
+                  placeholder="Nhập lý do giao thất bại"
+                  className={INPUT_CLASS}
+                />
+              </label>
+              <div>
+                <button
+                  type="button"
+                  disabled={failReason.trim() === "" || busyAction !== null}
+                  onClick={() =>
+                    postShipment(
+                      `/api/shipments/${currentShipment.id}/fail`,
+                      { reason: failReason.trim() },
+                      "fail",
+                    )
+                  }
+                  className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busyAction === "fail" ? "Đang báo..." : "Báo giao thất bại"}
+                </button>
+              </div>
+            </div>
+          )}
+          {canCancel && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm font-medium text-gray-700">Hủy shipment</p>
+              <label className="flex min-w-0 flex-col gap-1.5">
+                <span className="text-sm font-medium text-gray-700">Lý do (bắt buộc)</span>
+                <input
+                  type="text"
+                  value={cancelReason}
+                  onChange={(event) => setCancelReason(event.target.value)}
+                  placeholder="Nhập lý do hủy shipment"
+                  className={INPUT_CLASS}
+                />
+              </label>
+              <div>
+                <button
+                  type="button"
+                  disabled={cancelReason.trim() === "" || busyAction !== null}
+                  onClick={() =>
+                    postShipment(
+                      `/api/shipments/${currentShipment.id}/cancel`,
+                      { reason: cancelReason.trim() },
+                      "cancel",
+                    )
+                  }
+                  className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busyAction === "cancel" ? "Đang hủy..." : "Hủy shipment"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
 
       <section aria-label="Audit log của đơn" className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <h2 className="flex h-11 items-center border-b border-gray-200 px-4 text-sm font-semibold text-gray-900">

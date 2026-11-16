@@ -65,3 +65,51 @@ export interface ApiAuditRecord {
   prevHash: string;
   hash: string;
 }
+
+export type ApiShipmentStatus =
+  | "Chờ điều xe"
+  | "Đang giao"
+  | "Đã giao"
+  | "Giao thất bại"
+  | "Đã hủy";
+
+export interface ApiShipmentHistoryEntry {
+  from: string | null;
+  to: string;
+  by: string;
+  role: string;
+  at: string;
+  reason?: string;
+}
+
+export interface ApiShipment {
+  id: string;
+  orderId: string;
+  status: ApiShipmentStatus;
+  driverId: string | null;
+  vehicleId: string | null;
+  proofPhotoKey: string | null;
+  history: ApiShipmentHistoryEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiDriver {
+  id: string;
+  name: string;
+  phone: string;
+  username: string;
+  vehicleId: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiVehicle {
+  id: string;
+  plate: string;
+  type: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}

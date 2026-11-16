@@ -5,7 +5,10 @@ import { getSession } from "@/lib/auth";
 import OrderDetailClient from "./order-detail-client";
 import type {
   ApiAuditRecord,
+  ApiDriver,
   ApiOrderDetail,
+  ApiShipment,
+  ApiVehicle,
   ApiWorkflowDefinition,
 } from "./order-detail-types";
 import type { ApiChannel, ApiInventoryItem } from "../orders-types";
@@ -64,14 +67,25 @@ export default async function OrderDetailPage({ params }: { params: { id: string
     return loginView("Bạn chưa đăng nhập.");
   }
 
-  const [orderRes, definitionRes, auditRes, channelRes, inventoryRes] =
-    await Promise.all([
-      safeFetch(`/orders/${encodeURIComponent(id)}`),
-      safeFetch("/workflow/definition?definitionId=order-flow"),
-      safeFetch("/audit"),
-      safeFetch("/channels"),
-      safeFetch("/inventory"),
-    ]);
+  const [
+    orderRes,
+    definitionRes,
+    auditRes,
+    channelRes,
+    inventoryRes,
+    shipmentsRes,
+    driversRes,
+    vehiclesRes,
+  ] = await Promise.all([
+    safeFetch(`/orders/${encodeURIComponent(id)}`),
+    safeFetch("/workflow/definition?definitionId=order-flow"),
+    safeFetch("/audit"),
+    safeFetch("/channels"),
+    safeFetch("/inventory"),
+    safeFetch(`/shipments?orderId=${encodeURIComponent(id)}`),
+    safeFetch(`/drivers?status=${encodeURIComponent("Sẵn sàng")}`),
+    safeFetch(`/vehicles?status=${encodeURIComponent("Sẵn sàng")}`),
+  ]);
 
   // Kiểm tra đơn trước: 404 thì hiện khung không tìm thấy, 401 thì nhắc
   // đăng nhập lại, lỗi khác thì báo lỗi. Chỉ khi đơn tải được mới xét
@@ -120,6 +134,25 @@ export default async function OrderDetailPage({ params }: { params: { id: string
 
   const typedOrder = order as ApiOrderDetail;
   const typedDefinition = definition as ApiWorkflowDefinition;
+
+  // Danh sách giao hàng là dữ liệu phụ: lỗi tải thì vẫn hiện trang, chỉ
+  // báo trong section Giao hàng, không chặn toàn bộ trang chi tiết.
+  const parseShipmentList = async (
+    res: Response | null,
+  ): Promise<unknown> => {
+    if (res === null || !res.ok) {
+      return null;
+    }
+    return res.json().catch(() => null);
+  };
+  const shipmentsRaw = await parseShipmentList(shipmentsRes);
+  const driversRaw = await parseShipmentList(driversRes);
+  const vehiclesRaw = await parseShipmentList(vehiclesRes);
+  const shipmentLoadFailed =
+    !Array.isArray(shipmentsRaw) ||
+    !Array.isArray(driversRaw) ||
+    !Array.isArray(vehiclesRaw);
+
   return (
     <OrderDetailClient
       order={typedOrder}
@@ -128,6 +161,10 @@ export default async function OrderDetailPage({ params }: { params: { id: string
       audit={(audit as ApiAuditRecord[]).filter((record) => record.orderId === id)}
       channels={channels as ApiChannel[]}
       products={products as ApiInventoryItem[]}
+      shipments={(Array.isArray(shipmentsRaw) ? shipmentsRaw : []) as ApiShipment[]}
+      drivers={(Array.isArray(driversRaw) ? driversRaw : []) as ApiDriver[]}
+      vehicles={(Array.isArray(vehiclesRaw) ? vehiclesRaw : []) as ApiVehicle[]}
+      shipmentLoadFailed={shipmentLoadFailed}
     />
   );
 }
