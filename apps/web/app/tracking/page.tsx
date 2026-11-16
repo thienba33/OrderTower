@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import TrackingClient from "./tracking-client";
 
 // Tra cứu đơn cần đăng nhập vì API chỉ mở GET /api/health cho khách vãng
@@ -21,6 +23,10 @@ export default async function TrackingPage() {
         </p>
       </div>
     );
+  }
+
+  if (!canAccessScreen("/tracking", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Theo dõi đơn hàng" />;
   }
 
   return <TrackingClient />;

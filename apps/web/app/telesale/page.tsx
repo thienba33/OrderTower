@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import TelesaleClient from "./telesale-client";
 import type { PriorityRow } from "./telesale-types";
 import type { ApiChannel, ApiInventoryItem, ApiOrder } from "../orders/orders-types";
@@ -155,6 +157,10 @@ export default async function TelesalePage() {
         </p>
       </div>
     );
+  }
+
+  if (!canAccessScreen("/telesale", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Telesale" />;
   }
 
   let orders: ApiOrder[];

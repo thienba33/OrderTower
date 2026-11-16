@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import ApprovalQueueClient from "./approval-queue-client";
 import type { ApiApproval } from "./approval-queue-types";
 
@@ -33,6 +35,10 @@ export default async function ApprovalQueuePage() {
         </p>
       </div>
     );
+  }
+
+  if (!canAccessScreen("/approval-queue", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Hàng đợi duyệt" />;
   }
 
   let approvals: ApiApproval[];

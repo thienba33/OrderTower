@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import DriverDetailClient from "./driver-detail-client";
 import type {
   ApiDeliveryEvent,
@@ -45,6 +47,10 @@ export default async function DriverDetailPage({ params }: { params: { id: strin
   const session = await getSession();
   if (!session) {
     return <DriverDetailClient view={{ kind: "login" }} />;
+  }
+
+  if (!canAccessScreen("/driver", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Tài xế" />;
   }
 
   // Tài xế khớp theo username đăng nhập; API không lọc theo username nên

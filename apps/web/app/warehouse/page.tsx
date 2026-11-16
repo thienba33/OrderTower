@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { canAccessScreen } from "@/lib/roles";
+import { AccessDenied } from "@/components/layout/AccessDenied";
 import WarehouseClient from "./warehouse-client";
 import type { ApiInventoryItem } from "./warehouse-types";
 
@@ -34,6 +36,10 @@ export default async function KhoPage() {
         </p>
       </div>
     );
+  }
+
+  if (!canAccessScreen("/warehouse", session.roles)) {
+    return <AccessDenied roles={session.roles} screenLabel="Kho và tồn kho - Kho duy nhất" />;
   }
 
   let items: ApiInventoryItem[];
