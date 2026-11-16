@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { VehiclesService } from './vehicle.service';
@@ -40,7 +43,7 @@ describe('VehiclesService', () => {
       { plate: '29A-12345', type: 'Xe máy' },
       COORDINATOR,
     );
-    expect(vehicle.id).toBe('XE-1001');
+    expect(vehicle.id).toBe('XE-1006');
     expect(vehicle.plate).toBe('29A-12345');
     expect(vehicle.type).toBe('Xe máy');
     expect(vehicle.status).toBe('Sẵn sàng');
@@ -50,20 +53,20 @@ describe('VehiclesService', () => {
     );
     expect(created).toMatchObject({
       actor: 'son',
-      orderId: 'XE-1001',
+      orderId: 'XE-1006',
       from: null,
       to: 'Sẵn sàng',
     });
   });
 
-  it('xe thứ hai tiếp tục số thứ tự XE-1002', async () => {
+  it('xe thứ hai tiếp tục số thứ tự XE-1007', async () => {
     const { vehicles } = await buildServices();
     await vehicles.create({ plate: '29A-12345', type: 'Xe máy' }, COORDINATOR);
     const second = await vehicles.create(
       { plate: '29B-67890', type: 'Xe tải nhỏ' },
       COORDINATOR,
     );
-    expect(second.id).toBe('XE-1002');
+    expect(second.id).toBe('XE-1007');
   });
 
   it('tạo xe thiếu biển số hoặc loại xe thì báo 400', async () => {
@@ -74,7 +77,7 @@ describe('VehiclesService', () => {
     await expect(
       vehicles.create({ plate: '29A-12345', type: '' }, COORDINATOR),
     ).rejects.toThrow('Tạo xe cần có loại xe');
-    expect(await vehicles.list()).toHaveLength(0);
+    expect(await vehicles.list()).toHaveLength(5);
   });
 
   it('tạo xe trùng biển số thì báo 409', async () => {
@@ -82,8 +85,8 @@ describe('VehiclesService', () => {
     await vehicles.create({ plate: '29A-12345', type: 'Xe máy' }, COORDINATOR);
     await expect(
       vehicles.create({ plate: '29A-12345', type: 'Xe tải nhỏ' }, COORDINATOR),
-    ).rejects.toThrow('Biển số 29A-12345 đã có xe XE-1001');
-    expect(await vehicles.list()).toHaveLength(1);
+    ).rejects.toThrow('Biển số 29A-12345 đã có xe XE-1006');
+    expect(await vehicles.list()).toHaveLength(6);
   });
 
   it('tạo xe bởi Tài xế thì báo 409', async () => {
@@ -91,7 +94,7 @@ describe('VehiclesService', () => {
     await expect(
       vehicles.create({ plate: '29A-12345', type: 'Xe máy' }, DRIVER),
     ).rejects.toThrow('cần vai Điều phối viên');
-    expect(await vehicles.list()).toHaveLength(0);
+    expect(await vehicles.list()).toHaveLength(5);
   });
 
   it('get không tìm thấy thì 404, list lọc theo trạng thái', async () => {
@@ -111,17 +114,17 @@ describe('VehiclesService', () => {
       id: first.id,
       plate: '29A-12345',
     });
-    expect(await vehicles.list()).toHaveLength(2);
+    expect(await vehicles.list()).toHaveLength(7);
     expect(
       await vehicles.list({ status: 'Sẵn sàng' }),
-    ).toHaveLength(2);
+    ).toHaveLength(7);
     await vehicles.maintenance(first.id, COORDINATOR);
     expect(
       await vehicles.list({ status: 'Bảo trì' }),
     ).toHaveLength(1);
     expect(
       await vehicles.list({ status: 'Sẵn sàng' }),
-    ).toHaveLength(1);
+    ).toHaveLength(6);
     expect(
       await vehicles.list({ status: 'Đang giao' }),
     ).toHaveLength(0);
@@ -202,5 +205,95 @@ describe('VehiclesService', () => {
     );
     expect(vehicleActions).toHaveLength(1);
     expect(vehicleActions[0]?.action).toBe('vehicle.created');
+  });
+});
+
+describe('VehiclesService seed mẫu', () => {
+  const originalSeedPath = process.env.VEHICLES_SEED_PATH;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'vehicles-test-'));
+  });
+
+  afterEach(() => {
+    if (originalSeedPath === undefined) {
+      delete process.env.VEHICLES_SEED_PATH;
+    } else {
+      process.env.VEHICLES_SEED_PATH = originalSeedPath;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('nạp seed trong repo: 5 xe XE-1001..XE-1005, đều Sẵn sàng', async () => {
+    const audit = new AuditService();
+    const vehicles = new VehiclesService(audit, new InMemoryVehicleStore());
+    await vehicles.onModuleInit();
+    const list = await vehicles.list();
+    expect(list.map((vehicle) => vehicle.id)).toEqual([
+      'XE-1001',
+      'XE-1002',
+      'XE-1003',
+      'XE-1004',
+      'XE-1005',
+    ]);
+    expect(list.map((vehicle) => vehicle.plate)).toEqual([
+      '29H-11111',
+      '29H-22222',
+      '30K-33333',
+      '29H-44444',
+      '30K-55555',
+    ]);
+    expect(
+      list.every((vehicle) => vehicle.status === 'Sẵn sàng'),
+    ).toBe(true);
+    // Xe mẫu ghi thẳng vào kho, không sinh audit vehicle.created.
+    expect(await actionCount(audit, 'vehicle.created')).toBe(0);
+    // Xe tạo tay tiếp theo nối số XE-1006.
+    const next = await vehicles.create(
+      { plate: '29A-12345', type: 'Xe máy' },
+      COORDINATOR,
+    );
+    expect(next.id).toBe('XE-1006');
+  });
+
+  it('lần 2 không nạp lại seed, không đặt lại kho', async () => {
+    const audit = new AuditService();
+    const store = new InMemoryVehicleStore();
+    const first = new VehiclesService(audit, store);
+    await first.onModuleInit();
+    await first.create({ plate: '29A-12345', type: 'Xe máy' }, COORDINATOR);
+    const second = new VehiclesService(audit, store);
+    await second.onModuleInit();
+    expect((await second.list()).map((vehicle) => vehicle.id)).toEqual([
+      'XE-1001',
+      'XE-1002',
+      'XE-1003',
+      'XE-1004',
+      'XE-1005',
+      'XE-1006',
+    ]);
+    const next = await second.create(
+      { plate: '29B-67890', type: 'Xe tải nhỏ' },
+      COORDINATOR,
+    );
+    expect(next.id).toBe('XE-1007');
+  });
+
+  it('tệp seed sai hình dạng thì chặn khởi động', async () => {
+    const path = join(tempDir, 'vehicles.test.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        items: [
+          { plate: '29H-11111', type: 'Xe máy' },
+          { plate: '29H-11111', type: 'Xe tải nhỏ' },
+        ],
+      }),
+    );
+    process.env.VEHICLES_SEED_PATH = path;
+    const audit = new AuditService();
+    const vehicles = new VehiclesService(audit, new InMemoryVehicleStore());
+    await expect(vehicles.onModuleInit()).rejects.toThrow('bị trùng');
   });
 });

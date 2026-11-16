@@ -22,6 +22,12 @@ export interface CreateVehicleInput {
   type: string;
 }
 
+// Một mục trong tệp seed xe (vehicles.seed.json).
+export interface VehicleSeedItem {
+  plate: string;
+  type: string;
+}
+
 // Lối ra vào kho xe. Hiện có bản bộ nhớ; bản Postgres lưu bền qua cùng
 // interface này, service phía trên không đổi. Mọi phương thức đều bất đồng
 // bộ vì kho Postgres cần chờ truy vấn.

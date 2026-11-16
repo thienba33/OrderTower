@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
   Optional,
@@ -32,6 +35,7 @@ import type {
   CreateOrderInput,
   Order,
   OrderItem,
+  OrderSeedItem,
   TransitionOrderInput,
   UpdateOrderInput,
 } from './orders.types';
@@ -43,11 +47,41 @@ const CLOSED_STATES = ['Hoàn', 'Hủy'];
 // kho đã giữ hàng cho đơn nên mặt hàng bị khóa, chỉ sửa được khách và địa chỉ.
 const EDITABLE_ITEMS_STATES = ['Mới tạo', 'Đã kiểm tra', 'Chờ kho'];
 
+// Tên tệp seed mặc định. Đổi tệp seed rồi khởi động lại thì đơn mẫu mới có hiệu lực.
+const DEFAULT_SEED_FILE = 'orders.seed.json';
+
+// Người gọi lúc nạp seed: tài khoản hệ thống "seed". Audit ghi actor là
+// seed, vai đầu là Quản trị viên. Cần cả Điều phối viên (chuyển đơn tới
+// Đã kiểm tra/Chờ kho) và Nhân viên kho (chuyển tới Đang đóng gói/Chờ điều
+// xe) vì chuyển trạng thái kiểm vai theo định nghĩa; chỉ có Quản trị viên
+// thì mọi chuyển đều bị từ chối 409.
+const SEED_CALLER: Caller = {
+  userId: 'seed',
+  username: 'seed',
+  roles: ['Quản trị viên', 'Điều phối viên', 'Nhân viên kho'],
+};
+
+// Đường chuyển hợp lệ tới từng trạng thái đích của đơn mẫu, theo đúng
+// 10 chuyển trong order-flow.v1.json. Không seed đơn Đang giao/Đã giao
+// vì cần shipment.
+const SEED_TARGET_TRANSITIONS: Record<string, string[]> = {
+  'Mới tạo': [],
+  'Đã kiểm tra': ['Đã kiểm tra'],
+  'Chờ kho': ['Đã kiểm tra', 'Chờ kho'],
+  'Đang đóng gói': ['Đã kiểm tra', 'Chờ kho', 'Đang đóng gói'],
+  'Chờ điều xe': ['Đã kiểm tra', 'Chờ kho', 'Đang đóng gói', 'Chờ điều xe'],
+};
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 // Đơn hàng nghiệp vụ: tạo, chuyển trạng thái qua Workflow engine, sửa.
 // Trạng thái luồng sống ở workflow instance, đơn chỉ giữ mã instance và đồng
 // bộ trạng thái sau mỗi lần chuyển.
 @Injectable()
 export class OrdersService implements OnModuleInit {
+  private readonly logger = new Logger(OrdersService.name);
   private nextNumber = 1001;
 
   // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị cũ không cần
@@ -81,14 +115,159 @@ export class OrdersService implements OnModuleInit {
     private readonly customers?: CustomersService,
   ) {}
 
-  // Tiếp tục số thứ tự từ kho: đã có DH-1001 thì đơn mới là DH-1002, không
-  // quay về DH-1001 sau khi khởi động lại.
+  // Nạp 8 đơn mẫu qua đường dịch vụ thật (create rồi transition hợp lệ
+  // tới trạng thái đích) khi bảng đơn còn trống, để demo không cần tạo
+  // đơn bằng tay hay chạy lệnh trước. Đơn mẫu đi qua đúng workflow
+  // instance, audit và giữ hàng như đơn tạo qua API nên số liệu khớp
+  // nhau; bảng đã có dữ liệu thì giữ nguyên, khởi động lại không nạp lại.
+  // Thứ tự khởi động của NestJS bảo đảm các mô-đun phụ thuộc đã nạp
+  // trước: Workflow (định nghĩa luồng), Inventory (tồn kho cho rào chắn),
+  // Channels (kênh K-1001..K-1003), Address (danh mục chấm tin cậy).
   async onModuleInit(): Promise<void> {
+    // Đọc và kiểm tra seed trước: tệp seed sai vẫn chặn khởi động, dù kho
+    // đã có dữ liệu.
+    const seed = this.loadSeed();
+    const existing = await this.store.list();
+    if (existing.length > 0) {
+      this.logger.log(
+        `Bảng đã có ${existing.length} đơn trong DB, giữ nguyên dữ liệu.`,
+      );
+    } else {
+      for (const item of seed) {
+        const created = await this.create(
+          {
+            idempotencyKey: item.idempotencyKey,
+            customer: item.customer,
+            ...(item.phone !== undefined ? { phone: item.phone } : {}),
+            items: item.items,
+            ...(item.channelId !== undefined
+              ? { channelId: item.channelId }
+              : {}),
+            ...(item.address !== undefined
+              ? { address: item.address }
+              : {}),
+            ...(item.deadline !== undefined
+              ? { deadline: item.deadline }
+              : {}),
+          },
+          SEED_CALLER,
+        );
+        for (const to of SEED_TARGET_TRANSITIONS[item.targetState]) {
+          await this.transition(created.id, { to }, SEED_CALLER);
+        }
+      }
+      this.logger.log(`Đã nạp ${seed.length} đơn mẫu từ tệp seed.`);
+    }
     const orders = await this.store.list();
     this.nextNumber = computeNextNumber(
       orders.map((order) => order.id),
       'DH',
     );
+  }
+
+  resolveSeedPath(): string {
+    if (process.env.ORDERS_SEED_PATH) {
+      return process.env.ORDERS_SEED_PATH;
+    }
+    return join(__dirname, 'data', DEFAULT_SEED_FILE);
+  }
+
+  private loadSeed(): OrderSeedItem[] {
+    const path = this.resolveSeedPath();
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf-8');
+    } catch (error) {
+      throw new Error(
+        `Không đọc được tệp seed đơn tại ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch (error) {
+      throw new Error(
+        `Tệp seed đơn tại ${path} không phải JSON hợp lệ: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: nội dung phải là 1 object JSON.`);
+    }
+    const items = (parsed as Record<string, unknown>).items;
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: items phải là mảng không rỗng.`);
+    }
+    const seenKeys = new Set<string>();
+    for (const item of items as unknown[]) {
+      if (typeof item !== 'object' || item === null) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: mỗi item phải là 1 object.`);
+      }
+      const entry = item as Record<string, unknown>;
+      if (!isNonEmptyString(entry.idempotencyKey)) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: mỗi item cần idempotencyKey dạng chuỗi.`);
+      }
+      if (!isNonEmptyString(entry.customer)) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: mỗi item cần customer dạng chuỗi.`);
+      }
+      if (!Array.isArray(entry.items) || entry.items.length === 0) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: items của ${String(entry.idempotencyKey)} phải là mảng không rỗng.`);
+      }
+      for (const line of entry.items as unknown[]) {
+        if (typeof line !== 'object' || line === null) {
+          throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: mỗi mặt hàng của ${String(entry.idempotencyKey)} phải là 1 object.`);
+        }
+        const lineEntry = line as Record<string, unknown>;
+        if (!isNonEmptyString(lineEntry.sku)) {
+          throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: mỗi mặt hàng của ${String(entry.idempotencyKey)} cần sku dạng chuỗi.`);
+        }
+        if (
+          !Number.isInteger(lineEntry.quantity) ||
+          (lineEntry.quantity as number) <= 0
+        ) {
+          throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: quantity của ${String(lineEntry.sku)} phải là số nguyên dương.`);
+        }
+      }
+      if (
+        entry.targetState === undefined ||
+        !Object.prototype.hasOwnProperty.call(
+          SEED_TARGET_TRANSITIONS,
+          entry.targetState as string,
+        )
+      ) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: targetState của ${String(entry.idempotencyKey)} phải là 1 trong Mới tạo, Đã kiểm tra, Chờ kho, Đang đóng gói, Chờ điều xe.`);
+      }
+      if (entry.phone !== undefined && typeof entry.phone !== 'string') {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: phone của ${String(entry.idempotencyKey)} phải là dạng chuỗi khi có.`);
+      }
+      if (
+        entry.channelId !== undefined &&
+        typeof entry.channelId !== 'string'
+      ) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: channelId của ${String(entry.idempotencyKey)} phải là dạng chuỗi khi có.`);
+      }
+      if (
+        entry.deadline !== undefined &&
+        typeof entry.deadline !== 'string'
+      ) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: deadline của ${String(entry.idempotencyKey)} phải là dạng chuỗi khi có.`);
+      }
+      if (entry.address !== undefined) {
+        if (typeof entry.address !== 'object' || entry.address === null) {
+          throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: address của ${String(entry.idempotencyKey)} phải là 1 object khi có.`);
+        }
+        for (const field of ['province', 'district', 'ward', 'street'] as const) {
+          const value = (entry.address as Record<string, unknown>)[field];
+          if (value !== undefined && typeof value !== 'string') {
+            throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: address.${field} của ${String(entry.idempotencyKey)} phải là dạng chuỗi khi có.`);
+          }
+        }
+      }
+      if (seenKeys.has(entry.idempotencyKey as string)) {
+        throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: idempotencyKey ${String(entry.idempotencyKey)} bị trùng.`);
+      }
+      seenKeys.add(entry.idempotencyKey as string);
+    }
+    return items as OrderSeedItem[];
   }
 
   async create(

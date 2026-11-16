@@ -27,6 +27,13 @@ export interface CreateDriverInput {
   username: string;
 }
 
+// Một mục trong tệp seed tài xế (drivers.seed.json).
+export interface DriverSeedItem {
+  name: string;
+  phone: string;
+  username: string;
+}
+
 export interface AssignVehicleInput {
   vehicleId: string;
 }

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AddressService } from '../address/address.service';
 import { ApprovalService } from '../approvals/approval.service';
 import {
@@ -1143,9 +1146,9 @@ describe('PostgresOrderStore', () => {
   it('tạo đơn rồi đọc lại giống hệt, kèm lịch sử và instance', async () => {
     const { orders, audit, instances, store } = await buildPostgresStack();
     const created = await orders.create(createInput('key-1'), COORDINATOR);
-    expect(created.id).toBe('DH-1001');
-    expect(created.workflowInstanceId).toBe('WF-1001');
-    const loaded = await store.findById('DH-1001');
+    expect(created.id).toBe('DH-1009');
+    expect(created.workflowInstanceId).toBe('WF-1009');
+    const loaded = await store.findById('DH-1009');
     expect(loaded).toEqual(created);
     expect(loaded?.address).toEqual({
       province: 'Hà Nội',
@@ -1154,24 +1157,34 @@ describe('PostgresOrderStore', () => {
       street: 'Số 8 phố Hàng Bè',
     });
     expect(loaded?.addressTrust).toBe(100);
-    const instance = await instances.findByBusinessKey('order-flow', 'DH-1001');
-    expect(instance?.id).toBe('WF-1001');
+    const instance = await instances.findByBusinessKey('order-flow', 'DH-1009');
+    expect(instance?.id).toBe('WF-1009');
     expect(await store.findByIdempotencyKey('key-1')).toEqual(created);
     expect(await store.findByIdempotencyKey('khong-co')).toBeNull();
-    expect((await store.list()).map((order) => order.id)).toEqual(['DH-1001']);
+    expect((await store.list()).map((order) => order.id)).toEqual([
+      'DH-1001',
+      'DH-1002',
+      'DH-1003',
+      'DH-1004',
+      'DH-1005',
+      'DH-1006',
+      'DH-1007',
+      'DH-1008',
+      'DH-1009',
+    ]);
     expect((await audit.verify()).valid).toBe(true);
   });
 
   it('khởi động lại service thì số đơn tiếp tục tăng, đơn cũ còn nguyên', async () => {
     const first = await buildPostgresStack();
     const one = await first.orders.create(createInput('key-1'), COORDINATOR);
-    expect(one.id).toBe('DH-1001');
+    expect(one.id).toBe('DH-1009');
     await first.orders.transition(one.id, { to: 'Đã kiểm tra' }, COORDINATOR);
     // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
     const second = await buildPostgresStack(first.db);
     const two = await second.orders.create(createInput('key-2'), COORDINATOR);
-    expect(two.id).toBe('DH-1002');
-    const old = await second.orders.findOne('DH-1001');
+    expect(two.id).toBe('DH-1010');
+    const old = await second.orders.findOne('DH-1009');
     expect(old.state).toBe('Đã kiểm tra');
     expect(old.history).toHaveLength(2);
     expect((await second.audit.verify()).valid).toBe(true);
@@ -1183,13 +1196,13 @@ describe('PostgresOrderStore', () => {
       { ...createInput('key-1'), channelId: 'K-1001' },
       COORDINATOR,
     );
-    expect(one.id).toBe('DH-1001');
+    expect(one.id).toBe('DH-1009');
     expect(one.channelId).toBe('K-1001');
-    const loaded = await first.store.findById('DH-1001');
+    const loaded = await first.store.findById('DH-1009');
     expect(loaded).toEqual(one);
     // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
     const second = await buildPostgresStack(first.db);
-    const reopened = await second.orders.findOne('DH-1001');
+    const reopened = await second.orders.findOne('DH-1009');
     expect(reopened.channelId).toBe('K-1001');
     // Kênh mẫu vẫn còn sau khi khởi động lại, không nạp seed lại.
     expect(
@@ -1214,13 +1227,13 @@ describe('PostgresOrderStore', () => {
       { ...createInput('key-1'), customerId: 'KH-1001' },
       COORDINATOR,
     );
-    expect(one.id).toBe('DH-1001');
+    expect(one.id).toBe('DH-1009');
     expect(one.customerId).toBe('KH-1001');
-    const loaded = await first.store.findById('DH-1001');
+    const loaded = await first.store.findById('DH-1009');
     expect(loaded).toEqual(one);
     // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
     const second = await buildPostgresStack(first.db);
-    const reopened = await second.orders.findOne('DH-1001');
+    const reopened = await second.orders.findOne('DH-1009');
     expect(reopened.customerId).toBe('KH-1001');
     // Khách hàng vẫn còn sau khi khởi động lại; khách tiếp theo nối số
     // thứ tự KH-1002.
@@ -1246,17 +1259,132 @@ describe('PostgresOrderStore', () => {
       },
       COORDINATOR,
     );
-    expect(one.id).toBe('DH-1001');
+    expect(one.id).toBe('DH-1009');
     expect(one.phone).toBe('0901234567');
     expect(one.deadline).toBe('2026-11-20T10:00:00.000Z');
     expect(one.total).toBe(186000);
-    const loaded = await first.store.findById('DH-1001');
+    const loaded = await first.store.findById('DH-1009');
     expect(loaded).toEqual(one);
     // Mô phỏng khởi động lại: service mới, cùng kho Postgres.
     const second = await buildPostgresStack(first.db);
-    const reopened = await second.orders.findOne('DH-1001');
+    const reopened = await second.orders.findOne('DH-1009');
     expect(reopened.phone).toBe('0901234567');
     expect(reopened.deadline).toBe('2026-11-20T10:00:00.000Z');
     expect(reopened.total).toBe(186000);
+  });
+});
+
+describe('OrdersService seed mẫu', () => {
+  const originalSeedPath = process.env.ORDERS_SEED_PATH;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'orders-test-'));
+  });
+
+  afterEach(() => {
+    if (originalSeedPath === undefined) {
+      delete process.env.ORDERS_SEED_PATH;
+    } else {
+      process.env.ORDERS_SEED_PATH = originalSeedPath;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('nạp seed trong repo: 8 đơn DH-1001..DH-1008 đúng trạng thái đích', async () => {
+    const { orders, audit, inventory } = await buildServices();
+    await orders.onModuleInit();
+    const list = await orders.list();
+    expect(list.map((order) => order.id)).toEqual([
+      'DH-1001',
+      'DH-1002',
+      'DH-1003',
+      'DH-1004',
+      'DH-1005',
+      'DH-1006',
+      'DH-1007',
+      'DH-1008',
+    ]);
+    expect(list.map((order) => order.state)).toEqual([
+      'Mới tạo',
+      'Mới tạo',
+      'Đã kiểm tra',
+      'Đã kiểm tra',
+      'Chờ kho',
+      'Chờ kho',
+      'Đang đóng gói',
+      'Chờ điều xe',
+    ]);
+    // Đơn đầu tin cậy thấp (chỉ tỉnh đúng 40 + địa chỉ chi tiết 10 = 50),
+    // 7 đơn còn lại địa chỉ đủ 100.
+    const [low, ...rest] = list;
+    expect(low?.addressTrust).toBe(50);
+    expect(low?.addressLevel).toBe('Rủi ro cao');
+    expect(rest.every((order) => order.addressTrust === 100)).toBe(true);
+    // Tổng tiền do server tính từ giá kho: NM-25 93000, NM-15 64000,
+    // HS-KHO 105000.
+    expect(list.map((order) => order.total)).toEqual([
+      186000, 64000, 210000, 157000, 192000, 105000, 186000, 210000,
+    ]);
+    // 2 đơn đã qua đóng gói giữ hàng: NM-25 giữ 2, HS-KHO giữ 2.
+    expect(await inventory.get('NM-25')).toMatchObject({
+      stock: 486,
+      reserved: 2,
+    });
+    expect(await inventory.get('HS-KHO')).toMatchObject({
+      stock: 304,
+      reserved: 2,
+    });
+    // Audit ghi đúng người thực hiện là hệ thống seed, 8 lần tạo đơn.
+    const created = (await audit.getAll()).filter(
+      (record) => record.action === 'order.created',
+    );
+    expect(created).toHaveLength(8);
+    expect(created.every((record) => record.actor === 'seed')).toBe(true);
+    expect(created.every((record) => record.role === 'Quản trị viên')).toBe(
+      true,
+    );
+    expect((await audit.verify()).valid).toBe(true);
+    // Đơn tạo tay tiếp theo nối số DH-1009.
+    const next = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(next.id).toBe('DH-1009');
+  });
+
+  it('lần 2 không nạp lại seed, đơn tạo tay nối số', async () => {
+    const { orders } = await buildServices();
+    await orders.onModuleInit();
+    await orders.onModuleInit();
+    expect((await orders.list()).map((order) => order.id)).toEqual([
+      'DH-1001',
+      'DH-1002',
+      'DH-1003',
+      'DH-1004',
+      'DH-1005',
+      'DH-1006',
+      'DH-1007',
+      'DH-1008',
+    ]);
+    const next = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(next.id).toBe('DH-1009');
+  });
+
+  it('tệp seed sai hình dạng thì chặn khởi động', async () => {
+    const path = join(tempDir, 'orders.test.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        items: [
+          {
+            idempotencyKey: 'seed-order-x',
+            customer: 'Hộ nước mắm X',
+            items: [{ sku: 'NM-25', quantity: 1 }],
+            targetState: 'Đang giao',
+          },
+        ],
+      }),
+    );
+    process.env.ORDERS_SEED_PATH = path;
+    const { orders } = await buildServices();
+    await expect(orders.onModuleInit()).rejects.toThrow('targetState');
   });
 });

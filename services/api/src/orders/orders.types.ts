@@ -79,6 +79,26 @@ export interface CreateOrderInput {
   deadline?: string;
 }
 
+// Một mục trong tệp seed đơn mẫu (orders.seed.json). Đơn được tạo qua
+// đường dịch vụ thật (create rồi transition hợp lệ) tới trạng thái đích;
+// trạng thái đích chỉ nhận 5 trạng thái đầu của luồng, không seed đơn
+// Đang giao/Đã giao vì cần shipment.
+export interface OrderSeedItem {
+  idempotencyKey: string;
+  customer: string;
+  phone?: string;
+  items: OrderItem[];
+  channelId?: string;
+  address?: AddressInput;
+  deadline?: string;
+  targetState:
+    | 'Mới tạo'
+    | 'Đã kiểm tra'
+    | 'Chờ kho'
+    | 'Đang đóng gói'
+    | 'Chờ điều xe';
+}
+
 // Người gọi lấy từ token Keycloak, không nằm trong body.
 export interface TransitionOrderInput {
   to: string;

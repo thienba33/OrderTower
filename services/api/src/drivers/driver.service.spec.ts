@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { VehiclesService } from '../vehicles/vehicle.service';
@@ -53,7 +56,7 @@ describe('DriversService', () => {
       { name: 'Nam', phone: '0901234567', username: 'nam' },
       COORDINATOR,
     );
-    expect(driver.id).toBe('TX-1001');
+    expect(driver.id).toBe('TX-1006');
     expect(driver.name).toBe('Nam');
     expect(driver.phone).toBe('0901234567');
     expect(driver.username).toBe('nam');
@@ -65,13 +68,13 @@ describe('DriversService', () => {
     );
     expect(created).toMatchObject({
       actor: 'son',
-      orderId: 'TX-1001',
+      orderId: 'TX-1006',
       from: null,
       to: 'Sẵn sàng',
     });
   });
 
-  it('tài xế thứ hai tiếp tục số thứ tự TX-1002', async () => {
+  it('tài xế thứ hai tiếp tục số thứ tự TX-1007', async () => {
     const { drivers } = await buildServices();
     await drivers.create(
       { name: 'Nam', phone: '0901234567', username: 'nam' },
@@ -81,7 +84,7 @@ describe('DriversService', () => {
       { name: 'Tuấn', phone: '0901234568', username: 'tuan' },
       COORDINATOR,
     );
-    expect(second.id).toBe('TX-1002');
+    expect(second.id).toBe('TX-1007');
   });
 
   it('tạo tài xế thiếu tên, phone hoặc username thì báo 400', async () => {
@@ -104,7 +107,7 @@ describe('DriversService', () => {
         COORDINATOR,
       ),
     ).rejects.toThrow('Tạo tài xế cần có tên đăng nhập');
-    expect(await drivers.list()).toHaveLength(0);
+    expect(await drivers.list()).toHaveLength(5);
   });
 
   it('tạo tài xế trùng username thì báo 409', async () => {
@@ -118,8 +121,8 @@ describe('DriversService', () => {
         { name: 'Nam khác', phone: '0901234568', username: 'nam' },
         COORDINATOR,
       ),
-    ).rejects.toThrow('Tên đăng nhập nam đã có tài xế TX-1001');
-    expect(await drivers.list()).toHaveLength(1);
+    ).rejects.toThrow('Tên đăng nhập nam đã có tài xế TX-1006');
+    expect(await drivers.list()).toHaveLength(6);
   });
 
   it('tạo tài xế trùng phone thì báo 409', async () => {
@@ -133,8 +136,8 @@ describe('DriversService', () => {
         { name: 'Tuấn', phone: '0901234567', username: 'tuan' },
         COORDINATOR,
       ),
-    ).rejects.toThrow('Số điện thoại 0901234567 đã có tài xế TX-1001');
-    expect(await drivers.list()).toHaveLength(1);
+    ).rejects.toThrow('Số điện thoại 0901234567 đã có tài xế TX-1006');
+    expect(await drivers.list()).toHaveLength(6);
   });
 
   it('tạo tài xế bởi Tài xế thì báo 409', async () => {
@@ -145,7 +148,7 @@ describe('DriversService', () => {
         DRIVER,
       ),
     ).rejects.toThrow('cần vai Điều phối viên');
-    expect(await drivers.list()).toHaveLength(0);
+    expect(await drivers.list()).toHaveLength(5);
   });
 
   it('get không tìm thấy thì 404, list lọc theo trạng thái', async () => {
@@ -165,11 +168,11 @@ describe('DriversService', () => {
       id: first.id,
       name: 'Nam',
     });
-    expect(await drivers.list()).toHaveLength(2);
-    expect(await drivers.list({ status: 'Sẵn sàng' })).toHaveLength(2);
+    expect(await drivers.list()).toHaveLength(7);
+    expect(await drivers.list({ status: 'Sẵn sàng' })).toHaveLength(7);
     await drivers.rest(first.id, COORDINATOR);
     expect(await drivers.list({ status: 'Tạm nghỉ' })).toHaveLength(1);
-    expect(await drivers.list({ status: 'Sẵn sàng' })).toHaveLength(1);
+    expect(await drivers.list({ status: 'Sẵn sàng' })).toHaveLength(6);
     expect(await drivers.list({ status: 'Đang giao' })).toHaveLength(0);
   });
 
@@ -346,5 +349,97 @@ describe('DriversService', () => {
     );
     expect(driverActions).toHaveLength(1);
     expect(driverActions[0]?.action).toBe('driver.created');
+  });
+});
+
+describe('DriversService seed mẫu', () => {
+  const originalSeedPath = process.env.DRIVERS_SEED_PATH;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'drivers-test-'));
+  });
+
+  afterEach(() => {
+    if (originalSeedPath === undefined) {
+      delete process.env.DRIVERS_SEED_PATH;
+    } else {
+      process.env.DRIVERS_SEED_PATH = originalSeedPath;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('nạp seed trong repo: 5 tài xế TX-1001..TX-1005, có demo.driver', async () => {
+    const audit = new AuditService();
+    const drivers = new DriversService(audit, new InMemoryDriverStore());
+    await drivers.onModuleInit();
+    const list = await drivers.list();
+    expect(list.map((driver) => driver.id)).toEqual([
+      'TX-1001',
+      'TX-1002',
+      'TX-1003',
+      'TX-1004',
+      'TX-1005',
+    ]);
+    expect(list.map((driver) => driver.username)).toEqual([
+      'demo.driver',
+      'driver.hoa',
+      'driver.phuc',
+      'driver.dung',
+      'driver.thanh',
+    ]);
+    expect(list.every((driver) => driver.status === 'Sẵn sàng')).toBe(true);
+    expect(list.every((driver) => driver.vehicleId === null)).toBe(true);
+    // Tài xế mẫu ghi thẳng vào kho, không sinh audit driver.created.
+    expect(await actionCount(audit, 'driver.created')).toBe(0);
+    // Tài xế tạo tay tiếp theo nối số TX-1006.
+    const next = await drivers.create(
+      { name: 'Nam', phone: '0901234567', username: 'nam' },
+      COORDINATOR,
+    );
+    expect(next.id).toBe('TX-1006');
+  });
+
+  it('lần 2 không nạp lại seed, không đặt lại kho', async () => {
+    const audit = new AuditService();
+    const store = new InMemoryDriverStore();
+    const first = new DriversService(audit, store);
+    await first.onModuleInit();
+    await first.create(
+      { name: 'Nam', phone: '0901234567', username: 'nam' },
+      COORDINATOR,
+    );
+    const second = new DriversService(audit, store);
+    await second.onModuleInit();
+    expect((await second.list()).map((driver) => driver.id)).toEqual([
+      'TX-1001',
+      'TX-1002',
+      'TX-1003',
+      'TX-1004',
+      'TX-1005',
+      'TX-1006',
+    ]);
+    const next = await second.create(
+      { name: 'Tuấn', phone: '0901234568', username: 'tuan' },
+      COORDINATOR,
+    );
+    expect(next.id).toBe('TX-1007');
+  });
+
+  it('tệp seed sai hình dạng thì chặn khởi động', async () => {
+    const path = join(tempDir, 'drivers.test.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        items: [
+          { name: 'An', phone: '0901234570', username: 'demo.driver' },
+          { name: 'Hoa', phone: '0901234571', username: 'demo.driver' },
+        ],
+      }),
+    );
+    process.env.DRIVERS_SEED_PATH = path;
+    const audit = new AuditService();
+    const drivers = new DriversService(audit, new InMemoryDriverStore());
+    await expect(drivers.onModuleInit()).rejects.toThrow('bị trùng');
   });
 });

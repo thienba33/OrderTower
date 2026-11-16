@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
   Optional,
@@ -15,11 +18,19 @@ import { InMemoryVehicleStore, VEHICLE_STORE } from './vehicle.store';
 import type {
   CreateVehicleInput,
   Vehicle,
+  VehicleSeedItem,
   VehicleStatus,
   VehicleStore,
 } from './vehicle.types';
 
 const DISPATCHER_ROLE = 'Điều phối viên';
+
+// Tên tệp seed mặc định. Đổi tệp seed rồi khởi động lại thì xe mới có hiệu lực.
+const DEFAULT_SEED_FILE = 'vehicles.seed.json';
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
 
 function copyVehicle(vehicle: Vehicle): Vehicle {
   return JSON.parse(JSON.stringify(vehicle)) as Vehicle;
@@ -38,10 +49,12 @@ function requireRole(caller: Caller, role: string, action: string): void {
   }
 }
 
-// Quản lý xe giao hàng: tạo, cho vào bảo trì, kích hoạt lại. Người gọi lấy
-// từ token Keycloak, không nhận actor/role từ body.
+// Quản lý xe giao hàng: tạo, cho vào bảo trì, kích hoạt lại, nạp 5 xe mẫu
+// lúc khởi động khi kho còn trống. Người gọi lấy từ token Keycloak, không
+// nhận actor/role từ body.
 @Injectable()
 export class VehiclesService implements OnModuleInit {
+  private readonly logger = new Logger(VehiclesService.name);
   private nextNumber = 1001;
 
   // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị không cần
@@ -53,14 +66,48 @@ export class VehiclesService implements OnModuleInit {
     private readonly store: VehicleStore = new InMemoryVehicleStore(),
   ) {}
 
-  // Tiếp tục số thứ tự từ kho: đã có XE-1001 thì xe mới là XE-1002,
-  // không quay về XE-1001 sau khi khởi động lại.
+  // Nạp seed trước rồi mới tính số thứ tự: kho trống thì 5 xe mẫu nhận
+  // XE-1001 tới XE-1005 theo thứ tự trong tệp seed, xe tạo tay tiếp theo
+  // là XE-1006; bảng đã có dữ liệu thì giữ nguyên, không nạp lại. Xe mẫu
+  // ghi thẳng vào kho (giống seed tồn kho và kênh), không qua create()
+  // nên không sinh audit vehicle.created.
   async onModuleInit(): Promise<void> {
+    // Đọc và kiểm tra seed trước: tệp seed sai vẫn chặn khởi động, dù kho
+    // đã có dữ liệu.
+    const seed = this.loadSeed();
+    const existing = await this.store.list();
+    if (existing.length > 0) {
+      this.logger.log(
+        `Bảng đã có ${existing.length} xe trong DB, giữ nguyên dữ liệu.`,
+      );
+    } else {
+      const now = new Date().toISOString();
+      for (let index = 0; index < seed.length; index++) {
+        const item = seed[index];
+        const vehicle: Vehicle = {
+          id: `XE-${String(1001 + index).padStart(4, '0')}`,
+          plate: item.plate,
+          type: item.type,
+          status: 'Sẵn sàng',
+          createdAt: now,
+          updatedAt: now,
+        };
+        await this.store.save(vehicle);
+      }
+      this.logger.log(`Đã nạp ${seed.length} xe từ tệp seed.`);
+    }
     const vehicles = await this.store.list();
     this.nextNumber = computeNextNumber(
       vehicles.map((vehicle) => vehicle.id),
       'XE',
     );
+  }
+
+  resolveSeedPath(): string {
+    if (process.env.VEHICLES_SEED_PATH) {
+      return process.env.VEHICLES_SEED_PATH;
+    }
+    return join(__dirname, 'data', DEFAULT_SEED_FILE);
   }
 
   async create(
@@ -204,5 +251,50 @@ export class VehiclesService implements OnModuleInit {
       detail: `Biển số ${vehicle.plate}.`,
     });
     return copyVehicle(vehicle);
+  }
+
+  private loadSeed(): VehicleSeedItem[] {
+    const path = this.resolveSeedPath();
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf-8');
+    } catch (error) {
+      throw new Error(
+        `Không đọc được tệp seed xe tại ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch (error) {
+      throw new Error(
+        `Tệp seed xe tại ${path} không phải JSON hợp lệ: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error(`Tệp seed xe tại ${path} không hợp lệ: nội dung phải là 1 object JSON.`);
+    }
+    const items = (parsed as Record<string, unknown>).items;
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error(`Tệp seed xe tại ${path} không hợp lệ: items phải là mảng không rỗng.`);
+    }
+    const seen = new Set<string>();
+    for (const item of items as unknown[]) {
+      if (typeof item !== 'object' || item === null) {
+        throw new Error(`Tệp seed xe tại ${path} không hợp lệ: mỗi item phải là 1 object.`);
+      }
+      const entry = item as Record<string, unknown>;
+      if (!isNonEmptyString(entry.plate)) {
+        throw new Error(`Tệp seed xe tại ${path} không hợp lệ: mỗi item cần plate dạng chuỗi.`);
+      }
+      if (!isNonEmptyString(entry.type)) {
+        throw new Error(`Tệp seed xe tại ${path} không hợp lệ: mỗi item cần type dạng chuỗi.`);
+      }
+      if (seen.has(entry.plate as string)) {
+        throw new Error(`Tệp seed xe tại ${path} không hợp lệ: biển số ${String(entry.plate)} bị trùng.`);
+      }
+      seen.add(entry.plate as string);
+    }
+    return items as VehicleSeedItem[];
   }
 }
