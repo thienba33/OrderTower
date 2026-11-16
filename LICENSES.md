@@ -26,5 +26,5 @@ Bitwarden, Odoo, Zammad.
 
 SBOM (CycloneDX 1.7) sinh từ lockfile bằng @cyclonedx/cyclonedx-npm:
 `sbom/api.cyclonedx.json` (services/api, 456 thành phần) và
-`sbom/web.cyclonedx.json` (apps/web, 358 thành phần). Mỗi tệp gồm cả
+`sbom/web.cyclonedx.json` (apps/web, 361 thành phần). Mỗi tệp gồm cả
 dependencies dùng khi chạy và dependencies chỉ dùng khi phát triển.
