@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Pool } from 'pg';
 import type { Queryable, QueryResultLike, Transactional } from './db.types';
 
@@ -16,7 +16,11 @@ export class DbService implements Transactional, OnModuleInit, OnModuleDestroy {
 
   // pool chỉ dùng cho kiểm thử: truyền pool của pg-mem để chạy trên DB ảo
   // mà không cần máy chủ Postgres. Khi không truyền, đọc DATABASE_URL.
-  constructor(pool?: Pool) {
+  // @Optional() là bắt buộc: nếu không có, Nest thấy tham số kiểu Pool
+  // trong metadata và đòi 1 provider Pool trong DbModule, rồi chặn khởi
+  // động với UnknownDependenciesException dù tham số này là tùy chọn.
+  // Kiểm thử gọi trực tiếp new DbService(pool) nên không bị ảnh hưởng.
+  constructor(@Optional() pool?: Pool) {
     if (pool) {
       this.pool = pool;
       return;
