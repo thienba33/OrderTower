@@ -13,6 +13,12 @@ import { cookies } from 'next/headers';
 const APP_ORIGIN = 'http://localhost:3000';
 
 const KEYCLOAK_URL = process.env.KEYCLOAK_URL ?? 'http://localhost:9080';
+// URL nội bộ để server gọi Keycloak (đổi token, lấy discovery): trong
+// Docker, localhost:9080 từ trong container web không tới được
+// APISIX/Keycloak. Mặc định bằng KEYCLOAK_URL nên chạy dev ngoài Docker
+// không đổi gì. Cách tách này giống KEYCLOAK_INTERNAL_URL của services/api.
+const KEYCLOAK_INTERNAL_URL =
+  process.env.KEYCLOAK_INTERNAL_URL ?? KEYCLOAK_URL;
 const KEYCLOAK_REALM = process.env.KEYCLOAK_REALM ?? 'ordertower';
 const KEYCLOAK_CLIENT_ID =
   process.env.KEYCLOAK_CLIENT_ID ?? 'ordertower-web';
@@ -98,6 +104,12 @@ function keycloakUrl(path: string): string {
   return `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}${path}`;
 }
 
+// URL Keycloak cho server gọi (đổi token, discovery). URL trình duyệt
+// (đăng nhập, đăng xuất) vẫn dùng keycloakUrl ở trên.
+function keycloakInternalUrl(path: string): string {
+  return `${KEYCLOAK_INTERNAL_URL}/realms/${KEYCLOAK_REALM}${path}`;
+}
+
 // Xây URL đăng nhập Keycloak (Authorization Code + PKCE S256) và lưu
 // state + code_verifier vào cookie tạm để đối chiếu ở callback.
 export async function startLogin(): Promise<string> {
@@ -149,7 +161,7 @@ export async function handleCallback(
   });
   let response: Response;
   try {
-    response = await fetch(keycloakUrl('/protocol/openid-connect/token'), {
+    response = await fetch(keycloakInternalUrl('/protocol/openid-connect/token'), {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body,
@@ -236,7 +248,7 @@ export async function logoutUrl(): Promise<string> {
   let endSession = keycloakUrl('/protocol/openid-connect/logout');
   try {
     const response = await fetch(
-      keycloakUrl('/.well-known/openid-configuration'),
+      keycloakInternalUrl('/.well-known/openid-configuration'),
     );
     if (response.ok) {
       const data: unknown = await response.json();
