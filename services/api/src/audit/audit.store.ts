@@ -65,9 +65,13 @@ export class PostgresAuditStore implements AuditStore {
       const last = await client.query(
         'SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1 FOR UPDATE',
       );
-      const lastRow = (last.rows as Array<{ seq: number; hash: string }>)[0];
+      // pg trả cột BIGINT về dạng chuỗi (vì số nguyên 64-bit vượt quá số
+      // an toàn của JS), còn pg-mem trong kiểm thử trả về dạng số. Không
+      // ép kiểu thì "5" + 1 thành "51" rồi "511"... và tới lần ghi thứ 20
+      // thì tràn BIGINT thật (lỗi 22003 khi seed đơn trên Postgres thật).
+      const lastRow = (last.rows as Array<{ seq: number | string; hash: string }>)[0];
       const prevHash = lastRow ? lastRow.hash : GENESIS_PREV_HASH;
-      const seq = lastRow ? lastRow.seq + 1 : 1;
+      const seq = lastRow ? Number(lastRow.seq) + 1 : 1;
       const record = buildRecord(seq, prevHash, input);
       await client.query(
         `INSERT INTO audit_log
@@ -104,11 +108,12 @@ export class PostgresAuditStore implements AuditStore {
 }
 
 // Một hàng TIMESTAMPTZ đọc từ Postgres trả về đối tượng Date; chuẩn hóa về
-// chuỗi ISO để khớp đúng dạng at đã băm lúc ghi.
+// chuỗi ISO để khớp đúng dạng at đã băm lúc ghi. Cột seq là BIGINT nên pg
+// trả về dạng chuỗi, ép về số để khớp kiểu AuditRecord.
 export function mapAuditRow(row: Record<string, unknown>): AuditRecord {
   const at = row.at instanceof Date ? row.at.toISOString() : String(row.at);
   return {
-    seq: row.seq as number,
+    seq: Number(row.seq),
     at,
     actor: row.actor as string,
     role: row.role as string,
