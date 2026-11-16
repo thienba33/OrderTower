@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
   Optional,
@@ -17,11 +20,19 @@ import type {
   AssignVehicleInput,
   CreateDriverInput,
   Driver,
+  DriverSeedItem,
   DriverStatus,
   DriverStore,
 } from './driver.types';
 
 const DISPATCHER_ROLE = 'Điều phối viên';
+
+// Tên tệp seed mặc định. Đổi tệp seed rồi khởi động lại thì tài xế mới có hiệu lực.
+const DEFAULT_SEED_FILE = 'drivers.seed.json';
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
 
 function copyDriver(driver: Driver): Driver {
   return JSON.parse(JSON.stringify(driver)) as Driver;
@@ -41,9 +52,11 @@ function requireRole(caller: Caller, role: string, action: string): void {
 }
 
 // Quản lý tài xế giao hàng: tạo, gán xe thường lái, tạm nghỉ, kích hoạt
-// lại. Người gọi lấy từ token Keycloak, không nhận actor/role từ body.
+// lại, nạp 5 tài xế mẫu lúc khởi động khi kho còn trống. Người gọi lấy
+// từ token Keycloak, không nhận actor/role từ body.
 @Injectable()
 export class DriversService implements OnModuleInit {
+  private readonly logger = new Logger(DriversService.name);
   private nextNumber = 1001;
 
   // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị không cần
@@ -59,14 +72,53 @@ export class DriversService implements OnModuleInit {
     private readonly vehicles?: VehiclesService,
   ) {}
 
-  // Tiếp tục số thứ tự từ kho: đã có TX-1001 thì tài xế mới là TX-1002,
-  // không quay về TX-1001 sau khi khởi động lại.
+  // Nạp seed trước rồi mới tính số thứ tự: kho trống thì 5 tài xế mẫu
+  // nhận TX-1001 tới TX-1005 theo thứ tự trong tệp seed, tài xế tạo tay
+  // tiếp theo là TX-1006; bảng đã có dữ liệu thì giữ nguyên, không nạp
+  // lại. Tài xế mẫu ghi thẳng vào kho (giống seed tồn kho và kênh),
+  // không qua create() nên không sinh audit driver.created. Một tài xế
+  // mẫu có username đúng "demo.driver" để màn Tài xế nhận ra tài khoản
+  // demo đăng nhập; các username còn lại chỉ là dữ liệu mẫu, không có
+  // tài khoản Keycloak tương ứng.
   async onModuleInit(): Promise<void> {
+    // Đọc và kiểm tra seed trước: tệp seed sai vẫn chặn khởi động, dù kho
+    // đã có dữ liệu.
+    const seed = this.loadSeed();
+    const existing = await this.store.list();
+    if (existing.length > 0) {
+      this.logger.log(
+        `Bảng đã có ${existing.length} tài xế trong DB, giữ nguyên dữ liệu.`,
+      );
+    } else {
+      const now = new Date().toISOString();
+      for (let index = 0; index < seed.length; index++) {
+        const item = seed[index];
+        const driver: Driver = {
+          id: `TX-${String(1001 + index).padStart(4, '0')}`,
+          name: item.name,
+          phone: item.phone,
+          username: item.username,
+          vehicleId: null,
+          status: 'Sẵn sàng',
+          createdAt: now,
+          updatedAt: now,
+        };
+        await this.store.save(driver);
+      }
+      this.logger.log(`Đã nạp ${seed.length} tài xế từ tệp seed.`);
+    }
     const drivers = await this.store.list();
     this.nextNumber = computeNextNumber(
       drivers.map((driver) => driver.id),
       'TX',
     );
+  }
+
+  resolveSeedPath(): string {
+    if (process.env.DRIVERS_SEED_PATH) {
+      return process.env.DRIVERS_SEED_PATH;
+    }
+    return join(__dirname, 'data', DEFAULT_SEED_FILE);
   }
 
   async create(
@@ -301,5 +353,58 @@ export class DriversService implements OnModuleInit {
       detail: `Tên ${driver.name}.`,
     });
     return copyDriver(driver);
+  }
+
+  private loadSeed(): DriverSeedItem[] {
+    const path = this.resolveSeedPath();
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf-8');
+    } catch (error) {
+      throw new Error(
+        `Không đọc được tệp seed tài xế tại ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch (error) {
+      throw new Error(
+        `Tệp seed tài xế tại ${path} không phải JSON hợp lệ: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: nội dung phải là 1 object JSON.`);
+    }
+    const items = (parsed as Record<string, unknown>).items;
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: items phải là mảng không rỗng.`);
+    }
+    const seenUsernames = new Set<string>();
+    const seenPhones = new Set<string>();
+    for (const item of items as unknown[]) {
+      if (typeof item !== 'object' || item === null) {
+        throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: mỗi item phải là 1 object.`);
+      }
+      const entry = item as Record<string, unknown>;
+      if (!isNonEmptyString(entry.name)) {
+        throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: mỗi item cần name dạng chuỗi.`);
+      }
+      if (!isNonEmptyString(entry.phone)) {
+        throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: mỗi item cần phone dạng chuỗi.`);
+      }
+      if (!isNonEmptyString(entry.username)) {
+        throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: mỗi item cần username dạng chuỗi.`);
+      }
+      if (seenUsernames.has(entry.username as string)) {
+        throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: username ${String(entry.username)} bị trùng.`);
+      }
+      if (seenPhones.has(entry.phone as string)) {
+        throw new Error(`Tệp seed tài xế tại ${path} không hợp lệ: số điện thoại ${String(entry.phone)} bị trùng.`);
+      }
+      seenUsernames.add(entry.username as string);
+      seenPhones.add(entry.phone as string);
+    }
+    return items as DriverSeedItem[];
   }
 }

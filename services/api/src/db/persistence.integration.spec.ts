@@ -117,7 +117,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       },
       COORDINATOR,
     );
-    expect(order.id).toBe('DH-1001');
+    expect(order.id).toBe('DH-1009');
     expect(order.phone).toBe('0901234567');
     expect(order.deadline).toBe('2026-11-20T10:00:00.000Z');
     // NM-40 142000 x 2 = 284000.
@@ -146,13 +146,13 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       { plate: '29A-12345', type: 'Xe máy' },
       COORDINATOR,
     );
-    expect(vehicle.id).toBe('XE-1001');
+    expect(vehicle.id).toBe('XE-1006');
     const drivers = app.get(DriversService);
     const driver = await drivers.create(
       { name: 'Nam', phone: '0901234567', username: 'nam' },
       COORDINATOR,
     );
-    expect(driver.id).toBe('TX-1001');
+    expect(driver.id).toBe('TX-1006');
     const shipment = await shipments.create(
       { orderId: order.id },
       COORDINATOR,
@@ -203,7 +203,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(note.id).toBe('SK-1004');
     await shipments.deliver(
       shipment.id,
-      { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
+      { proofPhotoKey: 'chung-tu/DH-1009/anh-giao.jpg' },
       DRIVER,
     );
     current = await orders.findOne(order.id);
@@ -222,7 +222,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     ]);
     expect(afterDeliver[4]).toMatchObject({
       id: 'SK-1005',
-      proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg',
+      proofPhotoKey: 'chung-tu/DH-1009/anh-giao.jpg',
     });
     current = await orders.transition(
       current.id,
@@ -237,7 +237,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       reserved: 2,
     });
     expect(
-      (await instances.findByBusinessKey('order-flow', 'DH-1001'))?.status,
+      (await instances.findByBusinessKey('order-flow', 'DH-1009'))?.status,
     ).toBe('completed');
 
     // Mô phỏng khởi động lại API: app mới, cùng DB Postgres ảo.
@@ -259,7 +259,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const secondChannels = secondApp.get(ChannelsService);
     const secondCustomers = secondApp.get(CustomersService);
 
-    const reopened = await secondOrders.findOne('DH-1001');
+    const reopened = await secondOrders.findOne('DH-1009');
     expect(reopened.state).toBe('Hoàn');
     expect(reopened.history).toHaveLength(8);
     // SĐT, mốc giao hẹn và tổng tiền vẫn còn sau khi khởi động lại.
@@ -296,19 +296,19 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       reserved: 2,
     });
     // Xe vẫn còn sau khi khởi động lại, ở trạng thái cuối luồng.
-    expect((await secondVehicles.get('XE-1001')).status).toBe('Sẵn sàng');
+    expect((await secondVehicles.get('XE-1006')).status).toBe('Sẵn sàng');
     // Tài xế vẫn còn sau khi khởi động lại, ở trạng thái cuối luồng.
-    expect((await secondDrivers.get('TX-1001')).status).toBe('Sẵn sàng');
+    expect((await secondDrivers.get('TX-1006')).status).toBe('Sẵn sàng');
     const nextDriver = await secondDrivers.create(
       { name: 'Tuấn', phone: '0901234568', username: 'tuan' },
       COORDINATOR,
     );
-    expect(nextDriver.id).toBe('TX-1002');
+    expect(nextDriver.id).toBe('TX-1007');
     const nextVehicle = await secondVehicles.create(
       { plate: '29B-67890', type: 'Xe tải nhỏ' },
       COORDINATOR,
     );
-    expect(nextVehicle.id).toBe('XE-1002');
+    expect(nextVehicle.id).toBe('XE-1007');
     const next = await secondOrders.create(
       {
         idempotencyKey: 'key-2',
@@ -323,7 +323,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       },
       COORDINATOR,
     );
-    expect(next.id).toBe('DH-1002');
+    expect(next.id).toBe('DH-1010');
     // Đơn không ghi phone/deadline thì null, total tính từ items.
     expect(next.phone).toBeNull();
     expect(next.deadline).toBeNull();
@@ -360,7 +360,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect(nextEvents[0]).toMatchObject({
       id: 'SK-1006',
       type: 'Nhận đơn',
-      orderId: 'DH-1002',
+      orderId: 'DH-1010',
     });
     // Không gọi app.close(): 2 app dùng chung 1 pool pg-mem, đóng pool rồi
     // thì app còn lại không dùng được nữa; pg-mem không giữ socket thật nên
@@ -417,12 +417,12 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       { plate: '29A-12345', type: 'Xe máy' },
       COORDINATOR,
     );
-    expect(firstVehicle.id).toBe('XE-1001');
+    expect(firstVehicle.id).toBe('XE-1006');
     const firstDriver = await drivers.create(
       { name: 'Nam', phone: '0901234567', username: 'nam' },
       COORDINATOR,
     );
-    expect(firstDriver.id).toBe('TX-1001');
+    expect(firstDriver.id).toBe('TX-1006');
     const dispatched = await shipments.dispatch(
       shipment.id,
       { driverId: firstDriver.id, vehicleId: firstVehicle.id },
@@ -451,12 +451,12 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
       { plate: '29B-67890', type: 'Xe tải nhỏ' },
       COORDINATOR,
     );
-    expect(secondVehicle.id).toBe('XE-1002');
+    expect(secondVehicle.id).toBe('XE-1007');
     const secondDriver = await drivers.create(
       { name: 'Tuấn', phone: '0901234568', username: 'tuan' },
       COORDINATOR,
     );
-    expect(secondDriver.id).toBe('TX-1002');
+    expect(secondDriver.id).toBe('TX-1007');
     const redispatched = await shipments.dispatch(
       shipment.id,
       { driverId: secondDriver.id, vehicleId: secondVehicle.id },
@@ -472,11 +472,11 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     expect((await drivers.get(secondDriver.id)).status).toBe('Đang giao');
     const delivered = await shipments.deliver(
       shipment.id,
-      { proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg' },
+      { proofPhotoKey: 'chung-tu/DH-1009/anh-giao.jpg' },
       DRIVER_2,
     );
     expect(delivered.status).toBe('Đã giao');
-    expect(delivered.proofPhotoKey).toBe('chung-tu/DH-1001/anh-giao.jpg');
+    expect(delivered.proofPhotoKey).toBe('chung-tu/DH-1009/anh-giao.jpg');
     expect(delivered.history).toHaveLength(5);
     expect((await orders.findOne(order.id)).state).toBe('Đã giao');
     expect((await vehicles.get(secondVehicle.id)).status).toBe('Sẵn sàng');
@@ -518,31 +518,31 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     const reopened = await secondShipments.get('GH-1001');
     expect(reopened.status).toBe('Đã giao');
     expect(reopened.history).toHaveLength(5);
-    expect(reopened.proofPhotoKey).toBe('chung-tu/DH-1001/anh-giao.jpg');
-    expect((await secondOrders.findOne('DH-1001')).state).toBe('Đã giao');
+    expect(reopened.proofPhotoKey).toBe('chung-tu/DH-1009/anh-giao.jpg');
+    expect((await secondOrders.findOne('DH-1009')).state).toBe('Đã giao');
     expect((await secondAudit.verify()).valid).toBe(true);
     // Trả hàng vẫn còn sau khi khởi động lại, ở trạng thái cuối luồng.
     const keptReturn = await secondReturns.get('TH-1001');
     expect(keptReturn.status).toBe('Đã hoàn tiền');
-    expect(keptReturn.orderId).toBe('DH-1001');
+    expect(keptReturn.orderId).toBe('DH-1009');
     // Cả 2 xe vẫn còn sau khi khởi động lại, đều về Sẵn sàng; xe tiếp
-    // theo tiếp tục số thứ tự XE-1003.
-    expect((await secondVehicles.get('XE-1001')).status).toBe('Sẵn sàng');
-    expect((await secondVehicles.get('XE-1002')).status).toBe('Sẵn sàng');
+    // theo tiếp tục số thứ tự XE-1008.
+    expect((await secondVehicles.get('XE-1006')).status).toBe('Sẵn sàng');
+    expect((await secondVehicles.get('XE-1007')).status).toBe('Sẵn sàng');
     // Cả 2 tài xế vẫn còn sau khi khởi động lại, đều về Sẵn sàng; tài xế
-    // tiếp theo tiếp tục số thứ tự TX-1003.
-    expect((await secondDrivers.get('TX-1001')).status).toBe('Sẵn sàng');
-    expect((await secondDrivers.get('TX-1002')).status).toBe('Sẵn sàng');
+    // tiếp theo tiếp tục số thứ tự TX-1008.
+    expect((await secondDrivers.get('TX-1006')).status).toBe('Sẵn sàng');
+    expect((await secondDrivers.get('TX-1007')).status).toBe('Sẵn sàng');
     const nextDriver = await secondDrivers.create(
       { name: 'Hùng', phone: '0901234569', username: 'hung' },
       COORDINATOR,
     );
-    expect(nextDriver.id).toBe('TX-1003');
+    expect(nextDriver.id).toBe('TX-1008');
     const nextVehicle = await secondVehicles.create(
       { plate: '29C-11111', type: 'Xe máy' },
       COORDINATOR,
     );
-    expect(nextVehicle.id).toBe('XE-1003');
+    expect(nextVehicle.id).toBe('XE-1008');
     const order2 = await secondOrders.create(
       {
         idempotencyKey: 'key-2',
@@ -574,7 +574,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     );
     await secondShipments.deliver(
       next.id,
-      { proofPhotoKey: 'chung-tu/DH-1002/anh-giao.jpg' },
+      { proofPhotoKey: 'chung-tu/DH-1010/anh-giao.jpg' },
       DRIVER_3,
     );
     expect((await secondOrders.findOne(order2.id)).state).toBe('Đã giao');

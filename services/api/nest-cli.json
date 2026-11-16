@@ -7,6 +7,9 @@
       "inventory/data/*.json",
       "address/data/*.json",
       "channels/data/*.json",
+      "vehicles/data/*.json",
+      "drivers/data/*.json",
+      "orders/data/*.json",
       "db/migrations/*.sql"
     ],
     "deleteOutDir": true
