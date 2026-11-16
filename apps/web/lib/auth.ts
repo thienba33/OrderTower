@@ -10,7 +10,7 @@ import { cookies } from 'next/headers';
 
 // Gốc của app web. Keycloak đã đăng ký redirect URI này; chạy production
 // thì đổi thành gốc thật và đăng ký lại redirect URI trong realm.
-const APP_ORIGIN = 'http://localhost:3000';
+export const APP_ORIGIN = 'http://localhost:3000';
 
 const KEYCLOAK_URL = process.env.KEYCLOAK_URL ?? 'http://localhost:9080';
 // URL nội bộ để server gọi Keycloak (đổi token, lấy discovery): trong
@@ -261,8 +261,13 @@ export async function logoutUrl(): Promise<string> {
   } catch {
     // Dùng URL ghép sẵn ở trên.
   }
+  // post_logout_redirect_uri phải khớp đúng từng ký tự với
+  // post.logout.redirect.uris trong realm (hiện là
+  // http://localhost:3000/ có dấu / cuối), thiếu dấu / là Keycloak
+  // báo "Invalid redirect uri". new URL(...).href chuẩn hoá gốc
+  // trần thành dạng có dấu / cuối.
   const params = new URLSearchParams({
-    post_logout_redirect_uri: APP_ORIGIN,
+    post_logout_redirect_uri: new URL(APP_ORIGIN).href,
   });
   const idToken = (await cookies()).get(ID_TOKEN_COOKIE)?.value;
   if (idToken) {
