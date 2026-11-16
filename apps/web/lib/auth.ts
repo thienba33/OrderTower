@@ -226,19 +226,26 @@ export async function getSession(): Promise<Session | null> {
   if (!username) {
     return null;
   }
-  let roles: string[] = [];
-  if (idPayload) {
-    const resourceAccess = idPayload.resource_access as
+  // Vai đọc từ access token, dự phòng ID token: Keycloak 26 không còn
+  // đưa resource_access / realm_access vào ID token nữa (chỉ access
+  // token mới có, qua scope roles). Đọc vai từ ID token sẽ luôn ra
+  // danh sách rỗng nên menu chỉ còn màn Theo dõi.
+  const readRoles = (payload: Record<string, unknown> | null): string[] => {
+    if (!payload) {
+      return [];
+    }
+    const resourceAccess = payload.resource_access as
       | Record<string, { roles?: unknown } | undefined>
       | undefined;
     const clientAccess = resourceAccess?.[KEYCLOAK_CLIENT_ID];
-    const realmAccess = idPayload.realm_access as
+    const realmAccess = payload.realm_access as
       | { roles?: unknown }
       | undefined;
-    roles = Array.from(
-      new Set([...mapRoles(clientAccess?.roles), ...mapRoles(realmAccess?.roles)]),
-    );
-  }
+    return [...mapRoles(clientAccess?.roles), ...mapRoles(realmAccess?.roles)];
+  };
+  const roles = Array.from(
+    new Set([...readRoles(accessPayload), ...readRoles(idPayload)]),
+  );
   return { username, roles };
 }
 
