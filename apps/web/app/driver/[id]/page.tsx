@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { apiFetch } from "@/lib/api";
+import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { canAccessScreen } from "@/lib/roles";
 import { AccessDenied } from "@/components/layout/AccessDenied";
@@ -46,7 +47,7 @@ export default async function DriverDetailPage({ params }: { params: { id: strin
   const id = params.id;
   const session = await getSession();
   if (!session) {
-    return <DriverDetailClient view={{ kind: "login" }} />;
+    redirect("/api/auth/login");
   }
 
   if (!canAccessScreen("/driver", session.roles)) {

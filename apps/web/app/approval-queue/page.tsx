@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
 import { canAccessScreen } from "@/lib/roles";
@@ -23,18 +24,7 @@ async function fetchApprovals(): Promise<ApiApproval[]> {
 export default async function ApprovalQueuePage() {
   const session = await getSession();
   if (!session) {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold text-gray-900">Hàng đợi duyệt</h1>
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
-          Bạn chưa đăng nhập.{" "}
-          <Link href="/api/auth/login" className="font-medium text-red-700 underline">
-            Đăng nhập
-          </Link>{" "}
-          để xem hàng đợi duyệt từ API.
-        </p>
-      </div>
-    );
+    redirect("/api/auth/login");
   }
 
   if (!canAccessScreen("/approval-queue", session.roles)) {

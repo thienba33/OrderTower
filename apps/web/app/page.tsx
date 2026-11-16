@@ -209,9 +209,21 @@ async function fetchDefinition(): Promise<ApiWorkflowDefinition> {
   return data as ApiWorkflowDefinition;
 }
 
-export default async function OverviewPage() {
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams?: { auth?: string | string[] };
+}) {
   const session = await getSession();
   if (!session) {
+    // Chưa đăng nhập thì chuyển thẳng tới trang đăng nhập của Keycloak,
+    // không hiện khung dashboard kèm dòng nhắc đăng nhập. Ngoại lệ duy
+    // nhất: callback đăng nhập báo lỗi (?auth=error) thì giữ lại dòng
+    // nhắc để người dùng biết lần đăng nhập vừa rồi đã thất bại, tránh
+    // vòng lặp chuyển hướng âm thầm giữa app và Keycloak.
+    if (searchParams?.auth !== 'error') {
+      redirect('/api/auth/login');
+    }
     return (
       <div className="flex flex-col gap-4">
         <h1 className="text-2xl font-semibold text-gray-900">Tổng quan điều hành</h1>
