@@ -3,9 +3,9 @@
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
   "version": 1,
-  "serialNumber": "urn:uuid:ab4026e2-baca-4097-aa51-5fe2cb4e447a",
+  "serialNumber": "urn:uuid:645c85ea-2cd0-42b5-bd21-e8c51d7581b4",
   "metadata": {
-    "timestamp": "2026-11-14T07:24:36.280Z",
+    "timestamp": "2026-11-16T07:34:26.926Z",
     "tools": {
       "components": [
         {
@@ -785,6 +785,51 @@
         {
           "name": "cdx:npm:package:path",
           "value": "node_modules/react"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "server-only",
+      "version": "0.0.1",
+      "bom-ref": "ordertower-web@0.1.0|server-only@0.0.1",
+      "description": "This is a marker package to indicate that a module can only be used in Server Components.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/server-only@0.0.1",
+      "externalReferences": [
+        {
+          "url": "https://reactjs.org/",
+          "type": "website",
+          "comment": "as detected from PackageJson property \"homepage\""
+        },
+        {
+          "url": "https://github.com/facebook/react/issues",
+          "type": "issue-tracker",
+          "comment": "as detected from PackageJson property \"bugs.url\""
+        },
+        {
+          "url": "https://registry.npmjs.org/server-only/-/server-only-0.0.1.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "a9ea4cc7627101ae638dfcf11bbf723cfabef01b854e81ddd619bb908f99e3302ad5fb5088fec77313210c322dadbb7055e2e0fdc6362672a7adc1649a2b3034"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/server-only"
         }
       ]
     },
@@ -4815,6 +4860,61 @@
         {
           "name": "cdx:npm:package:path",
           "value": "node_modules/@next/swc-linux-x64-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-linux-x64-musl",
+      "group": "@next",
+      "version": "14.2.33",
+      "bom-ref": "ordertower-web@0.1.0|@next/swc-linux-x64-musl@14.2.33",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-linux-x64-musl@14.2.33",
+      "externalReferences": [
+        {
+          "url": "git+https://github.com/vercel/next.js.git#packages/next-swc/crates/napi/npm/linux-x64-musl",
+          "type": "vcs",
+          "comment": "as detected from PackageJson property \"repository.url\" and \"repository.directory\""
+        },
+        {
+          "url": "https://github.com/vercel/next.js#readme",
+          "type": "website",
+          "comment": "as detected from PackageJson property \"homepage\""
+        },
+        {
+          "url": "https://github.com/vercel/next.js/issues",
+          "type": "issue-tracker",
+          "comment": "as detected from PackageJson property \"bugs.url\""
+        },
+        {
+          "url": "https://registry.npmjs.org/@next/swc-linux-x64-musl/-/swc-linux-x64-musl-14.2.33.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "df8e6db0858cce85da4277544c3bf5ab2a4346279b171198c7da58921c18e2105168e2edf1419f8962abf454921ecdb974521ff19a8815a3ddcb93258dda1ac0"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:constraint:engine:node",
+          "value": ">= 10"
+        },
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-linux-x64-musl"
         }
       ]
     },
@@ -13714,6 +13814,62 @@
         {
           "name": "cdx:npm:package:path",
           "value": "node_modules/@unrs/resolver-binding-linux-x64-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "resolver-binding-linux-x64-musl",
+      "group": "@unrs",
+      "version": "1.13.0",
+      "bom-ref": "ordertower-web@0.1.0|@unrs/resolver-binding-linux-x64-musl@1.13.0",
+      "description": "UnRS Resolver Node API",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40unrs/resolver-binding-linux-x64-musl@1.13.0",
+      "externalReferences": [
+        {
+          "url": "git+https://github.com/unrs/unrs-resolver.git",
+          "type": "vcs",
+          "comment": "as detected from PackageJson property \"repository.url\""
+        },
+        {
+          "url": "https://github.com/unrs/unrs-resolver",
+          "type": "website",
+          "comment": "as detected from PackageJson property \"homepage\""
+        },
+        {
+          "url": "https://github.com/unrs/unrs-resolver/issues",
+          "type": "issue-tracker",
+          "comment": "as detected from PackageJson property \"bugs.url\""
+        },
+        {
+          "url": "https://registry.npmjs.org/@unrs/resolver-binding-linux-x64-musl/-/resolver-binding-linux-x64-musl-1.13.0.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "4ce8757ea3a3caad4e3e886ddc10cb77b63e1de30947077983654d98241c9649c46e3a78a72e46151993e0bfeb3b26c5e407fcab42d3f731ecd961a4c25aadaf"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@unrs/resolver-binding-linux-x64-musl"
         }
       ]
     },
@@ -22769,6 +22925,7 @@
         "ordertower-web@0.1.0|postcss@8.4.47",
         "ordertower-web@0.1.0|react-dom@18.3.1",
         "ordertower-web@0.1.0|react@18.3.1",
+        "ordertower-web@0.1.0|server-only@0.0.1",
         "ordertower-web@0.1.0|tailwindcss@3.4.17",
         "ordertower-web@0.1.0|typescript@5.6.3"
       ]
@@ -22875,6 +23032,7 @@
       "dependsOn": [
         "ordertower-web@0.1.0|@next/env@14.2.35",
         "ordertower-web@0.1.0|@next/swc-linux-x64-gnu@14.2.33",
+        "ordertower-web@0.1.0|@next/swc-linux-x64-musl@14.2.33",
         "ordertower-web@0.1.0|@swc/helpers@0.5.5",
         "ordertower-web@0.1.0|busboy@1.6.0",
         "ordertower-web@0.1.0|caniuse-lite@1.0.30001820",
@@ -22914,6 +23072,9 @@
       "dependsOn": [
         "ordertower-web@0.1.0|loose-envify@1.4.0"
       ]
+    },
+    {
+      "ref": "ordertower-web@0.1.0|server-only@0.0.1"
     },
     {
       "ref": "ordertower-web@0.1.0|tailwindcss@3.4.17",
@@ -23379,6 +23540,9 @@
       "ref": "ordertower-web@0.1.0|@next/swc-linux-x64-gnu@14.2.33"
     },
     {
+      "ref": "ordertower-web@0.1.0|@next/swc-linux-x64-musl@14.2.33"
+    },
+    {
       "ref": "ordertower-web@0.1.0|@swc/helpers@0.5.5",
       "dependsOn": [
         "ordertower-web@0.1.0|@swc/counter@0.1.3",
@@ -23708,6 +23872,7 @@
       "ref": "ordertower-web@0.1.0|unrs-resolver@1.13.0",
       "dependsOn": [
         "ordertower-web@0.1.0|@unrs/resolver-binding-linux-x64-gnu@1.13.0",
+        "ordertower-web@0.1.0|@unrs/resolver-binding-linux-x64-musl@1.13.0",
         "ordertower-web@0.1.0|napi-postinstall@0.3.8"
       ]
     },
@@ -24257,6 +24422,9 @@
     },
     {
       "ref": "ordertower-web@0.1.0|@unrs/resolver-binding-linux-x64-gnu@1.13.0"
+    },
+    {
+      "ref": "ordertower-web@0.1.0|@unrs/resolver-binding-linux-x64-musl@1.13.0"
     },
     {
       "ref": "ordertower-web@0.1.0|napi-postinstall@0.3.8"
