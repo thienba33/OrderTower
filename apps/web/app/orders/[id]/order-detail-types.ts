@@ -113,3 +113,20 @@ export interface ApiVehicle {
   createdAt: string;
   updatedAt: string;
 }
+
+export type ApiReturnStatus =
+  | "Chờ xử lý"
+  | "Đã duyệt"
+  | "Đã từ chối"
+  | "Đã hoàn tiền";
+
+// Trả hàng của đơn, đọc từ API thật. Chỉ 2 trạng thái đầu là đang hoạt
+// động: đơn có trả hàng ở 1 trong 2 trạng thái này thì không tạo thêm.
+export interface ApiReturn {
+  id: string;
+  orderId: string;
+  reason: string;
+  status: ApiReturnStatus;
+  createdAt: string;
+  updatedAt: string;
+}
