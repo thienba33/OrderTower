@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { ApprovalsModule } from './approvals/approval.module';
+import { AssignmentModule } from './assignments/assignment.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
@@ -19,6 +20,7 @@ import { WorkflowModule } from './workflow/workflow.module';
 @Module({
   imports: [
     ApprovalsModule,
+    AssignmentModule,
     AuditModule,
     AuthModule,
     ChannelsModule,
