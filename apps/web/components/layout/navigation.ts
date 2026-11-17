@@ -11,7 +11,6 @@ import {
   LocateFixed,
   MapPin,
   Package,
-  Phone,
   Settings,
   User,
 } from "lucide-react";
@@ -47,7 +46,6 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       { href: "/restricted-list", icon: Ban, label: "Danh sách hạn chế" },
       { href: "/bi-dx-score", icon: BarChart3, label: "BI và DX-Score" },
-      { href: "/telesale", icon: Phone, label: "Telesale" },
       { href: "/address-split", icon: MapPin, label: "Phân tách địa chỉ" },
     ],
     label: "Điều hành",
