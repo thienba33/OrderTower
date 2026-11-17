@@ -10,6 +10,7 @@ import type {
   ApiAuditRecord,
   ApiDriver,
   ApiOrderDetail,
+  ApiReturn,
   ApiShipment,
   ApiVehicle,
   ApiWorkflowDefinition,
@@ -83,6 +84,7 @@ export default async function OrderDetailPage({ params }: { params: { id: string
     shipmentsRes,
     driversRes,
     vehiclesRes,
+    returnsRes,
   ] = await Promise.all([
     safeFetch(`/orders/${encodeURIComponent(id)}`),
     safeFetch("/workflow/definition?definitionId=order-flow"),
@@ -92,6 +94,7 @@ export default async function OrderDetailPage({ params }: { params: { id: string
     safeFetch(`/shipments?orderId=${encodeURIComponent(id)}`),
     safeFetch(`/drivers?status=${encodeURIComponent("Sẵn sàng")}`),
     safeFetch(`/vehicles?status=${encodeURIComponent("Sẵn sàng")}`),
+    safeFetch(`/returns?orderId=${encodeURIComponent(id)}`),
   ]);
 
   // Kiểm tra đơn trước: 404 thì hiện khung không tìm thấy, 401 thì nhắc
@@ -144,6 +147,7 @@ export default async function OrderDetailPage({ params }: { params: { id: string
 
   // Danh sách giao hàng là dữ liệu phụ: lỗi tải thì vẫn hiện trang, chỉ
   // báo trong section Giao hàng, không chặn toàn bộ trang chi tiết.
+  // Danh sách trả hàng cũng là dữ liệu phụ, xử lý giống vậy.
   const parseShipmentList = async (
     res: Response | null,
   ): Promise<unknown> => {
@@ -155,10 +159,12 @@ export default async function OrderDetailPage({ params }: { params: { id: string
   const shipmentsRaw = await parseShipmentList(shipmentsRes);
   const driversRaw = await parseShipmentList(driversRes);
   const vehiclesRaw = await parseShipmentList(vehiclesRes);
+  const returnsRaw = await parseShipmentList(returnsRes);
   const shipmentLoadFailed =
     !Array.isArray(shipmentsRaw) ||
     !Array.isArray(driversRaw) ||
     !Array.isArray(vehiclesRaw);
+  const returnsLoadFailed = !Array.isArray(returnsRaw);
 
   return (
     <OrderDetailClient
@@ -172,6 +178,8 @@ export default async function OrderDetailPage({ params }: { params: { id: string
       drivers={(Array.isArray(driversRaw) ? driversRaw : []) as ApiDriver[]}
       vehicles={(Array.isArray(vehiclesRaw) ? vehiclesRaw : []) as ApiVehicle[]}
       shipmentLoadFailed={shipmentLoadFailed}
+      returns={(Array.isArray(returnsRaw) ? returnsRaw : []) as ApiReturn[]}
+      returnsLoadFailed={returnsLoadFailed}
     />
   );
 }
