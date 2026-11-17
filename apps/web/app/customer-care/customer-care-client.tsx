@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "../../components/ui/Modal";
 import { Pagination } from "../../components/ui/Pagination";
@@ -21,15 +22,29 @@ import {
   type TicketStatus,
   type TicketType,
 } from "../../data/cskh";
-import type {
-  ReturnChannelStat,
-  ReturnsError,
+import { isUrgentEta } from "../../data/telesale";
+import {
+  DEMO_CSKH_ACCOUNTS,
+  type ApiAssignment,
+  type ApiCallLog,
+  type AssignmentStatus,
+  type CallResult,
+  type CallsError,
+  type PriorityRow,
+  type ReturnChannelStat,
+  type ReturnsError,
 } from "./customer-care-types";
 
 interface CskhClientProps {
   returnChannels: ReturnChannelStat[];
   pendingReturns: number | null;
   returnsError: ReturnsError | null;
+  priorityRows: PriorityRow[];
+  assignments: ApiAssignment[];
+  callLogs: ApiCallLog[];
+  callsError: CallsError | null;
+  username: string;
+  roles: string[];
 }
 
 const PAGE_SIZE = 6;
@@ -63,10 +78,49 @@ const historyColumns: TableColumn<ContactHistoryRow>[] = [
   { key: "note", header: "Ghi chú", render: (row) => row.note, cellClassName: "w-[520px] !whitespace-normal" },
 ];
 
+// Mục Cuộc gọi: 7 dòng 1 trang, giống bảng đơn ưu tiên ở màn Telesale cũ.
+const CALL_PAGE_SIZE = 7;
+
+// Tài khoản mặc định khi điều phối viên chia đơn mà chưa chọn ai.
+const DEFAULT_ASSIGNEE = DEMO_CSKH_ACCOUNTS[0] ?? "demo.customer-service";
+
+const MY_STATUS_PILL: Record<AssignmentStatus, string> = {
+  "Chờ xử lý": "bg-amber-50 text-amber-800",
+  "Đang xử lý": "bg-green-50 text-green-700",
+  "Hoàn thành": "bg-blue-50 text-blue-700",
+  "Đã hủy": "bg-gray-50 text-gray-700",
+};
+
+// 1 dòng bảng nhân viên: số liệu tính từ phân đơn và nhật ký cuộc gọi,
+// nhân viên chỉ xuất hiện khi đã được giao đơn hoặc đã ghi cuộc gọi.
+interface StaffRow {
+  name: string;
+  assigned: number;
+  completed: number;
+  success: number;
+  failed: number;
+  avgSeconds: number;
+}
+
+const staffColumns: TableColumn<StaffRow>[] = [
+  { key: "name", header: "Nhân viên", render: (row) => <span className="font-medium text-gray-900">{row.name}</span>, cellClassName: "w-[200px]" },
+  { key: "assigned", header: "Được giao", render: (row) => row.assigned, cellClassName: "w-[110px]" },
+  { key: "completed", header: "Hoàn thành", render: (row) => row.completed, cellClassName: "w-[120px]" },
+  { key: "success", header: "Thành công", render: (row) => row.success, cellClassName: "w-[120px]" },
+  { key: "failed", header: "Thất bại", render: (row) => row.failed, cellClassName: "w-[110px]" },
+  { key: "avgSeconds", header: "Thời gian TB (giây)", render: (row) => row.avgSeconds, cellClassName: "w-[170px]" },
+];
+
 export default function CskhPage({
   returnChannels,
   pendingReturns,
   returnsError,
+  priorityRows,
+  assignments,
+  callLogs,
+  callsError,
+  username,
+  roles,
 }: CskhClientProps) {
   const [tickets, setTickets] = useState<TicketRow[]>(TICKET_ROWS);
   const [search, setSearch] = useState("");
@@ -174,6 +228,291 @@ export default function CskhPage({
     setPage(1);
     setFormOpen(false);
   };
+
+  // ---- Mục Cuộc gọi (gộp từ màn Telesale cũ) ----
+  const router = useRouter();
+  const isDispatcher = roles.includes("Điều phối viên");
+  const isCskh = roles.includes("Nhân viên chăm sóc khách hàng");
+
+  const [assignTo, setAssignTo] = useState<Record<string, string>>({});
+  const [callsErrorText, setCallsErrorText] = useState("");
+  const [busyCall, setBusyCall] = useState<string | null>(null);
+
+  // Gửi thao tác cuộc gọi (chia đơn, bắt đầu gọi, ghi kết quả) qua route
+  // nội bộ; lỗi hiện message của API, xong thì tải lại dữ liệu server.
+  // Ẩn/hiện theo vai chỉ là tiện ích giao diện; API kiểm tra lại vai trò
+  // và trạng thái ở mỗi thao tác.
+  const postCall = async (path: string, body: unknown, action: string) => {
+    setBusyCall(action);
+    setCallsErrorText("");
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setCallsErrorText(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Thao tác cuộc gọi lỗi (${response.status}).`,
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setCallsErrorText("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setBusyCall(null);
+    }
+  };
+
+  // Phân đơn đang hoạt động theo đơn (telesale): 1 đơn tối đa 1 phân đơn
+  // đang hoạt động. Phân đơn đã hoàn thành/hủy thì đơn được chia lại.
+  const activeAssignmentByOrder = useMemo(() => {
+    const map = new Map<string, ApiAssignment>();
+    for (const item of assignments) {
+      if (item.kind !== "telesale") continue;
+      if (item.status === "Chờ xử lý" || item.status === "Đang xử lý") {
+        map.set(item.orderId, item);
+      }
+    }
+    return map;
+  }, [assignments]);
+
+  // Phân đơn telesale mới nhất theo đơn, để hiện trạng thái phân đơn và
+  // kết quả cuộc gọi đã ghi (hoàn thành) hoặc lý do hủy.
+  const latestAssignmentByOrder = useMemo(() => {
+    const map = new Map<string, ApiAssignment>();
+    for (const item of assignments) {
+      if (item.kind !== "telesale") continue;
+      const current = map.get(item.orderId);
+      if (!current || item.updatedAt > current.updatedAt) {
+        map.set(item.orderId, item);
+      }
+    }
+    return map;
+  }, [assignments]);
+
+  const callLogByAssignment = useMemo(
+    () => new Map(callLogs.map((log) => [log.assignmentId, log])),
+    [callLogs],
+  );
+
+  const ASSIGN_STATUS_PILL: Record<string, string> = {
+    "Đã chia": "bg-gray-100 text-gray-700",
+    "Đang gọi": "bg-green-50 text-green-700",
+    "Thành công": "bg-green-50 text-green-700",
+    "Thất bại": "bg-red-50 text-red-700",
+    "Đã hủy": "bg-gray-50 text-gray-700",
+  };
+
+  // Nhãn trạng thái phân đơn của 1 dòng ưu tiên: chưa chia, đã chia,
+  // đang gọi, kết quả cuộc gọi khi hoàn thành, đã hủy.
+  const assignmentLabel = (row: PriorityRow): string => {
+    const item = latestAssignmentByOrder.get(row.id);
+    if (!item) return "Chưa chia";
+    if (item.status === "Chờ xử lý") return "Đã chia";
+    if (item.status === "Đang xử lý") return "Đang gọi";
+    if (item.status === "Hoàn thành") {
+      return callLogByAssignment.get(item.id)?.result ?? "Hoàn thành";
+    }
+    return "Đã hủy";
+  };
+
+  // Số liệu cả đội tính từ nhật ký cuộc gọi, không có cuộc gọi nào thì 0.
+  const teamStats = useMemo(() => {
+    const total = callLogs.length;
+    const success = callLogs.filter((log) => log.result === "Thành công").length;
+    const failed = total - success;
+    const totalSeconds = callLogs.reduce((sum, log) => sum + log.durationSeconds, 0);
+    return {
+      total,
+      success,
+      failed,
+      rate: total === 0 ? 0 : Math.round((success / total) * 100),
+      avgSeconds: total === 0 ? 0 : Math.round(totalSeconds / total),
+    };
+  }, [callLogs]);
+
+  // Bảng nhân viên tính từ phân đơn + nhật ký cuộc gọi, gom theo tài
+  // khoản: người được giao, người gọi. Nhân viên chưa có phân đơn và
+  // chưa ghi cuộc gọi thì không xuất hiện.
+  const staffRows: StaffRow[] = useMemo(() => {
+    const byUser = new Map<
+      string,
+      { assigned: number; completed: number; success: number; failed: number; seconds: number; calls: number }
+    >();
+    const ensure = (name: string) => {
+      let row = byUser.get(name);
+      if (!row) {
+        row = { assigned: 0, completed: 0, success: 0, failed: 0, seconds: 0, calls: 0 };
+        byUser.set(name, row);
+      }
+      return row;
+    };
+    for (const item of assignments) {
+      if (item.kind !== "telesale") continue;
+      const row = ensure(item.assignedTo);
+      row.assigned += 1;
+      if (item.status === "Hoàn thành") row.completed += 1;
+    }
+    for (const log of callLogs) {
+      const row = ensure(log.caller);
+      row.calls += 1;
+      row.seconds += log.durationSeconds;
+      if (log.result === "Thành công") row.success += 1;
+      else row.failed += 1;
+    }
+    return Array.from(byUser.entries())
+      .map(([name, row]) => ({
+        name,
+        assigned: row.assigned,
+        completed: row.completed,
+        success: row.success,
+        failed: row.failed,
+        avgSeconds: row.calls === 0 ? 0 : Math.round(row.seconds / row.calls),
+      }))
+      .sort((a, b) => b.assigned - a.assigned);
+  }, [assignments, callLogs]);
+
+  // Việc của tôi: phân đơn gọi điện giao cho tài khoản đang đăng nhập,
+  // mới nhất lên trước.
+  const myAssignments = useMemo(
+    () =>
+      assignments
+        .filter((item) => item.kind === "telesale" && item.assignedTo === username)
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0)),
+    [assignments, username],
+  );
+
+  // Form ghi kết quả theo từng phân đơn: kết quả, thời lượng giây, ghi
+  // chú không bắt buộc. Thời lượng để trống hoặc âm thì không cho ghi.
+  const [callForms, setCallForms] = useState<
+    Record<string, { result: CallResult; duration: string; note: string }>
+  >({});
+  const callFormFor = (id: string) =>
+    callForms[id] ?? { result: "Thành công", duration: "", note: "" };
+  const setCallForm = (
+    id: string,
+    patch: Partial<{ result: CallResult; duration: string; note: string }>,
+  ) => setCallForms((prev) => ({ ...prev, [id]: { ...callFormFor(id), ...patch } }));
+
+  // Bảng đơn ưu tiên: giữ nguyên cột và bộ lọc của màn Telesale cũ, thêm
+  // cột Phân đơn và (chỉ điều phối viên) cột Chia đơn.
+  const [callSearch, setCallSearch] = useState("");
+  const [callSortByEta, setCallSortByEta] = useState(false);
+  const [callPage, setCallPage] = useState(1);
+
+  const filteredPriority = useMemo(() => {
+    const query = callSearch.trim().toLowerCase();
+    let result = priorityRows;
+    if (query) {
+      result = priorityRows.filter(
+        (row) =>
+          row.id.toLowerCase().includes(query) ||
+          row.customer.toLowerCase().includes(query) ||
+          row.phone.includes(query),
+      );
+    }
+    if (callSortByEta) {
+      // Quá hạn (etaMinutes -1) lên trước, không có mốc xuống cuối.
+      const key = (row: PriorityRow) =>
+        row.etaMinutes === null ? Number.MAX_SAFE_INTEGER : row.etaMinutes;
+      result = [...result].sort((a, b) => key(a) - key(b));
+    }
+    return result;
+  }, [priorityRows, callSearch, callSortByEta]);
+
+  const callTotalPages = Math.max(1, Math.ceil(filteredPriority.length / CALL_PAGE_SIZE));
+  const callPageRows = filteredPriority.slice(
+    (callPage - 1) * CALL_PAGE_SIZE,
+    callPage * CALL_PAGE_SIZE,
+  );
+
+  const priorityColumns: TableColumn<PriorityRow>[] = [
+    { key: "id", header: "Mã đơn", render: (row) => <span className="font-medium text-gray-900">{row.id}</span>, cellClassName: "w-[109px]" },
+    { key: "channel", header: "Kênh", render: (row) => row.channel, cellClassName: "w-[89px]" },
+    { key: "customer", header: "Khách hàng", render: (row) => row.customer, cellClassName: "w-[149px]" },
+    { key: "phone", header: "SĐT", render: (row) => row.phone, cellClassName: "w-[129px]" },
+    { key: "deadline", header: "Mốc giao hẹn", render: (row) => row.deadline, cellClassName: "w-[119px]" },
+    { key: "product", header: "Sản phẩm", render: (row) => row.product, cellClassName: "w-[187px]" },
+    {
+      key: "eta",
+      header: "ETA",
+      render: (row) => (
+        <span className={row.eta === "Quá hạn" || isUrgentEta(row.eta) ? "font-medium text-red-700" : ""}>
+          {row.eta}
+        </span>
+      ),
+      cellClassName: "w-[79px]",
+    },
+    { key: "suggestion", header: "Gợi ý", render: (row) => row.suggestion, cellClassName: "w-[129px]" },
+    { key: "reason", header: "Lý do", render: (row) => row.reason, cellClassName: "w-[179px]" },
+    {
+      key: "assign",
+      header: "Phân đơn",
+      render: (row) => {
+        const item = latestAssignmentByOrder.get(row.id);
+        const label = assignmentLabel(row);
+        return (
+          <span className="flex flex-col gap-1">
+            <span
+              className={`inline-flex h-[22px] w-fit items-center rounded-full px-[10px] text-xs font-medium ${ASSIGN_STATUS_PILL[label] ?? "bg-gray-100 text-gray-700"}`}
+            >
+              {label}
+            </span>
+            {item && <span className="text-xs text-gray-500">{item.assignedTo}</span>}
+          </span>
+        );
+      },
+      cellClassName: "w-[149px]",
+    },
+  ];
+  if (isDispatcher) {
+    priorityColumns.push({
+      key: "assign-action",
+      header: "Chia đơn",
+      render: (row) => {
+        const active = activeAssignmentByOrder.get(row.id);
+        if (active) {
+          return <span className="text-xs text-gray-500">Đã chia cho {active.assignedTo}</span>;
+        }
+        const selected = assignTo[row.id] ?? DEFAULT_ASSIGNEE;
+        return (
+          <span className="flex items-center gap-2">
+            <select
+              value={selected}
+              onChange={(e) => setAssignTo((prev) => ({ ...prev, [row.id]: e.target.value }))}
+              aria-label={`Chọn nhân viên cho đơn ${row.id}`}
+              className="h-9 rounded-md border border-gray-300 px-2 text-sm text-gray-700"
+            >
+              {DEMO_CSKH_ACCOUNTS.map((account) => (
+                <option key={account} value={account}>{account}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busyCall !== null}
+              onClick={() =>
+                postCall(
+                  "/api/assignments",
+                  { orderId: row.id, kind: "telesale", assignedTo: selected },
+                  `assign-${row.id}`,
+                )
+              }
+              className="flex h-9 shrink-0 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {busyCall === `assign-${row.id}` ? "Đang chia..." : "Chia đơn"}
+            </button>
+          </span>
+        );
+      },
+      cellClassName: "w-[260px]",
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -335,6 +674,248 @@ export default function CskhPage({
               </div>
             ))}
             <p className="text-xs text-gray-500">{warningNote}</p>
+          </>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4">
+        <p className="text-sm font-semibold text-gray-900">Cuộc gọi</p>
+        {callsError !== null ? (
+          <p className="text-sm text-gray-700">
+            {callsError === "unauthorized" ? (
+              <>
+                Phiên đăng nhập đã hết hạn.{" "}
+                <Link href="/api/auth/login" className="font-medium text-red-700 underline">
+                  Đăng nhập lại
+                </Link>{" "}
+                để xem cuộc gọi từ API.
+              </>
+            ) : (
+              "Không tải được cuộc gọi. Tải lại trang để thử lại."
+            )}
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                <p className="text-sm font-medium text-gray-600">Tổng quan đội</p>
+                <p className="text-2xl font-semibold text-gray-900">{teamStats.total} cuộc</p>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                <p className="text-sm font-medium text-gray-600">Thành công</p>
+                <p className="text-2xl font-semibold text-gray-900">{teamStats.success}</p>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                <p className="text-sm font-medium text-gray-600">Thất bại</p>
+                <p className="text-2xl font-semibold text-gray-900">{teamStats.failed}</p>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                <p className="text-sm font-medium text-gray-600">Tỷ lệ thành công</p>
+                <p className="text-2xl font-semibold text-gray-900">{teamStats.rate}%</p>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                <p className="text-sm font-medium text-gray-600">Thời gian gọi TB</p>
+                <p className="text-2xl font-semibold text-gray-900">{teamStats.avgSeconds} giây</p>
+              </div>
+            </div>
+
+            {callsErrorText !== "" && (
+              <p className="text-sm text-red-700">{callsErrorText}</p>
+            )}
+
+            <div>
+              <p className="mb-2 text-sm font-semibold text-gray-900">
+                ĐƠN NÊN ƯU TIÊN GỌI ({filteredPriority.length})
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  type="text"
+                  value={callSearch}
+                  onChange={(e) => {
+                    setCallSearch(e.target.value);
+                    setCallPage(1);
+                  }}
+                  placeholder="Tìm mã đơn, SĐT, khách hàng..."
+                  aria-label="Tìm đơn ưu tiên"
+                  className="h-10 w-[340px] max-w-full rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCallSortByEta((current) => !current);
+                    setCallPage(1);
+                  }}
+                  className={`flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium ${
+                    callSortByEta
+                      ? "border-red-200 bg-red-50 text-red-700"
+                      : "border-gray-300 bg-white text-gray-700"
+                  }`}
+                >
+                  Sắp xếp theo ETA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCallSearch("");
+                    setCallSortByEta(false);
+                    setCallPage(1);
+                  }}
+                  className="flex h-9 items-center justify-center rounded-md bg-white px-3 text-sm font-medium text-gray-700"
+                >
+                  Xóa bộ lọc
+                </button>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <Table
+                  columns={priorityColumns}
+                  rows={callPageRows}
+                  rowKey={(row) => row.id}
+                  emptyText="Không có đơn nào cần ưu tiên gọi"
+                  bare
+                />
+              </div>
+              <Pagination
+                page={callPage}
+                totalPages={callTotalPages}
+                onPageChange={setCallPage}
+                range={{
+                  start: filteredPriority.length === 0 ? 0 : (callPage - 1) * CALL_PAGE_SIZE + 1,
+                  end: Math.min(callPage * CALL_PAGE_SIZE, filteredPriority.length),
+                  total: filteredPriority.length,
+                }}
+              />
+            </div>
+
+            {isCskh && (
+              <div>
+                <p className="mb-2 text-sm font-semibold text-gray-900">VIỆC CỦA TÔI</p>
+                {myAssignments.length === 0 ? (
+                  <p className="text-sm text-gray-500">Chưa có đơn nào được chia cho bạn.</p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {myAssignments.map((item) => {
+                      const form = callFormFor(item.id);
+                      const durationNumber = Number(form.duration);
+                      const durationValid =
+                        form.duration.trim() !== "" &&
+                        Number.isInteger(durationNumber) &&
+                        durationNumber >= 0;
+                      const log = callLogByAssignment.get(item.id);
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex flex-col gap-2 rounded-lg border border-gray-200 p-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-gray-900">Đơn {item.orderId}</p>
+                            <span
+                              className={`inline-flex h-[22px] items-center rounded-full px-[10px] text-xs font-medium ${MY_STATUS_PILL[item.status]}`}
+                            >
+                              {item.status}
+                            </span>
+                            <p className="text-xs text-gray-500">Giao bởi {item.assignedBy}</p>
+                          </div>
+                          {item.status === "Chờ xử lý" && (
+                            <button
+                              type="button"
+                              disabled={busyCall !== null}
+                              onClick={() =>
+                                postCall(
+                                  `/api/assignments/${item.id}/start`,
+                                  {},
+                                  `start-${item.id}`,
+                                )
+                              }
+                              className="flex h-9 w-fit items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white disabled:opacity-50"
+                            >
+                              {busyCall === `start-${item.id}` ? "Đang bắt đầu..." : "Bắt đầu gọi"}
+                            </button>
+                          )}
+                          {item.status === "Đang xử lý" && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select
+                                value={form.result}
+                                onChange={(e) =>
+                                  setCallForm(item.id, {
+                                    result: e.target.value as CallResult,
+                                  })
+                                }
+                                aria-label="Kết quả cuộc gọi"
+                                className="h-9 rounded-md border border-gray-300 px-2 text-sm text-gray-700"
+                              >
+                                <option value="Thành công">Thành công</option>
+                                <option value="Thất bại">Thất bại</option>
+                              </select>
+                              <input
+                                type="number"
+                                min={0}
+                                value={form.duration}
+                                onChange={(e) => setCallForm(item.id, { duration: e.target.value })}
+                                placeholder="Thời lượng (giây)"
+                                aria-label="Thời lượng cuộc gọi (giây)"
+                                className="h-9 w-[160px] rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+                              />
+                              <input
+                                type="text"
+                                value={form.note}
+                                onChange={(e) => setCallForm(item.id, { note: e.target.value })}
+                                placeholder="Ghi chú (không bắt buộc)"
+                                aria-label="Ghi chú cuộc gọi"
+                                className="h-9 w-[220px] rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+                              />
+                              <button
+                                type="button"
+                                disabled={!durationValid || busyCall !== null}
+                                onClick={() =>
+                                  postCall(
+                                    "/api/call-logs",
+                                    {
+                                      assignmentId: item.id,
+                                      result: form.result,
+                                      durationSeconds: durationNumber,
+                                      ...(form.note.trim() === ""
+                                        ? {}
+                                        : { note: form.note.trim() }),
+                                    },
+                                    `log-${item.id}`,
+                                  )
+                                }
+                                className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white disabled:opacity-50"
+                              >
+                                {busyCall === `log-${item.id}` ? "Đang ghi..." : "Ghi kết quả"}
+                              </button>
+                            </div>
+                          )}
+                          {item.status === "Hoàn thành" && (
+                            <p className="text-sm text-gray-700">
+                              {log
+                                ? `Kết quả: ${log.result} · ${log.durationSeconds} giây${log.note ? ` · ${log.note}` : ""}`
+                                : "Đã hoàn thành."}
+                            </p>
+                          )}
+                          {item.status === "Đã hủy" && (
+                            <p className="text-sm text-gray-700">
+                              Đã hủy{item.cancelReason ? `: ${item.cancelReason}` : ""}.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div>
+              <p className="mb-2 text-sm font-semibold text-gray-900">NHÂN VIÊN</p>
+              <Table
+                columns={staffColumns}
+                rows={staffRows}
+                rowKey={(row) => row.name}
+                emptyText="Chưa có nhân viên được giao đơn"
+                bare
+              />
+            </div>
           </>
         )}
       </div>

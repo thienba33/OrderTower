@@ -14,11 +14,12 @@
 //   Điều phối viên; Nhân viên kho không sửa địa chỉ.
 // - Danh sách hạn chế do CSKH quản lý và Quản lý duyệt; Điều phối viên
 //   không có.
-// - Telesale là việc gọi điện cho khách nên chỉ CSKH; Điều phối viên xem
-//   mức khẩn qua bảng SLA ở Tổng quan.
+// - Cuộc gọi (gộp từ Telesale cũ) nằm trong màn CSKH: gọi điện cho khách
+//   là việc của CSKH; Điều phối viên cũng xem màn CSKH để chia đơn gọi
+//   cho CSKH, và xem mức khẩn qua bảng SLA ở Tổng quan.
 // - Kho thêm Quản lý để giám sát tồn.
-// - Màn CSKH chỉ CSKH; Quản lý xem hiệu suất CSKH qua Tổng quan/BI,
-//   không xem ticket.
+// - Màn CSKH chỉ CSKH và Điều phối viên (chia đơn); Quản lý xem hiệu
+//   suất CSKH qua Tổng quan/BI, không xem ticket.
 // - Quản trị viên xem tất cả màn.
 // - Màn Theo dõi (/tracking) cho mọi vai đã đăng nhập.
 // - Tài khoản có nhiều vai thì hợp nhất các màn được phép.
@@ -35,7 +36,6 @@ export const SCREEN_ORDER: readonly string[] = [
   "/approval-queue",
   "/restricted-list",
   "/bi-dx-score",
-  "/telesale",
   "/address-split",
   "/distribution",
   "/warehouse",
@@ -62,12 +62,12 @@ export const ROLE_SCREENS: Record<string, readonly string[]> = {
     "/warehouse",
     "/address-split",
     "/distribution",
+    "/customer-care",
     "/tracking",
   ],
   "Nhân viên kho": ["/orders", "/warehouse", "/tracking"],
   "Nhân viên chăm sóc khách hàng": [
     "/orders",
-    "/telesale",
     "/customer-care",
     "/address-split",
     "/restricted-list",
