@@ -2,6 +2,7 @@
 
 // SPDX-License-Identifier: Apache-2.0
 
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "../../components/ui/Modal";
 import { Pagination } from "../../components/ui/Pagination";
@@ -9,7 +10,6 @@ import { Table, type TableColumn } from "../../components/ui/Table";
 import {
   CONTACT_HISTORY,
   CSKH_KPIS,
-  RETURN_CHANNELS,
   TICKET_CHANNELS,
   TICKET_ROWS,
   TICKET_STATUSES,
@@ -21,6 +21,16 @@ import {
   type TicketStatus,
   type TicketType,
 } from "../../data/cskh";
+import type {
+  ReturnChannelStat,
+  ReturnsError,
+} from "./customer-care-types";
+
+interface CskhClientProps {
+  returnChannels: ReturnChannelStat[];
+  pendingReturns: number | null;
+  returnsError: ReturnsError | null;
+}
 
 const PAGE_SIZE = 6;
 
@@ -53,7 +63,11 @@ const historyColumns: TableColumn<ContactHistoryRow>[] = [
   { key: "note", header: "Ghi chú", render: (row) => row.note, cellClassName: "w-[520px] !whitespace-normal" },
 ];
 
-export default function CskhPage() {
+export default function CskhPage({
+  returnChannels,
+  pendingReturns,
+  returnsError,
+}: CskhClientProps) {
   const [tickets, setTickets] = useState<TicketRow[]>(TICKET_ROWS);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -92,6 +106,26 @@ export default function CskhPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Thẻ "Hoàn / trả chờ xử lý" lấy số trả hàng chờ xử lý từ API; 4 thẻ
+  // đầu vẫn là số mẫu đóng băng. Tải lỗi thì thẻ này hiện dấu gạch ngang.
+  const kpis = CSKH_KPIS.map((kpi) =>
+    kpi.label === "Hoàn / trả chờ xử lý"
+      ? { ...kpi, value: pendingReturns === null ? "–" : pendingReturns }
+      : kpi,
+  );
+
+  // Tổng panel hoàn hàng theo kênh, tính từ các dòng theo kênh để tiêu
+  // đề khớp với tổng các dòng.
+  const totalReturns = returnChannels.reduce((sum, row) => sum + row.returns, 0);
+  const totalOrders = returnChannels.reduce((sum, row) => sum + row.orders, 0);
+  const totalPercent =
+    totalOrders === 0 ? 0 : Math.round((totalReturns / totalOrders) * 100);
+  const overThreshold = returnChannels.filter((row) => row.percent >= 18);
+  const warningNote =
+    overThreshold.length > 0
+      ? `Kênh ${overThreshold.map((row) => row.channel).join(", ")} vượt ngưỡng cảnh báo. Đã chuyển quản lý xem xét. Hệ thống không tự dừng nhận đơn, không tự thay đổi kênh bán.`
+      : "Chưa có kênh nào vượt ngưỡng cảnh báo.";
 
   const resetFilters = () => {
     setSearch("");
@@ -155,7 +189,7 @@ export default function CskhPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {CSKH_KPIS.map((kpi) => (
+        {kpis.map((kpi) => (
           <div key={kpi.label} className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-5">
             <p className="text-sm font-medium text-gray-600">{kpi.label}</p>
             <p className="text-2xl font-semibold text-gray-900">{kpi.value}</p>
@@ -265,22 +299,44 @@ export default function CskhPage() {
       </div>
 
       <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm font-semibold text-gray-900">Hoàn hàng theo kênh (10/120 đơn = 8%)</p>
-        {RETURN_CHANNELS.map((row) => (
-          <div key={row.channel} className="flex items-center gap-3">
-            <p className="w-[110px] text-[13px] font-medium text-gray-800">{row.channel}</p>
-            <div className="h-[10px] w-[520px] max-w-full rounded-full bg-gray-200">
-              <div
-                className="h-[10px] rounded-full bg-red-700"
-                style={{ width: `${row.percent}%` }}
-              />
-            </div>
-            <p className={`text-[13px] font-semibold ${row.percent >= 18 ? "text-red-700" : "text-gray-800"}`}>
-              {row.returns}/{row.orders} đơn ({row.percent}%)
-            </p>
-          </div>
-        ))}
-        <p className="text-xs text-gray-500">Kênh Chat vượt ngưỡng cảnh báo. Đã chuyển quản lý xem xét. Hệ thống không tự dừng nhận đơn, không tự thay đổi kênh bán.</p>
+        <p className="text-sm font-semibold text-gray-900">
+          {returnsError === null
+            ? `Hoàn hàng theo kênh (${totalReturns}/${totalOrders} đơn = ${totalPercent}%)`
+            : "Hoàn hàng theo kênh"}
+        </p>
+        {returnsError !== null ? (
+          <p className="text-sm text-gray-700">
+            {returnsError === "unauthorized" ? (
+              <>
+                Phiên đăng nhập đã hết hạn.{" "}
+                <Link href="/api/auth/login" className="font-medium text-red-700 underline">
+                  Đăng nhập lại
+                </Link>{" "}
+                để xem hoàn hàng theo kênh từ API.
+              </>
+            ) : (
+              "Không tải được hoàn hàng theo kênh. Tải lại trang để thử lại."
+            )}
+          </p>
+        ) : (
+          <>
+            {returnChannels.map((row) => (
+              <div key={row.channel} className="flex items-center gap-3">
+                <p className="w-[110px] text-[13px] font-medium text-gray-800">{row.channel}</p>
+                <div className="h-[10px] w-[520px] max-w-full rounded-full bg-gray-200">
+                  <div
+                    className="h-[10px] rounded-full bg-red-700"
+                    style={{ width: `${row.percent}%` }}
+                  />
+                </div>
+                <p className={`text-[13px] font-semibold ${row.percent >= 18 ? "text-red-700" : "text-gray-800"}`}>
+                  {row.returns}/{row.orders} đơn ({row.percent}%)
+                </p>
+              </div>
+            ))}
+            <p className="text-xs text-gray-500">{warningNote}</p>
+          </>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
