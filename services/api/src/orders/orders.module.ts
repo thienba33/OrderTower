@@ -8,6 +8,7 @@ import { CustomersModule } from '../customers/customer.module';
 import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
 import { InventoryModule } from '../inventory/inventory.module';
+import { ReturnsModule } from '../returns/return.module';
 import { ShipmentsModule } from '../shipments/shipment.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { OrdersController } from './orders.controller';
@@ -29,6 +30,11 @@ import { ORDER_STORE, PostgresOrderStore } from './orders.store';
     // phía đều dùng forwardRef; vòng lặp chỉ ở mức mô-đun, mức service
     // không lặp vì cổng đọc qua kho, không qua ShipmentsService.
     forwardRef(() => ShipmentsModule),
+    // Lấy cổng đọc trả hàng từ ReturnsModule. Hai mô-đun tham chiếu nhau
+    // (đơn cần trả hàng đã duyệt để đóng đơn, trả hàng cần kiểm tra đơn)
+    // nên cả hai phía đều dùng forwardRef; vòng lặp chỉ ở mức mô-đun,
+    // mức service không lặp vì cổng đọc qua kho, không qua ReturnsService.
+    forwardRef(() => ReturnsModule),
   ],
   controllers: [OrdersController],
   providers: [

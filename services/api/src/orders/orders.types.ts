@@ -105,6 +105,8 @@ export interface TransitionOrderInput {
   reason?: string;
   // Hướng xử lý, bắt buộc khi guard của chuyển nhắc tới hướng xử lý.
   handling?: string;
+  // Id trả hàng đã duyệt, thay cho hướng xử lý tự gõ khi đóng đơn.
+  returnId?: string;
 }
 
 export interface UpdateOrderInput {
