@@ -25,6 +25,7 @@ import { DbService } from '../db/db.service';
 import { createTestDbService } from '../db/test-helpers';
 import { InventoryService } from '../inventory/inventory.service';
 import { PostgresInventoryStore } from '../inventory/inventory.store';
+import type { Return } from '../returns/return.types';
 import { ShipmentsService } from '../shipments/shipment.service';
 import { InMemoryShipmentStore } from '../shipments/shipment.store';
 import { DriversService } from '../drivers/driver.service';
@@ -38,10 +39,13 @@ import {
 } from '../workflow/instance.store';
 import { WorkflowService } from '../workflow/workflow.service';
 import type { OrderShipmentEvidence } from './order-shipment-gate';
+import type { OrderReturnGate } from './order-return-gate';
 import { OrdersService } from './orders.service';
 import { PostgresOrderStore } from './orders.store';
 
-async function buildServices(): Promise<{
+async function buildServices(options: {
+  withReturnGate?: boolean;
+} = {}): Promise<{
   orders: OrdersService;
   audit: AuditService;
   inventory: InventoryService;
@@ -57,6 +61,9 @@ async function buildServices(): Promise<{
   // Cổng bằng chứng dùng stub đổi được, để kiểm thử rào chắn trực tiếp
   // mà không cần tạo shipment thật.
   evidence: OrderShipmentEvidence[];
+  // Kho trả hàng giả cho cổng trả hàng: test ghi trả hàng vào đây, cổng
+  // đọc lại như kho thật.
+  returns: Map<string, Return>;
 }> {
   const workflow = new WorkflowService();
   workflow.onModuleInit();
@@ -95,6 +102,12 @@ async function buildServices(): Promise<{
       ];
     },
   };
+  // Cổng trả hàng dùng stub đổi được: test ghi trả hàng vào Map, cổng
+  // đọc lại như kho thật, không cần tạo trả hàng qua service.
+  const returns = new Map<string, Return>();
+  const returnGate: OrderReturnGate = {
+    findById: async (id: string) => returns.get(id) ?? null,
+  };
   const orders = new OrdersService(
     workflow,
     audit,
@@ -106,6 +119,10 @@ async function buildServices(): Promise<{
     gate,
     channels,
     customers,
+    // Cổng trả hàng dùng stub đổi được (để kiểm thử đóng đơn bằng
+    // returnId); withReturnGate false thì dựng service không có cổng, để
+    // kiểm thử chặn khi thiếu cổng.
+    options.withReturnGate === false ? undefined : returnGate,
   );
   // Xe và tài xế dùng chung cho ShipmentsService: dispatch chỉ nhận xe
   // thật và tài xế thật nên kiểm thử điều xe phải tạo xe và tài xế trước,
@@ -140,6 +157,7 @@ async function buildServices(): Promise<{
     workflow,
     address,
     evidence,
+    returns,
   };
 }
 
@@ -157,6 +175,52 @@ function createInput(key: string) {
     actor: 'son',
     role: 'Điều phối viên',
   };
+}
+
+// Đưa đơn tới trạng thái Đã giao bằng bằng chứng shipment giả, để kiểm
+// thử đóng đơn. Dùng chung cho các test đóng đơn bằng returnId.
+async function driveToDelivered(
+  services: { orders: OrdersService; evidence: OrderShipmentEvidence[] },
+  key: string,
+): Promise<string> {
+  const { orders, evidence } = services;
+  const order = await orders.create(createInput(key), COORDINATOR);
+  for (const step of [
+    { to: 'Đã kiểm tra', caller: COORDINATOR },
+    { to: 'Chờ kho', caller: COORDINATOR },
+    { to: 'Đang đóng gói', caller: WAREHOUSE },
+    { to: 'Chờ điều xe', caller: WAREHOUSE },
+  ]) {
+    await orders.transition(order.id, { to: step.to }, step.caller);
+  }
+  evidence.push({ status: 'Đang giao', proofPhotoKey: null });
+  await orders.transition(order.id, { to: 'Đang giao' }, COORDINATOR);
+  evidence.push({
+    status: 'Đã giao',
+    proofPhotoKey: 'chung-tu/DH-1001/anh-giao.jpg',
+  });
+  await orders.transition(order.id, { to: 'Đã giao' }, DRIVER);
+  return order.id;
+}
+
+// Ghi 1 trả hàng giả vào kho của cổng trả hàng, để kiểm thử đóng đơn
+// bằng returnId mà không cần tạo trả hàng qua service.
+function seedReturn(
+  returns: Map<string, Return>,
+  id: string,
+  orderId: string,
+  status: Return['status'],
+): Return {
+  const ret: Return = {
+    id,
+    orderId,
+    reason: 'Khách trả vì vỡ 1 chai',
+    status,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  returns.set(id, ret);
+  return ret;
 }
 
 const COORDINATOR: Caller = {
@@ -591,6 +655,125 @@ describe('OrdersService', () => {
     });
     const lastAudit = (await audit.getAll()).at(-1);
     expect(lastAudit?.detail).toContain('Hướng xử lý: Đối soát xong');
+  });
+
+  it('đóng đơn bằng trả hàng đã duyệt thì ghi hướng xử lý từ trả hàng', async () => {
+    const { orders, evidence, returns, audit } = await buildServices();
+    const orderId = await driveToDelivered({ orders, evidence }, 'key-1');
+    seedReturn(returns, 'TH-1001', orderId, 'Đã duyệt');
+    const done = await orders.transition(
+      orderId,
+      { to: 'Hoàn', returnId: 'TH-1001' },
+      COORDINATOR,
+    );
+    expect(done.state).toBe('Hoàn');
+    expect(done.history.at(-1)).toMatchObject({
+      to: 'Hoàn',
+      handling: 'Trả hàng TH-1001 (Đã duyệt): Khách trả vì vỡ 1 chai',
+    });
+    const lastAudit = (await audit.getAll()).at(-1);
+    expect(lastAudit?.detail).toContain('Hướng xử lý: Trả hàng TH-1001');
+  });
+
+  it('đóng đơn bằng trả hàng đã hoàn tiền cũng được', async () => {
+    const { orders, evidence, returns } = await buildServices();
+    const orderId = await driveToDelivered({ orders, evidence }, 'key-1');
+    seedReturn(returns, 'TH-1001', orderId, 'Đã hoàn tiền');
+    const done = await orders.transition(
+      orderId,
+      { to: 'Hoàn', returnId: 'TH-1001' },
+      COORDINATOR,
+    );
+    expect(done.state).toBe('Hoàn');
+    expect(done.history.at(-1)).toMatchObject({
+      to: 'Hoàn',
+      handling: 'Trả hàng TH-1001 (Đã hoàn tiền): Khách trả vì vỡ 1 chai',
+    });
+  });
+
+  it('đóng đơn bằng returnId không có thì báo 400', async () => {
+    const { orders, evidence } = await buildServices();
+    const orderId = await driveToDelivered({ orders, evidence }, 'key-1');
+    await expect(
+      orders.transition(
+        orderId,
+        { to: 'Hoàn', returnId: 'TH-9999' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('Không tìm thấy trả hàng TH-9999');
+    expect((await orders.findOne(orderId)).state).toBe('Đã giao');
+  });
+
+  it('đóng đơn bằng trả hàng của đơn khác thì báo 400', async () => {
+    const { orders, evidence, returns } = await buildServices();
+    const orderId = await driveToDelivered({ orders, evidence }, 'key-1');
+    seedReturn(returns, 'TH-1001', 'DH-9999', 'Đã duyệt');
+    await expect(
+      orders.transition(
+        orderId,
+        { to: 'Hoàn', returnId: 'TH-1001' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('không phải đơn');
+    expect((await orders.findOne(orderId)).state).toBe('Đã giao');
+  });
+
+  it('đóng đơn bằng trả hàng chưa duyệt thì báo 400', async () => {
+    const { orders, evidence, returns } = await buildServices();
+    const orderId = await driveToDelivered({ orders, evidence }, 'key-1');
+    seedReturn(returns, 'TH-1001', orderId, 'Chờ xử lý');
+    await expect(
+      orders.transition(
+        orderId,
+        { to: 'Hoàn', returnId: 'TH-1001' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('chỉ dùng trả hàng đã duyệt');
+    expect((await orders.findOne(orderId)).state).toBe('Đã giao');
+  });
+
+  it('đóng đơn bằng trả hàng đã từ chối thì báo 400', async () => {
+    const { orders, evidence, returns } = await buildServices();
+    const orderId = await driveToDelivered({ orders, evidence }, 'key-1');
+    seedReturn(returns, 'TH-1001', orderId, 'Đã từ chối');
+    await expect(
+      orders.transition(
+        orderId,
+        { to: 'Hoàn', returnId: 'TH-1001' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('chỉ dùng trả hàng đã duyệt');
+    expect((await orders.findOne(orderId)).state).toBe('Đã giao');
+  });
+
+  it('không có cổng trả hàng mà đóng đơn bằng returnId thì bị chặn', async () => {
+    const { orders, evidence, returns } = await buildServices({
+      withReturnGate: false,
+    });
+    const orderId = await driveToDelivered({ orders, evidence }, 'key-1');
+    seedReturn(returns, 'TH-1001', orderId, 'Đã duyệt');
+    await expect(
+      orders.transition(
+        orderId,
+        { to: 'Hoàn', returnId: 'TH-1001' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('mô-đun trả hàng chưa được nối');
+    expect((await orders.findOne(orderId)).state).toBe('Đã giao');
+  });
+
+  it('gửi returnId cho chuyển không cần hướng xử lý thì báo 400', async () => {
+    const { orders, returns } = await buildServices();
+    const order = await orders.create(createInput('key-1'), COORDINATOR);
+    seedReturn(returns, 'TH-1001', order.id, 'Đã duyệt');
+    await expect(
+      orders.transition(
+        order.id,
+        { to: 'Đã kiểm tra', returnId: 'TH-1001' },
+        COORDINATOR,
+      ),
+    ).rejects.toThrow('chỉ dùng khi đóng đơn');
+    expect((await orders.findOne(order.id)).state).toBe('Mới tạo');
   });
 
   it('sửa khách của đơn mở thì được, ghi audit order.edit', async () => {

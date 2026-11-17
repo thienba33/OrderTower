@@ -23,10 +23,15 @@ import { InventoryService } from '../inventory/inventory.service';
 import { ApprovalService } from '../approvals/approval.service';
 import type { Approval } from '../approvals/approval.types';
 import { computeNextNumber } from '../db/id-counter';
+import type { Return } from '../returns/return.types';
 import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { InMemoryOrderStore, ORDER_STORE } from './orders.store';
 import type { OrderStore } from './orders.types';
+import {
+  ORDER_RETURN_GATE,
+  type OrderReturnGate,
+} from './order-return-gate';
 import {
   ORDER_SHIPMENT_GATE,
   type OrderShipmentGate,
@@ -113,6 +118,13 @@ export class OrdersService implements OnModuleInit {
     // vì không kiểm tra được khách thật.
     @Optional()
     private readonly customers?: CustomersService,
+    // Cổng đọc trả hàng tùy chọn, đặt sau cùng: có khi chạy qua mô-đun
+    // (ReturnsModule đăng ký adapter), không có khi dựng service bằng tay
+    // trong kiểm thử. Khi không có mà đóng đơn bằng returnId thì chặn
+    // luôn vì không kiểm tra được trả hàng thật.
+    @Optional()
+    @Inject(ORDER_RETURN_GATE)
+    private readonly returnGate?: OrderReturnGate,
   ) {}
 
   // Nạp 8 đơn mẫu qua đường dịch vụ thật (create rồi transition hợp lệ
@@ -485,7 +497,18 @@ export class OrdersService implements OnModuleInit {
       .getTransitions('order-flow')
       .find((item) => item.from === order.state && item.to === input.to);
     let consumeStock = false;
+    // Hướng xử lý dùng cho phần còn lại của luồng: chuỗi tự gõ, hoặc
+    // suy ra từ trả hàng đã duyệt khi đóng đơn bằng returnId.
+    let handling = input.handling;
     if (transition) {
+      if (
+        input.returnId !== undefined &&
+        !isNonEmptyString(input.returnId)
+      ) {
+        throw new BadRequestException(
+          'returnId phải là chuỗi không rỗng khi có.',
+        );
+      }
       if (
         transition.guard.includes('lý do') &&
         (input.reason === undefined || input.reason.trim() === '')
@@ -495,11 +518,22 @@ export class OrdersService implements OnModuleInit {
         );
       }
       if (transition.guard.includes('hướng xử lý')) {
-        if (input.handling === undefined || input.handling.trim() === '') {
+        if (isNonEmptyString(input.returnId)) {
+          // Đóng đơn bằng trả hàng đã duyệt: trả hàng thay cho hướng xử
+          // lý tự gõ, phần còn lại của luồng dùng hướng xử lý suy ra này.
+          const ret = await this.requireApprovedReturn(input.returnId, id);
+          handling = `Trả hàng ${ret.id} (${ret.status}): ${ret.reason}`;
+        } else if (input.handling === undefined || input.handling.trim() === '') {
           throw new BadRequestException(
             `Chuyển sang "${input.to}" cần có hướng xử lý (guard "${transition.guard}").`,
           );
         }
+      } else if (isNonEmptyString(input.returnId)) {
+        // returnId chỉ dùng khi đóng đơn; chuyển khác không cần hướng xử
+        // lý thì từ chối rõ ràng thay vì lặng lẽ bỏ qua.
+        throw new BadRequestException(
+          `returnId chỉ dùng khi đóng đơn: chuyển sang "${input.to}" không cần hướng xử lý.`,
+        );
       }
       if (transition.guard.includes('địa chỉ')) {
         const addressTrust = order.addressTrust;
@@ -567,7 +601,7 @@ export class OrdersService implements OnModuleInit {
       {
         to: input.to,
         ...(input.reason ? { reason: input.reason } : {}),
-        ...(input.handling ? { handling: input.handling } : {}),
+        ...(handling ? { handling } : {}),
       },
       caller,
       { skipRoleCheck: !checkRole },
@@ -582,7 +616,7 @@ export class OrdersService implements OnModuleInit {
       role: check.requiredRole ?? caller.roles[0] ?? '',
       at: updated.updatedAt,
       ...(input.reason ? { reason: input.reason } : {}),
-      ...(input.handling ? { handling: input.handling } : {}),
+      ...(handling ? { handling } : {}),
     });
     // Lưu đơn trước khi giữ hàng: giống bản bộ nhớ cũ, thay đổi trạng thái
     // đã nằm trong kho thì mới chạm tới kho hàng.
@@ -645,6 +679,38 @@ export class OrdersService implements OnModuleInit {
       throw new NotFoundException(`Không tìm thấy khách hàng ${customerId}.`);
     }
     return customerId;
+  }
+
+  // Trả hàng làm hướng xử lý khi đóng đơn: phải là trả hàng có thật,
+  // thuộc đúng đơn này, đã duyệt hoặc đã hoàn tiền (trả hàng đã hoàn
+  // tiền thì trước đó đã duyệt, vẫn là hướng xử lý hợp lệ). Mô-đun trả
+  // hàng vắng mặt (chỉ gặp khi dựng service bằng tay) thì chặn luôn vì
+  // không kiểm tra được trả hàng thật.
+  private async requireApprovedReturn(
+    returnId: string,
+    orderId: string,
+  ): Promise<Return> {
+    const gate = this.returnGate;
+    if (gate === undefined) {
+      throw new ConflictException(
+        `Không kiểm tra được trả hàng ${returnId} vì mô-đun trả hàng chưa được nối.`,
+      );
+    }
+    const ret = await gate.findById(returnId);
+    if (!ret) {
+      throw new BadRequestException(`Không tìm thấy trả hàng ${returnId}.`);
+    }
+    if (ret.orderId !== orderId) {
+      throw new BadRequestException(
+        `Trả hàng ${returnId} thuộc đơn ${ret.orderId}, không phải đơn ${orderId}.`,
+      );
+    }
+    if (ret.status !== 'Đã duyệt' && ret.status !== 'Đã hoàn tiền') {
+      throw new BadRequestException(
+        `Trả hàng ${returnId} đang ở trạng thái "${ret.status}", chỉ dùng trả hàng đã duyệt hoặc đã hoàn tiền làm hướng xử lý khi đóng đơn.`,
+      );
+    }
+    return ret;
   }
 
   // Sửa dữ liệu đơn. Đơn mở sửa trực tiếp; đơn đã đóng chỉ sửa khi có lý do
