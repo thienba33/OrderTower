@@ -386,6 +386,29 @@ async function buildServices(): Promise<{
     }),
   );
 
+  // Đơn có món hàng với SKU có trong kho nhưng chưa có giá: đơn giá về
+  // null, màn khách hiện "-" cho thành tiền dòng đó.
+  await orderStore.save(
+    makeOrder({
+      id: 'DH-1008',
+      phone: '0908888888',
+      items: [{ sku: 'MT-08', quantity: 1 }],
+      total: 0,
+      state: 'Mới tạo',
+      history: [
+        {
+          from: null,
+          to: 'Mới tạo',
+          by: 'seed',
+          role: 'Quản trị viên',
+          at: '2026-11-18T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-11-18T01:00:00.000Z',
+      updatedAt: '2026-11-18T01:00:00.000Z',
+    }),
+  );
+
   const tracking = new PublicTrackingService(
     orders,
     shipments,
@@ -478,7 +501,7 @@ describe('PublicTrackingService', () => {
       id: 'DH-1001',
       state: 'Đã giao',
       items: [
-        { sku: 'NM-25', quantity: 2, name: 'Nước mắm 25 độ 500ml' },
+        { sku: 'NM-25', quantity: 2, name: 'Nước mắm 25 độ 500ml', unitPrice: 93000 },
       ],
       total: 186000,
       deadline: '2026-11-20T10:00:00.000Z',
@@ -540,11 +563,19 @@ describe('PublicTrackingService', () => {
     ]);
   });
 
-  it('SKU không có trong kho thì tên món về null, không tự đặt tên', async () => {
+  it('SKU không có trong kho thì tên món và đơn giá về null, không tự đặt tên hay giá', async () => {
     const { tracking } = await buildServices();
     const result = await tracking.track('DH-1007', '0907777777');
     expect(result.order.items).toEqual([
-      { sku: 'XX-999', quantity: 1, name: null },
+      { sku: 'XX-999', quantity: 1, name: null, unitPrice: null },
+    ]);
+  });
+
+  it('SKU có trong kho nhưng chưa có giá thì đơn giá về null', async () => {
+    const { tracking } = await buildServices();
+    const result = await tracking.track('DH-1008', '0908888888');
+    expect(result.order.items).toEqual([
+      { sku: 'MT-08', quantity: 1, name: 'Mắm tôm 250g', unitPrice: null },
     ]);
   });
 

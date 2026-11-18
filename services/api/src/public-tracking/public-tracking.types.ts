@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AddressInput } from '../address/address.types';
 
-// 1 dòng hàng trả cho khách vãng lai: mã SKU, số lượng và tên sản phẩm
-// tra từ kho; null khi SKU không có trong kho, không bao giờ tự đặt tên.
+// 1 dòng hàng trả cho khách vãng lai: mã SKU, số lượng, tên sản phẩm và
+// đơn giá tra từ kho; tên và đơn giá null khi SKU không có trong kho
+// hoặc chưa có giá, không bao giờ tự đặt tên hay tự đặt giá.
 export interface PublicTrackingOrderItem {
   sku: string;
   quantity: number;
   name: string | null;
+  unitPrice: number | null;
 }
 
 // Phần đơn trả cho khách vãng lai: chỉ những gì màn Theo dõi đơn hàng cần

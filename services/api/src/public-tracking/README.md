@@ -26,7 +26,7 @@ không cần tài khoản. Đây là endpoint công khai duy nhất ngoài
     "id": "DH-1001",
     "state": "Đã giao",
     "items": [
-      { "sku": "NM-25", "quantity": 2, "name": "Nước mắm 25 độ 500ml" }
+      { "sku": "NM-25", "quantity": 2, "name": "Nước mắm 25 độ 500ml", "unitPrice": 93000 }
     ],
     "total": 186000,
     "deadline": "2026-11-20T10:00:00.000Z",
@@ -61,9 +61,10 @@ không cần tài khoản. Đây là endpoint công khai duy nhất ngoài
   của web nối lại thành chuỗi; null khi đơn không ghi địa chỉ. Có địa
   chỉ trong trả về vì khách đã chứng minh là chủ đơn bằng SĐT, để màn
   khách xem đủ như bản đăng nhập.
-- Mỗi dòng hàng có thêm `name` tra từ kho theo SKU, null khi SKU không
-  có trong kho (không tự đặt tên). Đơn giá từng dòng (`unitPrice`)
-  không trả ra ngoài, nên màn khách chưa tính được thành tiền từng dòng.
+- Mỗi dòng hàng có thêm `name` và `unitPrice` tra từ kho theo SKU, null
+  khi SKU không có trong kho hoặc chưa có giá (không tự đặt tên hay tự
+  đặt giá); màn khách tính thành tiền từng dòng bằng
+  `unitPrice * quantity`, giống màn đăng nhập, hiện "-" khi đơn giá null.
 - `timeline` là lịch sử trạng thái của đơn (mốc tạo + từng lần chuyển),
   xếp theo thời điểm. Lịch sử lấy từ trường `history` đã lưu trên đơn,
   cùng các lần chuyển mà audit log ghi lại (`order.created` và
@@ -82,7 +83,7 @@ không cần tài khoản. Đây là endpoint công khai duy nhất ngoài
 SĐT, tên khách, mã khách, khóa idempotency, id workflow, hash audit,
 mức tin cậy và mức phân loại địa chỉ, tên người chuyển đơn, lý do và
 hướng xử lý trong lịch sử, tên người ghi sự kiện và vai của họ, thông
-tin phân đơn, đơn giá từng dòng hàng.
+tin phân đơn.
 
 ## Hạn chế đã biết
 

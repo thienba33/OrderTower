@@ -70,15 +70,19 @@ export class PublicTrackingService {
     const [shipments, events, items] = await Promise.all([
       this.shipments.list({ orderId: order.id }),
       this.events.list({ orderId: order.id }),
-      // Tên sản phẩm tra từng SKU trong kho, giống cách màn Theo dõi của
-      // web hiện tên thay mã SKU; SKU không có trong kho thì tên null,
-      // không tự đặt tên.
+      // Tên và đơn giá từng dòng tra từ kho theo SKU, cùng 1 lần gọi
+      // như khi tính tổng đơn lúc tạo; SKU không có trong kho hoặc chưa
+      // có giá thì về null, màn khách hiện "-" cho thành tiền dòng đó.
       Promise.all(
-        order.items.map(async (item) => ({
-          sku: item.sku,
-          quantity: item.quantity,
-          name: (await this.inventory.get(item.sku))?.name ?? null,
-        })),
+        order.items.map(async (item) => {
+          const held = await this.inventory.get(item.sku);
+          return {
+            sku: item.sku,
+            quantity: item.quantity,
+            name: held?.name ?? null,
+            unitPrice: held?.unitPrice ?? null,
+          };
+        }),
       ),
     ]);
     const shipment = latestShipment(shipments);
