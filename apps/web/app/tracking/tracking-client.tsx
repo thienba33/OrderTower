@@ -5,14 +5,14 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ORDER_STATUS_PILL, formatMoney, type OrderStatus } from "@/data/orders";
 import type {
-  ApiOrderDetail,
-  TrackingLookupResult,
+  PublicTrackingOrder,
+  PublicTrackingResult,
+  PublicTrackingTimelineEntry,
   TrackingStep,
 } from "./tracking-types";
-import type { ApiOrderHistoryEntry } from "../orders/[id]/order-detail-types";
 
 // 9 trạng thái theo thứ tự định nghĩa luồng. Bước Hủy chỉ hiện khi đơn ở
-// trạng thái Hủy; bước cờ địa chỉ nội bộ không hiện cho khách (như bản mẫu).
+// trạng thái Hủy.
 const STATE_ORDER = [
   "Mới tạo",
   "Đã kiểm tra",
@@ -61,7 +61,7 @@ function formatDateTime(iso: string): string {
   }).format(date);
 }
 
-function formatAddress(order: ApiOrderDetail): string {
+function formatAddress(order: PublicTrackingOrder): string {
   const address = order.address;
   if (!address) return "-";
   const parts = [address.street, address.ward, address.district, address.province].filter(
@@ -70,27 +70,28 @@ function formatAddress(order: ApiOrderDetail): string {
   return parts.length > 0 ? parts.join(", ") : "-";
 }
 
-// Timeline từ history của đơn: bước nào đã qua thì done, bước hiện tại
-// thì current, chưa tới thì pending; giờ lấy từ mục history có to == tên
-// bước, lấy at mới nhất. Mô tả ưu tiên lý do/hướng xử lý ghi trong history.
-function buildSteps(order: ApiOrderDetail): TrackingStep[] {
+// Timeline từ endpoint công khai chỉ có trạng thái và thời điểm, không có
+// lý do/hướng xử lý nội bộ nên mô tả bước lấy từ bảng mô tả chung.
+function buildSteps(
+  order: PublicTrackingOrder,
+  timeline: PublicTrackingTimelineEntry[],
+): TrackingStep[] {
   const stateOrder = STATE_ORDER as readonly string[];
   const currentIndex = stateOrder.indexOf(order.state);
   const shown = STATE_ORDER.filter((state) => state !== "Hủy" || order.state === "Hủy");
   return shown.map((title) => {
     const index = stateOrder.indexOf(title);
-    let entry: ApiOrderHistoryEntry | undefined;
-    for (let i = order.history.length - 1; i >= 0; i -= 1) {
-      if (order.history[i].to === title) {
-        entry = order.history[i];
+    let entry: PublicTrackingTimelineEntry | undefined;
+    for (let i = timeline.length - 1; i >= 0; i -= 1) {
+      if (timeline[i].state === title) {
+        entry = timeline[i];
         break;
       }
     }
     const state: TrackingStep["state"] =
       index < currentIndex ? "done" : index === currentIndex ? "current" : "todo";
-    const detail = entry ? [entry.reason, entry.handling].filter(Boolean).join("; ") : "";
-    let description = detail.length > 0 ? detail : STEP_DESCRIPTIONS[title];
-    if (title === "Đang giao" && detail.length === 0 && order.deadline) {
+    let description = STEP_DESCRIPTIONS[title];
+    if (title === "Đang giao" && order.deadline) {
       description = `Tài xế đang trên đường giao, mốc giao ${formatTime(order.deadline)}.`;
     }
     return { title, time: entry ? formatTime(entry.at) : null, description, state };
@@ -109,34 +110,21 @@ function StepDot({ state }: { state: TrackingStep["state"] }) {
 
 export default function TrackingClient() {
   const [query, setQuery] = useState("");
-  const [result, setResult] = useState<TrackingLookupResult | null>(null);
-  const [searched, setSearched] = useState("");
-  const [notFound, setNotFound] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [result, setResult] = useState<PublicTrackingResult | null>(null);
   const [error, setError] = useState("");
-  const [authError, setAuthError] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const lookup = async () => {
     const code = query.trim().toUpperCase();
-    if (!code || loading) return;
+    const phoneNumber = phone.trim();
+    if (!code || !phoneNumber || loading) return;
     setLoading(true);
     setError("");
-    setAuthError(false);
-    setNotFound(false);
     try {
-      const response = await fetch(`/api/tracking/${encodeURIComponent(code)}`);
-      if (response.status === 404) {
-        setResult(null);
-        setSearched(code);
-        setNotFound(true);
-        return;
-      }
-      if (response.status === 401) {
-        setResult(null);
-        setAuthError(true);
-        setError("Phiên đăng nhập đã hết hạn.");
-        return;
-      }
+      const response = await fetch(
+        `/api/public/tracking?orderId=${encodeURIComponent(code)}&phone=${encodeURIComponent(phoneNumber)}`,
+      );
       if (!response.ok) {
         const data: unknown = await response.json().catch(() => null);
         const message = (data as { message?: unknown } | null)?.message;
@@ -149,9 +137,7 @@ export default function TrackingClient() {
         return;
       }
       const data: unknown = await response.json();
-      setResult(data as TrackingLookupResult);
-      setSearched(code);
-      setNotFound(false);
+      setResult(data as PublicTrackingResult);
     } catch {
       setError("Không gọi được máy chủ.");
       setResult(null);
@@ -160,25 +146,23 @@ export default function TrackingClient() {
     }
   };
 
-  const steps = useMemo(() => (result ? buildSteps(result.order) : []), [result]);
+  const steps = useMemo(
+    () => (result ? buildSteps(result.order, result.timeline) : []),
+    [result],
+  );
 
   const events = useMemo(
     () =>
       result
-        ? [...result.events].sort((a, b) => a.at.localeCompare(b.at))
+        ? [...result.deliveryEvents].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         : [],
-    [result],
-  );
-
-  const productBySku = useMemo(
-    () => new Map(result?.products.map((product) => [product.sku, product]) ?? []),
     [result],
   );
 
   const driverText = useMemo(() => {
     const shipment = result?.shipment ?? null;
     if (!shipment) return "Chưa điều xe";
-    const parts = [result?.driverName ?? shipment.driverId, result?.vehiclePlate ?? shipment.vehicleId].filter(
+    const parts = [shipment.driverName, shipment.vehiclePlate].filter(
       (part): part is string => typeof part === "string" && part.length > 0,
     );
     return parts.length > 0 ? parts.join(" - ") : "Chưa điều xe";
@@ -186,13 +170,14 @@ export default function TrackingClient() {
 
   const order = result?.order ?? null;
   const delivered = order !== null && (order.state === "Đã giao" || order.state === "Hoàn");
-  const proofKey = result?.shipment?.proofPhotoKey ?? null;
+  const proofKey = result?.proofPhotoKey ?? null;
+  const canSearch = query.trim().length > 0 && phone.trim().length > 0;
 
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-2xl font-semibold text-gray-900">Theo dõi đơn hàng</h1>
 
-      <div className="flex items-center gap-3 rounded-lg border bg-white p-4">
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-white p-4">
         <input
           type="text"
           value={query}
@@ -202,35 +187,32 @@ export default function TrackingClient() {
           }}
           placeholder="Nhập mã đơn, ví dụ DH-1044"
           aria-label="Mã đơn cần tra cứu"
-          className="h-11 w-[480px] max-w-full rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+          className="h-11 w-[280px] max-w-full rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+        />
+        <input
+          type="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void lookup();
+          }}
+          placeholder="Số điện thoại đặt hàng"
+          aria-label="Số điện thoại đặt hàng"
+          className="h-11 w-[240px] max-w-full rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
         />
         <button
           type="button"
           onClick={() => void lookup()}
-          disabled={query.trim().length === 0 || loading}
+          disabled={!canSearch || loading}
           className="flex h-9 shrink-0 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
           {loading ? "Đang tra..." : "Tra cứu"}
         </button>
       </div>
 
-      {notFound && (
-        <div className="rounded-lg border bg-white p-4">
-          <p className="text-sm font-medium text-gray-900">Không tìm thấy đơn {searched}</p>
-          <p className="mt-1 text-sm text-gray-500">Kiểm tra lại mã đơn, ví dụ DH-1044.</p>
-        </div>
-      )}
-
       {error && (
         <div className="rounded-lg border bg-white p-4">
-          <p className="text-sm text-gray-700">
-            {error}{" "}
-            {authError && (
-              <Link href="/api/auth/login" className="font-medium text-red-700 underline">
-                Đăng nhập lại
-              </Link>
-            )}
-          </p>
+          <p className="text-sm text-gray-700">{error}</p>
         </div>
       )}
 
@@ -271,18 +253,17 @@ export default function TrackingClient() {
             <section className="rounded-lg border bg-white p-4">
               <h2 className="text-sm font-semibold text-gray-900">Nhật ký giao hàng</h2>
               <div className="mt-2 flex flex-col">
-                {events.map((event) => (
-                  <div key={event.id} className="flex items-center gap-3 py-2.5">
+                {events.map((event, index) => (
+                  <div key={`${event.type}-${event.createdAt}-${index}`} className="flex items-center gap-3 py-2.5">
                     <span aria-hidden="true" className="size-2.5 shrink-0 rounded-full bg-green-600" />
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <div className="flex items-center gap-2">
                         <p className="flex-1 text-sm font-medium text-gray-900">{event.type}</p>
-                        <p className="shrink-0 text-xs text-gray-500">{formatDateTime(event.at)}</p>
+                        <p className="shrink-0 text-xs text-gray-500">{formatDateTime(event.createdAt)}</p>
                       </div>
-                      <p className="text-xs text-gray-500">
-                        {event.by} ({event.role})
-                        {event.note ? ` - ${event.note}` : ""}
-                      </p>
+                      {event.note ? (
+                        <p className="text-xs text-gray-500">{event.note}</p>
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -295,14 +276,11 @@ export default function TrackingClient() {
               <h2 className="text-sm font-semibold text-gray-900">Hàng hóa</h2>
               <div className="mt-3 flex flex-col gap-3">
                 {order.items.map((item) => {
-                  const product = productBySku.get(item.sku);
                   const lineTotal =
-                    product && product.unitPrice !== null
-                      ? formatMoney(product.unitPrice * item.quantity)
-                      : "-";
+                    item.unitPrice !== null ? formatMoney(item.unitPrice * item.quantity) : "-";
                   return (
                     <div key={item.sku} className="flex items-center gap-2 text-[13px] text-gray-800">
-                      <p className="min-w-0 flex-1">{product?.name ?? item.sku}</p>
+                      <p className="min-w-0 flex-1">{item.name ?? item.sku}</p>
                       <p className="shrink-0 font-medium">
                         x{item.quantity} - {lineTotal}
                       </p>

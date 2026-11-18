@@ -7,7 +7,7 @@ import { cookies } from 'next/headers';
 // được gọi API trực tiếp; mọi lời gọi đều đi qua code server của Next.js,
 // kèm token lấy từ cookie httpOnly.
 
-const API_BASE_URL =
+export const API_BASE_URL =
   process.env.API_BASE_URL ?? 'http://localhost:9080/api';
 
 export class ApiError extends Error {
