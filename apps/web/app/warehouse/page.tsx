@@ -6,7 +6,9 @@ import { getSession } from "@/lib/auth";
 import { canAccessScreen } from "@/lib/roles";
 import { AccessDenied } from "@/components/layout/AccessDenied";
 import WarehouseClient from "./warehouse-client";
-import type { ApiInventoryItem } from "./warehouse-types";
+import type { ApiInventoryItem, PackingQueueError } from "./warehouse-types";
+import type { ApiAssignment } from "../customer-care/customer-care-types";
+import type { ApiOrder } from "../orders/orders-types";
 
 // Lấy danh sách tồn kho từ API. Lỗi HTTP hoặc dữ liệu không phải mảng thì
 // ném ApiError để trang quyết định hiện nhắc đăng nhập hay báo lỗi.
@@ -20,6 +22,19 @@ async function fetchInventory(): Promise<ApiInventoryItem[]> {
     throw new ApiError(response.status, "API trả về dữ liệu không đúng dạng.");
   }
   return data as ApiInventoryItem[];
+}
+
+// Lấy danh sách từ API, trả về mảng đã kiểm tra dạng.
+async function fetchList<T>(path: string): Promise<T[]> {
+  const response = await apiFetch(path);
+  if (!response.ok) {
+    throw new ApiError(response.status, `API trả về ${response.status}.`);
+  }
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) {
+    throw new ApiError(response.status, "API trả về dữ liệu không đúng dạng.");
+  }
+  return data as T[];
 }
 
 export default async function KhoPage() {
@@ -62,5 +77,39 @@ export default async function KhoPage() {
     );
   }
 
-  return <WarehouseClient items={items} />;
+  // Hàng đợi phân đơn của nhân viên kho: chỉ tải khi người xem có vai
+  // nhân viên kho; lỗi tải thì hiện trạng thái lỗi ở mục đó, không chặn
+  // trang (tồn kho đã tải được ở trên).
+  const showQueue = session.roles.includes("Nhân viên kho");
+  let myAssignments: ApiAssignment[] = [];
+  let myOrders: ApiOrder[] = [];
+  let queueError: PackingQueueError | null = null;
+  if (showQueue) {
+    try {
+      const [assignmentList, orderList] = await Promise.all([
+        fetchList<ApiAssignment>(
+          `/assignments?kind=warehouse&assignedTo=${encodeURIComponent(session.username)}`,
+        ),
+        fetchList<ApiOrder>("/orders"),
+      ]);
+      myAssignments = assignmentList;
+      myOrders = orderList;
+    } catch (error) {
+      queueError =
+        error instanceof ApiError && error.status === 401
+          ? "unauthorized"
+          : "load-failed";
+    }
+  }
+
+  return (
+    <WarehouseClient
+      items={items}
+      myAssignments={myAssignments}
+      myOrders={myOrders}
+      queueError={queueError}
+      showQueue={showQueue}
+      username={session.username}
+    />
+  );
 }

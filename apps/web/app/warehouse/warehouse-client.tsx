@@ -1,6 +1,8 @@
 "use client";
 
 // SPDX-License-Identifier: Apache-2.0
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Pagination } from "@/components/ui/Pagination";
 import { Table, type TableColumn } from "@/components/ui/Table";
@@ -10,10 +12,40 @@ import {
   WAREHOUSE_STATUS_PILL,
   inventoryStatus,
   type ApiInventoryItem,
+  type PackingQueueError,
   type WarehouseRow,
 } from "./warehouse-types";
+import type {
+  ApiAssignment,
+  AssignmentStatus,
+} from "../customer-care/customer-care-types";
+import type { ApiOrder } from "../orders/orders-types";
 
 const PAGE_SIZE = 6;
+const QUEUE_PAGE_SIZE = 5;
+
+const ACTIVE_QUEUE_STATUSES: AssignmentStatus[] = ["Chờ xử lý", "Đang xử lý"];
+
+const QUEUE_STATUS_PILL: Record<AssignmentStatus, string> = {
+  "Chờ xử lý": "bg-amber-50 text-amber-800",
+  "Đang xử lý": "bg-green-50 text-green-700",
+  "Hoàn thành": "bg-blue-50 text-blue-700",
+  "Đã hủy": "bg-gray-50 text-gray-700",
+};
+
+interface PackingQueueRow {
+  assignment: ApiAssignment;
+  order: ApiOrder | null;
+}
+
+interface WarehouseClientProps {
+  items: ApiInventoryItem[];
+  myAssignments: ApiAssignment[];
+  myOrders: ApiOrder[];
+  queueError: PackingQueueError | null;
+  showQueue: boolean;
+  username: string;
+}
 
 function toRow(item: ApiInventoryItem): WarehouseRow {
   return { ...item, status: inventoryStatus(item), total: item.stock + item.reserved };
@@ -39,11 +71,165 @@ const warehouseColumns: TableColumn<WarehouseRow>[] = [
   },
 ];
 
-export default function WarehouseClient({ items }: { items: ApiInventoryItem[] }) {
+export default function WarehouseClient({
+  items,
+  myAssignments,
+  myOrders,
+  queueError,
+  showQueue,
+  username,
+}: WarehouseClientProps) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [selectedSku, setSelectedSku] = useState<string | null>(items[0]?.sku ?? null);
+
+  // Hàng đợi phân đơn của nhân viên kho đang đăng nhập: phân đơn kho
+  // đang hoạt động, mới nhất lên trước. Đơn không tìm thấy (không bao
+  // giờ bị xóa) thì vẫn hiện phân đơn với trạng thái đơn là "-".
+  const myQueue = useMemo<PackingQueueRow[]>(() => {
+    const orderById = new Map(myOrders.map((order) => [order.id, order]));
+    return myAssignments
+      .filter(
+        (item) =>
+          item.kind === "warehouse" &&
+          item.assignedTo === username &&
+          ACTIVE_QUEUE_STATUSES.includes(item.status),
+      )
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+      .map((assignment) => ({
+        assignment,
+        order: orderById.get(assignment.orderId) ?? null,
+      }));
+  }, [myAssignments, myOrders, username]);
+
+  const [queuePage, setQueuePage] = useState(1);
+  const [queueBusyId, setQueueBusyId] = useState<string | null>(null);
+  const [queueErrorText, setQueueErrorText] = useState("");
+
+  const queueTotalPages = Math.max(
+    1,
+    Math.ceil(myQueue.length / QUEUE_PAGE_SIZE),
+  );
+  const queueSafePage = Math.min(queuePage, queueTotalPages);
+  const queuePaged = myQueue.slice(
+    (queueSafePage - 1) * QUEUE_PAGE_SIZE,
+    queueSafePage * QUEUE_PAGE_SIZE,
+  );
+  const queueRange =
+    myQueue.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (queueSafePage - 1) * QUEUE_PAGE_SIZE + 1,
+          end: Math.min(queueSafePage * QUEUE_PAGE_SIZE, myQueue.length),
+          total: myQueue.length,
+        };
+
+  // Bắt đầu hoặc hoàn thành phân đơn qua route nội bộ; lỗi hiện message
+  // của API, xong thì tải lại dữ liệu server.
+  const submitQueueAction = async (
+    assignmentId: string,
+    action: "start" | "complete",
+  ) => {
+    setQueueBusyId(`${action}-${assignmentId}`);
+    setQueueErrorText("");
+    try {
+      const response = await fetch(`/api/assignments/${assignmentId}/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setQueueErrorText(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Thao tác lỗi (${response.status}).`,
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setQueueErrorText("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setQueueBusyId(null);
+    }
+  };
+
+  const queueColumns: TableColumn<PackingQueueRow>[] = [
+    {
+      key: "id",
+      header: "Mã đơn",
+      render: (row) => (
+        <span className="font-medium text-gray-900">{row.assignment.orderId}</span>
+      ),
+      cellClassName: "w-[109px]",
+    },
+    {
+      key: "state",
+      header: "Trạng thái đơn",
+      render: (row) => row.order?.state ?? "-",
+      cellClassName: "w-[149px]",
+    },
+    {
+      key: "items",
+      header: "Sản phẩm",
+      render: (row) => {
+        const item = row.order?.items[0];
+        return item === undefined ? "-" : `${item.sku} x${item.quantity}`;
+      },
+      cellClassName: "w-[179px]",
+    },
+    {
+      key: "status",
+      header: "Trạng thái phân đơn",
+      render: (row) => (
+        <span
+          className={`inline-flex h-[22px] items-center whitespace-nowrap rounded-full px-2.5 text-xs font-medium ${QUEUE_STATUS_PILL[row.assignment.status]}`}
+        >
+          {row.assignment.status}
+        </span>
+      ),
+      cellClassName: "w-[139px]",
+    },
+    {
+      key: "actions",
+      header: "Hành động",
+      render: (row) => (
+        <span className="flex flex-wrap items-center gap-2">
+          {row.assignment.status === "Chờ xử lý" && (
+            <button
+              type="button"
+              disabled={queueBusyId !== null}
+              onClick={() => void submitQueueAction(row.assignment.id, "start")}
+              className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:opacity-50"
+            >
+              {queueBusyId === `start-${row.assignment.id}` ? "Đang bắt đầu..." : "Bắt đầu"}
+            </button>
+          )}
+          {row.assignment.status === "Đang xử lý" && (
+            <button
+              type="button"
+              disabled={queueBusyId !== null}
+              onClick={() => void submitQueueAction(row.assignment.id, "complete")}
+              className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:opacity-50"
+            >
+              {queueBusyId === `complete-${row.assignment.id}` ? "Đang hoàn thành..." : "Hoàn thành"}
+            </button>
+          )}
+          <Link
+            href={`/orders/${row.assignment.orderId}`}
+            className="text-xs font-medium text-red-700 underline"
+          >
+            Xem đơn
+          </Link>
+        </span>
+      ),
+      cellClassName: "w-[219px]",
+    },
+  ];
 
   const rows = useMemo(() => items.map(toRow), [items]);
 
@@ -108,6 +294,58 @@ export default function WarehouseClient({ items }: { items: ApiInventoryItem[] }
           </div>
         ))}
       </div>
+
+      {showQueue && (
+        <section aria-label="Đơn được phân công" className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+          <div className="flex h-11 items-center px-4">
+            <p className="flex-1 text-sm font-semibold text-gray-900">
+              Đơn được phân công - Việc của tôi
+            </p>
+            <p className="text-xs text-gray-500">
+              Chuyển trạng thái đóng gói (Chờ kho -&gt; Đang đóng gói -&gt; Chờ
+              điều xe) thực hiện ở chi tiết đơn.
+            </p>
+          </div>
+          {queueError !== null ? (
+            <p className="border-t border-gray-200 px-4 py-6 text-sm text-gray-700">
+              {queueError === "unauthorized" ? (
+                <>
+                  Phiên đăng nhập đã hết hạn.{" "}
+                  <Link href="/api/auth/login" className="font-medium text-red-700 underline">
+                    Đăng nhập lại
+                  </Link>{" "}
+                  để xem đơn được phân công từ API.
+                </>
+              ) : (
+                "Không tải được đơn được phân công. Tải lại trang để thử lại."
+              )}
+            </p>
+          ) : (
+            <>
+              <Table
+                bare
+                columns={queueColumns}
+                rows={queuePaged}
+                rowKey={(row) => row.assignment.id}
+                emptyText="Chưa có đơn nào được phân công cho bạn"
+              />
+              <div className="border-t border-gray-200">
+                <Pagination
+                  page={queueSafePage}
+                  totalPages={queueTotalPages}
+                  onPageChange={setQueuePage}
+                  range={queueRange}
+                />
+              </div>
+              {queueErrorText !== "" && (
+                <p className="border-t border-gray-200 px-4 py-3 text-sm text-red-700">
+                  {queueErrorText}
+                </p>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       {lowRows.length > 0 && lowest !== null && (
         <div className="rounded-lg border border-gray-200 bg-white">
