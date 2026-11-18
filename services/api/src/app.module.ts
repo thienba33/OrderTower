@@ -12,6 +12,7 @@ import { CustomersModule } from './customers/customer.module';
 import { DeliveryEventsModule } from './delivery-events/delivery-event.module';
 import { DriversModule } from './drivers/driver.module';
 import { OrdersModule } from './orders/orders.module';
+import { PublicTrackingModule } from './public-tracking/public-tracking.module';
 import { RestrictedFlagModule } from './restricted-flags/restricted-flag.module';
 import { ReturnsModule } from './returns/return.module';
 import { ShipmentsModule } from './shipments/shipment.module';
@@ -29,6 +30,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     DeliveryEventsModule,
     DriversModule,
     OrdersModule,
+    PublicTrackingModule,
     RestrictedFlagModule,
     ReturnsModule,
     ShipmentsModule,
