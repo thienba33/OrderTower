@@ -39,6 +39,11 @@ export const WAREHOUSE_STATUS_PILL: Record<WarehouseStatus, string> = {
   "Đủ hàng": INVENTORY_STATUS_PILL["Đủ hàng"],
 };
 
+// Lỗi tải hàng đợi phân đơn của nhân viên kho: hết phiên thì hiện
+// link đăng nhập lại, lỗi khác thì báo tải lại trang. null là tải
+// được. Cùng quy ước như ReturnsError của màn Chăm sóc khách hàng.
+export type PackingQueueError = "unauthorized" | "load-failed";
+
 export interface WarehouseRow extends ApiInventoryItem {
   status: WarehouseStatus;
   total: number;
