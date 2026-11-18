@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { canAccessScreen } from "@/lib/roles";
 import { AccessDenied } from "@/components/layout/AccessDenied";
 import TrackingClient from "./tracking-client";
 
-// Tra cứu đơn cần đăng nhập vì API chỉ mở GET /api/health cho khách vãng
-// lai, mọi endpoint đơn/sự kiện/shipment đều cần token. Muốn khách tra cứu
-// không cần đăng nhập thì cần thêm endpoint công khai ở API, làm riêng sau.
+// Theo dõi đơn hàng mở cho khách vãng lai: endpoint công khai chỉ cần mã
+// đơn + SĐT lúc đặt đơn, không cần đăng nhập. Người đã đăng nhập vẫn qua
+// kiểm tra vai như mọi màn; khách chưa đăng nhập xem trực tiếp, không
+// chuyển sang trang đăng nhập.
 export default async function TrackingPage() {
   const session = await getSession();
-  if (!session) {
-    redirect("/api/auth/login");
-  }
 
-  if (!canAccessScreen("/tracking", session.roles)) {
+  if (session && !canAccessScreen("/tracking", session.roles)) {
     return <AccessDenied roles={session.roles} screenLabel="Theo dõi đơn hàng" />;
   }
 
