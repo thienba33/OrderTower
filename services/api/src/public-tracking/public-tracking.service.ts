@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
 import { DriversService } from '../drivers/driver.service';
+import { InventoryService } from '../inventory/inventory.service';
 import type { Order } from '../orders/orders.types';
 import { OrdersService } from '../orders/orders.service';
 import type { Shipment } from '../shipments/shipment.types';
@@ -48,6 +49,7 @@ export class PublicTrackingService {
     private readonly events: DeliveryEventsService,
     private readonly drivers: DriversService,
     private readonly vehicles: VehiclesService,
+    private readonly inventory: InventoryService,
   ) {}
 
   async track(
@@ -65,23 +67,34 @@ export class PublicTrackingService {
     if (order.phone === null || order.phone.trim() !== phone) {
       throw new NotFoundException(NOT_FOUND_MESSAGE);
     }
-    const [shipments, events] = await Promise.all([
+    const [shipments, events, items] = await Promise.all([
       this.shipments.list({ orderId: order.id }),
       this.events.list({ orderId: order.id }),
+      // Tên sản phẩm tra từng SKU trong kho, giống cách màn Theo dõi của
+      // web hiện tên thay mã SKU; SKU không có trong kho thì tên null,
+      // không tự đặt tên.
+      Promise.all(
+        order.items.map(async (item) => ({
+          sku: item.sku,
+          quantity: item.quantity,
+          name: (await this.inventory.get(item.sku))?.name ?? null,
+        })),
+      ),
     ]);
     const shipment = latestShipment(shipments);
     return {
       order: {
         id: order.id,
         state: order.state,
-        items: order.items.map((item) => ({
-          sku: item.sku,
-          quantity: item.quantity,
-        })),
+        items,
         total: order.total,
         deadline: order.deadline,
         createdAt: order.createdAt,
         channelId: order.channelId,
+        // Địa chỉ giao hàng nguyên các phần như đơn đã lưu, đúng dạng
+        // màn Theo dõi của web nối lại thành chuỗi; đơn không ghi địa
+        // chỉ thì null. Mức tin cậy địa chỉ không trả ra ngoài.
+        address: order.address ?? null,
       },
       // Lịch sử trạng thái đơn đã lưu trên đơn (mốc tạo + từng lần
       // chuyển, cùng các chuyển mà audit log ghi lại): chỉ lấy trạng

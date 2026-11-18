@@ -1,17 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { OrderItem } from '../orders/orders.types';
+import type { AddressInput } from '../address/address.types';
+
+// 1 dòng hàng trả cho khách vãng lai: mã SKU, số lượng và tên sản phẩm
+// tra từ kho; null khi SKU không có trong kho, không bao giờ tự đặt tên.
+export interface PublicTrackingOrderItem {
+  sku: string;
+  quantity: number;
+  name: string | null;
+}
 
 // Phần đơn trả cho khách vãng lai: chỉ những gì màn Theo dõi đơn hàng cần
 // để vẽ tiến trình, hàng hóa và giao hàng. Không bao giờ mang SĐT, tên
-// khách, địa chỉ, mã khách, khóa idempotency hay id workflow.
+// khách, mã khách, khóa idempotency hay id workflow. Địa chỉ giao hàng có
+// trong trả về vì khách đã chứng minh là chủ đơn bằng SĐT lúc đặt đơn;
+// mức tin cậy địa chỉ thì không trả vì đó là đánh giá nội bộ.
 export interface PublicTrackingOrder {
   id: string;
   state: string;
-  items: OrderItem[];
+  items: PublicTrackingOrderItem[];
   total: number;
   deadline: string | null;
   createdAt: string;
   channelId: string | null;
+  address: AddressInput | null;
 }
 
 // 1 mốc trạng thái của đơn: trạng thái mới và thời điểm chuyển tới đó.

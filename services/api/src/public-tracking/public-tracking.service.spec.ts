@@ -221,7 +221,17 @@ async function buildServices(): Promise<{
   const events = new DeliveryEventsService(audit, eventStore);
 
   // Đơn đã giao đủ shipment, sự kiện, tài xế và xe.
-  await orderStore.save(makeOrder({ id: 'DH-1001' }));
+  await orderStore.save(
+    makeOrder({
+      id: 'DH-1001',
+      address: {
+        street: '12 Ngõ 34 Đường Lê Lợi',
+        ward: 'Phường Hàng Bài',
+        district: 'Quận Hoàn Kiếm',
+        province: 'Hà Nội',
+      },
+    }),
+  );
   await shipmentStore.save(
     makeShipment({
       id: 'GH-1000',
@@ -354,12 +364,35 @@ async function buildServices(): Promise<{
     }),
   );
 
+  // Đơn có món hàng với SKU không có trong kho: tên món về null.
+  await orderStore.save(
+    makeOrder({
+      id: 'DH-1007',
+      phone: '0907777777',
+      items: [{ sku: 'XX-999', quantity: 1 }],
+      total: 0,
+      state: 'Mới tạo',
+      history: [
+        {
+          from: null,
+          to: 'Mới tạo',
+          by: 'seed',
+          role: 'Quản trị viên',
+          at: '2026-11-18T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-11-18T01:00:00.000Z',
+      updatedAt: '2026-11-18T01:00:00.000Z',
+    }),
+  );
+
   const tracking = new PublicTrackingService(
     orders,
     shipments,
     events,
     drivers,
     vehicles,
+    inventory,
   );
   return { tracking };
 }
@@ -444,11 +477,19 @@ describe('PublicTrackingService', () => {
     expect(result.order).toEqual({
       id: 'DH-1001',
       state: 'Đã giao',
-      items: [{ sku: 'NM-25', quantity: 2 }],
+      items: [
+        { sku: 'NM-25', quantity: 2, name: 'Nước mắm 25 độ 500ml' },
+      ],
       total: 186000,
       deadline: '2026-11-20T10:00:00.000Z',
       createdAt: '2026-11-18T01:00:00.000Z',
       channelId: 'K-1001',
+      address: {
+        street: '12 Ngõ 34 Đường Lê Lợi',
+        ward: 'Phường Hàng Bài',
+        district: 'Quận Hoàn Kiếm',
+        province: 'Hà Nội',
+      },
     });
     expect(result.timeline).toEqual([
       { state: 'Mới tạo', at: '2026-11-18T01:00:00.000Z' },
@@ -492,8 +533,18 @@ describe('PublicTrackingService', () => {
     expect(result.shipment).toBeNull();
     expect(result.deliveryEvents).toEqual([]);
     expect(result.proofPhotoKey).toBeNull();
+    // Đơn không ghi địa chỉ thì trả null, không bịa địa chỉ.
+    expect(result.order.address).toBeNull();
     expect(result.timeline).toEqual([
       { state: 'Mới tạo', at: '2026-11-18T01:00:00.000Z' },
+    ]);
+  });
+
+  it('SKU không có trong kho thì tên món về null, không tự đặt tên', async () => {
+    const { tracking } = await buildServices();
+    const result = await tracking.track('DH-1007', '0907777777');
+    expect(result.order.items).toEqual([
+      { sku: 'XX-999', quantity: 1, name: null },
     ]);
   });
 

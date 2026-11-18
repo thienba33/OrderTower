@@ -25,11 +25,19 @@ không cần tài khoản. Đây là endpoint công khai duy nhất ngoài
   "order": {
     "id": "DH-1001",
     "state": "Đã giao",
-    "items": [{ "sku": "NM-25", "quantity": 2 }],
+    "items": [
+      { "sku": "NM-25", "quantity": 2, "name": "Nước mắm 25 độ 500ml" }
+    ],
     "total": 186000,
     "deadline": "2026-11-20T10:00:00.000Z",
     "createdAt": "2026-11-18T01:00:00.000Z",
-    "channelId": "K-1001"
+    "channelId": "K-1001",
+    "address": {
+      "street": "12 Ngõ 34 Đường Lê Lợi",
+      "ward": "Phường Hàng Bài",
+      "district": "Quận Hoàn Kiếm",
+      "province": "Hà Nội"
+    }
   },
   "timeline": [
     { "state": "Mới tạo", "at": "2026-11-18T01:00:00.000Z" },
@@ -48,6 +56,14 @@ không cần tài khoản. Đây là endpoint công khai duy nhất ngoài
 }
 ```
 
+- `order.address` là địa chỉ giao hàng nguyên các phần như đơn đã lưu
+  (`street`, `ward`, `district`, `province`), đúng dạng màn Theo dõi
+  của web nối lại thành chuỗi; null khi đơn không ghi địa chỉ. Có địa
+  chỉ trong trả về vì khách đã chứng minh là chủ đơn bằng SĐT, để màn
+  khách xem đủ như bản đăng nhập.
+- Mỗi dòng hàng có thêm `name` tra từ kho theo SKU, null khi SKU không
+  có trong kho (không tự đặt tên). Đơn giá từng dòng (`unitPrice`)
+  không trả ra ngoài, nên màn khách chưa tính được thành tiền từng dòng.
 - `timeline` là lịch sử trạng thái của đơn (mốc tạo + từng lần chuyển),
   xếp theo thời điểm. Lịch sử lấy từ trường `history` đã lưu trên đơn,
   cùng các lần chuyển mà audit log ghi lại (`order.created` và
@@ -63,13 +79,10 @@ không cần tài khoản. Đây là endpoint công khai duy nhất ngoài
 
 ## Không trả ra ngoài
 
-SĐT, tên khách, địa chỉ giao hàng, mã khách, khóa idempotency, id
-workflow, hash audit, tên người chuyển đơn, lý do và hướng xử lý trong
-lịch sử, tên người ghi sự kiện và vai của họ, thông tin phân đơn. Địa
-chỉ và tên sản phẩm/đơn giá từng dòng không có trong trả về: màn Theo
-dõi đơn hàng của web hiện vẽ 2 mục đó từ dữ liệu đã xác thực, khi nối
-màn này thì bỏ dòng địa chỉ và hiện mã SKU thay tên sản phẩm (hoặc mở
-rộng endpoint sau, nếu Sơn chốt).
+SĐT, tên khách, mã khách, khóa idempotency, id workflow, hash audit,
+mức tin cậy và mức phân loại địa chỉ, tên người chuyển đơn, lý do và
+hướng xử lý trong lịch sử, tên người ghi sự kiện và vai của họ, thông
+tin phân đơn, đơn giá từng dòng hàng.
 
 ## Hạn chế đã biết
 

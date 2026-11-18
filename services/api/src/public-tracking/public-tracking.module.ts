@@ -2,6 +2,7 @@
 import { Module } from '@nestjs/common';
 import { DeliveryEventsModule } from '../delivery-events/delivery-event.module';
 import { DriversModule } from '../drivers/driver.module';
+import { InventoryModule } from '../inventory/inventory.module';
 import { OrdersModule } from '../orders/orders.module';
 import { ShipmentsModule } from '../shipments/shipment.module';
 import { VehiclesModule } from '../vehicles/vehicle.module';
@@ -19,6 +20,7 @@ import { PublicTrackingService } from './public-tracking.service';
     DeliveryEventsModule,
     DriversModule,
     VehiclesModule,
+    InventoryModule,
   ],
   controllers: [PublicTrackingController],
   providers: [PublicTrackingService],
