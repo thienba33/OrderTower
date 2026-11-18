@@ -19,6 +19,9 @@ export interface ApiOrder {
   total: number;
   deadline: string | null;
   channelId: string | null;
+  // Khách hàng nhận đơn, null khi đơn không ghi khách. Màn Danh sách
+  // hạn chế hiện mã khách này khi có, còn không thì tên khách.
+  customerId: string | null;
   addressTrust: number | null;
   addressLevel: ApiAddressLevel | null;
   state: string;
