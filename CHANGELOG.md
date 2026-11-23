@@ -33,3 +33,28 @@
 - Nối màn Kho (PR #42): bảng tồn kho theo SKU thật, trạng thái hiển thị theo ngưỡng 100; bỏ lô, hạn dùng, hàng đang về và đề xuất nhập.
 - Nối màn Phân tách địa chỉ (PR #43): tab chờ tách và xác nhận từ API thật, sửa địa chỉ tính lại độ tin cậy, bỏ số tin cậy 78 và 62 viết cứng.
 - Nối màn Quản trị (PR #44): bảng audit thật với hash đủ 64 ký tự, dòng xác minh chuỗi hash và bảng định nghĩa luồng; bỏ section người dùng và cài đặt vì không có API.
+- Nối màn Telesale (PR #46): tab đơn ưu tiên từ API thật, lọc theo quy tắc SLA (hạn giao quá hoặc trong 24 giờ, độ tin cậy địa chỉ dưới 70).
+- Tài liệu chuẩn bị Mốc 2 (PR #47): cập nhật CHANGELOG, tài liệu kiến trúc, SBOM cho web và runbook demo.
+- Dockerfile cho web (PR #48): build web bằng Docker với `output: standalone`, thêm `KEYCLOAK_INTERNAL_URL` cho gọi nội bộ trong Compose.
+- Menu theo vai trò (PR #50): sidebar lọc theo vai trò đăng nhập, chặn màn không có quyền, trang chủ chuyển tới màn đầu tiên được phép.
+- Dữ liệu mẫu seed (PR #51): API tự seed khi kho trống, 5 xe, 5 tài xế, 3 kênh, 11 SKU và 8 đơn mẫu ở các trạng thái khác nhau.
+- Chuyển thẳng tới đăng nhập khi chưa đăng nhập (PR #55): mọi trang chuyển tới Keycloak thay vì hiện khung trống.
+- Panel hoàn hàng theo kênh ở màn Chăm sóc khách hàng (PR #59): tỷ lệ hoàn theo kênh và KPI hoàn đang chờ xử lý tính từ API thật, chỉ hiển thị.
+- Đóng đơn bằng hoàn hàng đã duyệt (PR #60): chuyển Đã giao sang Hoàn chấp nhận `returnId`, hướng xử lý suy ra từ hoàn hàng, chỉ hoàn Đã duyệt hoặc Đã hoàn tiền mới dùng được, 245 test.
+- Mục Trả hàng trên trang chi tiết đơn (PR #61): liệt kê, tạo, duyệt, từ chối và hoàn tiền theo vai trò; đóng đơn được chọn hoàn đã duyệt thay vì nhập tay.
+- API phân công đơn và nhật ký cuộc gọi (PR #62): điều phối viên chia đơn telesale hoặc kho, nhân viên chăm sóc khách hàng ghi nhật ký cuộc gọi, tối đa 1 phân công đang mở mỗi loại trên mỗi đơn, 277 test.
+- Gộp Telesale vào Chăm sóc khách hàng (PR #63): Telesale thành mục Cuộc gọi trong màn CSKH, dùng chung lịch sử liên hệ, bỏ mục Telesale khỏi menu, `/telesale` chuyển hướng sang `/customer-care`; điều phối viên được xem màn CSKH để chia đơn.
+- API cờ hạn chế (PR #64): tạo cờ hoàn nhiều lần, đề xuất hạn chế, Quản lý và Quản trị viên duyệt hoặc từ chối, tối đa 1 cờ đang mở mỗi đơn; khách hạn chế suy ra từ cờ, không lưu cờ trên khách hàng, 306 test.
+- Nối màn Danh sách hạn chế (PR #65): bảng cờ, KPI và dialog quyết định từ API thật, số điện thoại che một phần, tìm kiếm theo số đầy đủ.
+- Nối màn Phân phối đơn (PR #66): bàn điều phối đóng gói 3 tab từ phân công kho và đơn hàng thật, cảnh báo vượt tải chuẩn 30 đơn, mục Việc của tôi ở màn Kho chỉ nhân viên kho thấy.
+- API theo dõi công khai (PR #67): `GET /api/public/tracking?orderId=&phone=` không cần đăng nhập, sai mã đơn hay số điện thoại đều trả chung 404, không trả số điện thoại hay hash audit, 321 test.
+- Nối màn Theo dõi đơn hàng sang endpoint công khai (PR #68): khách vãng lai tra cứu bằng mã đơn và số điện thoại, không cần đăng nhập; bỏ route tra cứu cũ cần đăng nhập.
+
+### Fixed
+
+- Sửa header SPDX trong Dockerfile của web (PR #49): dùng `#` thay cho `//` để Docker đọc được.
+- Sửa khởi động API (PR #52): đánh dấu pool kiểm thử của DbService là tùy chọn để Nest khởi động được ứng dụng.
+- Ép file `.sh` về LF (PR #53): thêm `.gitattributes` để script khởi tạo Postgres không bị lỗi CRLF trên Windows.
+- Sửa lỗi tràn số thứ tự audit (PR #54): ép kiểu BIGINT của Postgres về số trước khi cộng, kèm test hồi quy.
+- Sửa chuyển hướng đăng nhập và đăng xuất (PR #56): callback dùng `APP_ORIGIN` thay cho `request.url`, đăng xuất dùng đúng URI đã đăng ký.
+- Đọc vai trò từ access token (PR #58): Keycloak 26 không gắn vai trò vào ID token, web đọc vai trò từ access token, ID token chỉ làm dự phòng.

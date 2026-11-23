@@ -15,6 +15,9 @@ jobs:
           reuse lint
   compose:
     runs-on: ubuntu-latest
+    # Các giá trị env dưới đây là giá trị dummy chỉ dùng cho CI (đều có
+    # tiền tố ci-), không phải mật khẩu thật và không dùng ở đâu khác.
+    # docker compose config -q chỉ kiểm tra cú pháp nên không cần giá trị thật.
     env:
       POSTGRES_ADMIN_PASSWORD: ci-postgres-admin
       ORDERTOWER_DB_PASSWORD: ci-ordertower-app
