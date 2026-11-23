@@ -88,6 +88,10 @@ function isNonEmptyString(value: unknown): value is string {
 export class OrdersService implements OnModuleInit {
   private readonly logger = new Logger(OrdersService.name);
   private nextNumber = 1001;
+  // Số thứ tự riêng cho đơn lịch sử (mã LS-): tách khỏi dãy DH- của đơn
+  // tạo tay và đơn demo, để đơn tạo tay đầu tiên sau khi nạp seed lịch sử
+  // vẫn là DH-1009. Tính lại lúc khởi động từ id LS- đã lưu, giống dãy DH-.
+  private nextHistoricalNumber = 1001;
 
   // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị cũ không cần
   // truyền gì thêm. Khi chạy trong NestJS, mô-đun tiêm kho Postgres.
@@ -174,6 +178,10 @@ export class OrdersService implements OnModuleInit {
     this.nextNumber = computeNextNumber(
       orders.map((order) => order.id),
       'DH',
+    );
+    this.nextHistoricalNumber = computeNextNumber(
+      orders.map((order) => order.id),
+      'LS',
     );
   }
 
@@ -285,6 +293,11 @@ export class OrdersService implements OnModuleInit {
   async create(
     input: CreateOrderInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại. idPrefix LS- cũng chỉ
+    // đường seed lịch sử dùng, để đơn lịch sử mang mã LS-1001 trở đi mà
+    // không làm lệch dãy DH- của đơn tạo tay và đơn demo.
+    opts?: { at?: string; idPrefix?: 'LS' },
   ): Promise<Order> {
     if (
       typeof input.idempotencyKey !== 'string' ||
@@ -348,7 +361,10 @@ export class OrdersService implements OnModuleInit {
     }
     // Tổng tiền do server tính từ giá từng SKU trong kho, client không gửi.
     const total = await this.computeTotal(input.items);
-    const id = `DH-${String(this.nextNumber++).padStart(4, '0')}`;
+    const id =
+      opts?.idPrefix === 'LS'
+        ? `LS-${String(this.nextHistoricalNumber++).padStart(4, '0')}`
+        : `DH-${String(this.nextNumber++).padStart(4, '0')}`;
     // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
     // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
     const instance = await this.instances.start(
@@ -357,8 +373,9 @@ export class OrdersService implements OnModuleInit {
         businessKey: id,
       },
       caller,
+      { at: opts?.at },
     );
-    const now = new Date().toISOString();
+    const now = opts?.at ?? new Date().toISOString();
     const order: Order = {
       id,
       idempotencyKey: input.idempotencyKey,
@@ -394,6 +411,7 @@ export class OrdersService implements OnModuleInit {
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'order.created',
+      at: now,
       orderId: order.id,
       from: null,
       to: 'Mới tạo',
@@ -433,8 +451,11 @@ export class OrdersService implements OnModuleInit {
     id: string,
     input: TransitionOrderInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Order> {
-    return this.applyTransition(id, input, caller, true);
+    return this.applyTransition(id, input, caller, true, opts);
   }
 
   // Chuyển trạng thái đơn theo sự kiện shipment. Chỉ ShipmentsService gọi.
@@ -448,8 +469,11 @@ export class OrdersService implements OnModuleInit {
     id: string,
     input: TransitionOrderInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Order> {
-    return this.applyTransition(id, input, caller, false);
+    return this.applyTransition(id, input, caller, false, opts);
   }
 
   private async applyTransition(
@@ -457,6 +481,9 @@ export class OrdersService implements OnModuleInit {
     input: TransitionOrderInput,
     caller: Caller,
     checkRole: boolean,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Order> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
@@ -465,11 +492,13 @@ export class OrdersService implements OnModuleInit {
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
     }
+    const now = opts?.at ?? new Date().toISOString();
     const deny = async (reason: string): Promise<never> => {
       await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'order.transition.denied',
+        at: now,
         orderId: id,
         from: order.state,
         to: input.to,
@@ -604,7 +633,7 @@ export class OrdersService implements OnModuleInit {
         ...(handling ? { handling } : {}),
       },
       caller,
-      { skipRoleCheck: !checkRole },
+      { skipRoleCheck: !checkRole, at: now },
     );
     const from = order.state;
     order.state = updated.currentState;

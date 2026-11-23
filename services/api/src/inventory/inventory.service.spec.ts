@@ -29,9 +29,9 @@ describe('InventoryService', () => {
     return service;
   }
 
-  it('nạp seed trong repo: 11 SKU, NM-40 còn 452 chai', async () => {
+  it('nạp seed trong repo: 40 SKU, NM-40 còn 452 chai', async () => {
     const service = await loadService();
-    expect(await service.list()).toHaveLength(11);
+    expect(await service.list()).toHaveLength(40);
     expect(await service.get('NM-40')).toMatchObject({
       sku: 'NM-40',
       stock: 452,
@@ -40,12 +40,16 @@ describe('InventoryService', () => {
     expect(await service.get('XX-00')).toBeNull();
   });
 
-  it('seed nạp đúng giá: 4 SKU có giá, 7 SKU chưa có giá', async () => {
+  it('seed nạp đúng giá: 33 SKU có giá, 7 SKU chưa có giá', async () => {
     const service = await loadService();
     expect((await service.get('NM-25'))?.unitPrice).toBe(93000);
     expect((await service.get('NM-40'))?.unitPrice).toBe(142000);
     expect((await service.get('NM-15'))?.unitPrice).toBe(64000);
     expect((await service.get('HS-KHO'))?.unitPrice).toBe(105000);
+    // Giá mẫu của 29 SKU mới: kiểm tra điểm vài SKU đại diện.
+    expect((await service.get('NM-35'))?.unitPrice).toBe(118000);
+    expect((await service.get('HS-TOM'))?.unitPrice).toBe(245000);
+    expect((await service.get('DT-SAC'))?.unitPrice).toBe(189000);
     for (const sku of [
       'MT-08',
       'CK-03',
@@ -124,7 +128,7 @@ describe('PostgresInventoryStore', () => {
     const db = await createTestDbService();
     const service = new InventoryService(new PostgresInventoryStore(db));
     await service.onModuleInit();
-    expect((await service.list())).toHaveLength(11);
+    expect((await service.list())).toHaveLength(40);
     expect(await service.get('NM-40')).toMatchObject({
       sku: 'NM-40',
       name: 'Nước mắm 40 độ 500ml',
@@ -136,7 +140,7 @@ describe('PostgresInventoryStore', () => {
     await service.reserve([{ sku: 'NM-40', quantity: 2 }]);
     // Khởi động lại trên cùng DB: không nạp lại seed, không đặt lại kho.
     await service.onModuleInit();
-    expect((await service.list())).toHaveLength(11);
+    expect((await service.list())).toHaveLength(40);
     expect(await service.get('NM-40')).toMatchObject({
       stock: 450,
       reserved: 2,

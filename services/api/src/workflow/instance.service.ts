@@ -52,6 +52,9 @@ export class WorkflowInstanceService implements OnModuleInit {
   async start(
     input: StartInstanceInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<WorkflowInstance> {
     if (typeof input.definitionId !== 'string' || input.definitionId.trim() === '') {
       throw new BadRequestException('definitionId là bắt buộc, dạng chuỗi.');
@@ -75,7 +78,7 @@ export class WorkflowInstanceService implements OnModuleInit {
         `Đã có instance của luồng "${input.definitionId}" cho businessKey "${input.businessKey}".`,
       );
     }
-    const now = new Date().toISOString();
+    const now = opts?.at ?? new Date().toISOString();
     const initialState = this.workflow.getInitialState(input.definitionId);
     const instance: WorkflowInstance = {
       id: `WF-${String(this.nextNumber++).padStart(4, '0')}`,
@@ -102,6 +105,7 @@ export class WorkflowInstanceService implements OnModuleInit {
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'workflow.instance.started',
+      at: now,
       // Audit log dùng chung trường orderId cho mã thực thể nghiệp vụ.
       orderId: input.businessKey,
       from: null,
@@ -150,17 +154,24 @@ export class WorkflowInstanceService implements OnModuleInit {
     id: string,
     input: TransitionInstanceInput,
     caller: Caller,
-    options?: { skipRoleCheck?: boolean },
+    options?: {
+      skipRoleCheck?: boolean;
+      // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+      // thời gian, vắng thì lấy thời điểm hiện tại.
+      at?: string;
+    },
   ): Promise<WorkflowInstance> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
     }
     const instance = await this.get(id);
+    const now = options?.at ?? new Date().toISOString();
     const deny = async (reason: string): Promise<never> => {
       await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'workflow.instance.transition.denied',
+        at: now,
         orderId: instance.businessKey,
         from: instance.currentState,
         to: input.to,
@@ -182,7 +193,6 @@ export class WorkflowInstanceService implements OnModuleInit {
     if (!check.allowed) {
       await deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
-    const now = new Date().toISOString();
     const from = instance.currentState;
     // Vai ghi vào lịch sử là vai được phép chuyển theo định nghĩa.
     const role = check.requiredRole ?? caller.roles[0] ?? '';
@@ -211,6 +221,7 @@ export class WorkflowInstanceService implements OnModuleInit {
       actor: caller.username,
       role,
       action: 'workflow.instance.transition',
+      at: now,
       orderId: instance.businessKey,
       from,
       to: input.to,

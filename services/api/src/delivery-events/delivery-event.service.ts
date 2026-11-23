@@ -174,8 +174,13 @@ export class DeliveryEventsService implements OnModuleInit {
   // bao phủ sự kiện, giống trạng thái xe và tài xế đổi theo shipment
   // không ghi audit riêng. Không kiểm tra vai hay trạng thái vì vai đã
   // kiểm ở quy tắc shipment trước khi chuyển.
-  async recordAuto(input: RecordAutoEventInput): Promise<DeliveryEvent> {
-    const now = new Date().toISOString();
+  async recordAuto(
+    input: RecordAutoEventInput,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
+  ): Promise<DeliveryEvent> {
+    const now = opts?.at ?? new Date().toISOString();
     const event: DeliveryEvent = {
       id: `SK-${String(this.nextNumber++).padStart(4, '0')}`,
       shipmentId: input.shipmentId,
