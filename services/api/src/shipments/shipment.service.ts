@@ -115,6 +115,9 @@ export class ShipmentsService implements OnModuleInit {
   async create(
     input: CreateShipmentInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Shipment> {
     const orderId = requireNonEmpty(
       input.orderId,
@@ -139,7 +142,7 @@ export class ShipmentsService implements OnModuleInit {
         `Đơn ${orderId} đã có shipment đang hoạt động (${active.id}, trạng thái "${active.status}").`,
       );
     }
-    const now = new Date().toISOString();
+    const now = opts?.at ?? new Date().toISOString();
     const shipment: Shipment = {
       id: `GH-${String(this.nextNumber++).padStart(4, '0')}`,
       orderId,
@@ -164,6 +167,7 @@ export class ShipmentsService implements OnModuleInit {
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'shipment.created',
+      at: now,
       // Audit log dùng chung trường orderId cho mã thực thể nghiệp vụ.
       orderId,
       from: null,
@@ -356,22 +360,31 @@ export class ShipmentsService implements OnModuleInit {
     role: string,
     note?: string,
     proofPhotoKey?: string,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    at?: string,
   ): Promise<void> {
-    await this.deliveryEvents?.recordAuto({
-      shipmentId: shipment.id,
-      orderId: shipment.orderId,
-      type,
-      by,
-      role,
-      ...(note !== undefined ? { note } : {}),
-      ...(proofPhotoKey !== undefined ? { proofPhotoKey } : {}),
-    });
+    await this.deliveryEvents?.recordAuto(
+      {
+        shipmentId: shipment.id,
+        orderId: shipment.orderId,
+        type,
+        by,
+        role,
+        ...(note !== undefined ? { note } : {}),
+        ...(proofPhotoKey !== undefined ? { proofPhotoKey } : {}),
+      },
+      { at },
+    );
   }
 
   async dispatch(
     id: string,
     input: DispatchShipmentInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Shipment> {
     const driverId = requireNonEmpty(
       input.driverId,
@@ -382,11 +395,13 @@ export class ShipmentsService implements OnModuleInit {
       'Điều xe cần có vehicleId.',
     );
     const shipment = await this.get(id);
+    const now = opts?.at ?? new Date().toISOString();
     const deny = async (reason: string): Promise<never> => {
       await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'shipment.transition.denied',
+        at: now,
         orderId: shipment.orderId,
         from: shipment.status,
         to: 'Đang giao',
@@ -417,7 +432,6 @@ export class ShipmentsService implements OnModuleInit {
       deny,
     );
     const from = shipment.status;
-    const now = new Date().toISOString();
     shipment.status = 'Đang giao';
     shipment.driverId = driverId;
     shipment.vehicleId = vehicleId;
@@ -433,6 +447,7 @@ export class ShipmentsService implements OnModuleInit {
       actor: caller.username,
       role: DISPATCHER_ROLE,
       action: 'shipment.dispatched',
+      at: now,
       orderId: shipment.orderId,
       from,
       to: 'Đang giao',
@@ -445,6 +460,7 @@ export class ShipmentsService implements OnModuleInit {
       shipment.orderId,
       { to: 'Đang giao' },
       caller,
+      { at: now },
     );
     // Đơn đã sang Đang giao thì xe mới sang Đang giao.
     await this.markVehicleBusy(vehicle.id);
@@ -456,6 +472,9 @@ export class ShipmentsService implements OnModuleInit {
       'Nhận đơn',
       caller.username,
       DISPATCHER_ROLE,
+      undefined,
+      undefined,
+      now,
     );
     return copyShipment(shipment);
   }
@@ -464,17 +483,22 @@ export class ShipmentsService implements OnModuleInit {
     id: string,
     input: DeliverShipmentInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Shipment> {
     const proofPhotoKey = requireNonEmpty(
       input.proofPhotoKey,
       'Giao hàng cần có proofPhotoKey (khóa tệp bằng chứng).',
     );
     const shipment = await this.get(id);
+    const now = opts?.at ?? new Date().toISOString();
     const deny = async (reason: string): Promise<never> => {
       await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'shipment.transition.denied',
+        at: now,
         orderId: shipment.orderId,
         from: shipment.status,
         to: 'Đã giao',
@@ -500,7 +524,6 @@ export class ShipmentsService implements OnModuleInit {
       deny,
     );
     const from = shipment.status;
-    const now = new Date().toISOString();
     shipment.status = 'Đã giao';
     shipment.proofPhotoKey = proofPhotoKey;
     shipment.updatedAt = now;
@@ -515,6 +538,7 @@ export class ShipmentsService implements OnModuleInit {
       actor: caller.username,
       role: DRIVER_ROLE,
       action: 'shipment.delivered',
+      at: now,
       orderId: shipment.orderId,
       from,
       to: 'Đã giao',
@@ -527,6 +551,7 @@ export class ShipmentsService implements OnModuleInit {
       shipment.orderId,
       { to: 'Đã giao' },
       caller,
+      { at: now },
     );
     // Đơn đã sang Đã giao thì trả xe về Sẵn sàng.
     if (shipment.vehicleId !== null) {
@@ -544,6 +569,7 @@ export class ShipmentsService implements OnModuleInit {
       DRIVER_ROLE,
       undefined,
       proofPhotoKey,
+      now,
     );
     return copyShipment(shipment);
   }
@@ -552,17 +578,22 @@ export class ShipmentsService implements OnModuleInit {
     id: string,
     input: FailShipmentInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Shipment> {
     const reason = requireNonEmpty(
       input.reason,
       'Đánh dấu giao thất bại cần có lý do.',
     );
     const shipment = await this.get(id);
+    const now = opts?.at ?? new Date().toISOString();
     const deny = async (denyReason: string): Promise<never> => {
       await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'shipment.transition.denied',
+        at: now,
         orderId: shipment.orderId,
         from: shipment.status,
         to: 'Giao thất bại',
@@ -597,7 +628,6 @@ export class ShipmentsService implements OnModuleInit {
       deny,
     );
     const from = shipment.status;
-    const now = new Date().toISOString();
     shipment.status = 'Giao thất bại';
     shipment.updatedAt = now;
     shipment.history.push({
@@ -612,6 +642,7 @@ export class ShipmentsService implements OnModuleInit {
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'shipment.failed',
+      at: now,
       orderId: shipment.orderId,
       from,
       to: 'Giao thất bại',
@@ -625,6 +656,7 @@ export class ShipmentsService implements OnModuleInit {
       shipment.orderId,
       { to: 'Chờ điều xe', reason },
       caller,
+      { at: now },
     );
     // Đơn đã quay lại Chờ điều xe thì trả xe về Sẵn sàng, để điều xe lại
     // được phép đổi xe khác.
@@ -643,6 +675,8 @@ export class ShipmentsService implements OnModuleInit {
       caller.username,
       caller.roles[0] ?? '',
       reason,
+      undefined,
+      now,
     );
     return copyShipment(shipment);
   }

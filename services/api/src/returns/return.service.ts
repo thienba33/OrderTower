@@ -69,7 +69,13 @@ export class ReturnsService implements OnModuleInit {
     );
   }
 
-  async create(input: CreateReturnInput, caller: Caller): Promise<Return> {
+  async create(
+    input: CreateReturnInput,
+    caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
+  ): Promise<Return> {
     const orderId = requireNonEmpty(
       input.orderId,
       'Tạo trả hàng cần có mã đơn.',
@@ -100,7 +106,7 @@ export class ReturnsService implements OnModuleInit {
         `Đơn ${orderId} đã có trả hàng đang xử lý (${active.id}, trạng thái "${active.status}").`,
       );
     }
-    const now = new Date().toISOString();
+    const now = opts?.at ?? new Date().toISOString();
     const ret: Return = {
       id: `TH-${String(this.nextNumber++).padStart(4, '0')}`,
       orderId,
@@ -114,6 +120,7 @@ export class ReturnsService implements OnModuleInit {
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: 'return.created',
+      at: now,
       // Audit log dùng chung trường orderId cho mã thực thể nghiệp vụ.
       orderId,
       from: null,
@@ -145,7 +152,13 @@ export class ReturnsService implements OnModuleInit {
     );
   }
 
-  async approve(id: string, caller: Caller): Promise<Return> {
+  async approve(
+    id: string,
+    caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
+  ): Promise<Return> {
     return this.changeStatus(
       id,
       'Chờ xử lý',
@@ -154,6 +167,8 @@ export class ReturnsService implements OnModuleInit {
       'Duyệt trả hàng',
       'return.approved',
       [MANAGER_ROLE, ADMIN_ROLE],
+      undefined,
+      opts,
     );
   }
 
@@ -161,6 +176,9 @@ export class ReturnsService implements OnModuleInit {
     id: string,
     input: RejectReturnInput,
     caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Return> {
     const reason = requireNonEmpty(
       input.reason,
@@ -175,10 +193,17 @@ export class ReturnsService implements OnModuleInit {
       'return.rejected',
       [MANAGER_ROLE, ADMIN_ROLE],
       `Lý do từ chối: ${reason}.`,
+      opts,
     );
   }
 
-  async refund(id: string, caller: Caller): Promise<Return> {
+  async refund(
+    id: string,
+    caller: Caller,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
+  ): Promise<Return> {
     return this.changeStatus(
       id,
       'Đã duyệt',
@@ -187,6 +212,8 @@ export class ReturnsService implements OnModuleInit {
       'Hoàn tiền trả hàng',
       'return.refunded',
       [DISPATCHER_ROLE],
+      undefined,
+      opts,
     );
   }
 
@@ -199,13 +226,18 @@ export class ReturnsService implements OnModuleInit {
     auditAction: string,
     allowedRoles: string[],
     detail?: string,
+    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
+    // thời gian, vắng thì lấy thời điểm hiện tại.
+    opts?: { at?: string },
   ): Promise<Return> {
     const ret = await this.get(id);
+    const now = opts?.at ?? new Date().toISOString();
     const deny = async (reason: string): Promise<never> => {
       await this.audit.append({
         actor: caller.username,
         role: caller.roles[0] ?? '',
         action: 'return.transition.denied',
+        at: now,
         orderId: ret.orderId,
         from: ret.status,
         to,
@@ -223,7 +255,6 @@ export class ReturnsService implements OnModuleInit {
     if (!allowedRoles.some((role) => caller.roles.includes(role))) {
       await deny(`${action} cần vai ${allowedRoles.join(' hoặc ')}.`);
     }
-    const now = new Date().toISOString();
     ret.status = to;
     ret.updatedAt = now;
     await this.store.save(ret);
@@ -231,6 +262,7 @@ export class ReturnsService implements OnModuleInit {
       actor: caller.username,
       role: caller.roles[0] ?? '',
       action: auditAction,
+      at: now,
       orderId: ret.orderId,
       from,
       to,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AddressService } from '../address/address.service';
@@ -1509,13 +1509,28 @@ describe('OrdersService seed mẫu', () => {
     expect(list.map((order) => order.total)).toEqual([
       186000, 64000, 210000, 157000, 192000, 105000, 186000, 210000,
     ]);
-    // 2 đơn đã qua đóng gói giữ hàng: NM-25 giữ 2, HS-KHO giữ 2.
+    // 2 đơn đã qua đóng gói giữ hàng: NM-25 giữ 2, HS-KHO giữ 2. Tồn kho
+    // trong tệp seed là tồn kho đầu kỳ nên số khả dụng sau 8 đơn demo
+    // bằng stock trong tệp trừ 2; đủ 112 đơn lịch sử thì còn 486 và 304
+    // (kiểm ở historical-seed.service.spec.ts).
+    const seedStock = (
+      JSON.parse(
+        readFileSync(
+          join(__dirname, '..', 'inventory', 'data', 'inventory.seed.json'),
+          'utf-8',
+        ) as string,
+      ) as {
+        items: { sku: string; stock: number }[];
+      }
+    ).items;
+    const initialStock = (sku: string): number =>
+      seedStock.find((item) => item.sku === sku)?.stock ?? 0;
     expect(await inventory.get('NM-25')).toMatchObject({
-      stock: 486,
+      stock: initialStock('NM-25') - 2,
       reserved: 2,
     });
     expect(await inventory.get('HS-KHO')).toMatchObject({
-      stock: 304,
+      stock: initialStock('HS-KHO') - 2,
       reserved: 2,
     });
     // Audit ghi đúng người thực hiện là hệ thống seed, 8 lần tạo đơn.

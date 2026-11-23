@@ -15,6 +15,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PublicTrackingModule } from './public-tracking/public-tracking.module';
 import { RestrictedFlagModule } from './restricted-flags/restricted-flag.module';
 import { ReturnsModule } from './returns/return.module';
+import { SeedModule } from './seed/seed.module';
 import { ShipmentsModule } from './shipments/shipment.module';
 import { VehiclesModule } from './vehicles/vehicle.module';
 import { WorkflowModule } from './workflow/workflow.module';
@@ -33,6 +34,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     PublicTrackingModule,
     RestrictedFlagModule,
     ReturnsModule,
+    SeedModule,
     ShipmentsModule,
     VehiclesModule,
     WorkflowModule,
