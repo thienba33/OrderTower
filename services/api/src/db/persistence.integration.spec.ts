@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { BiService } from '../bi/bi.service';
 import { ChannelsService } from '../channels/channel.service';
 import { CustomersService } from '../customers/customer.service';
 import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
@@ -589,5 +590,71 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
     );
     expect(nextReturn.id).toBe('TH-1015');
     expect(nextReturn.status).toBe('Chờ xử lý');
+  }, 60000);
+
+  it('BI pilot khởi động cùng app, tính đúng trên dữ liệu mẫu, quyết định đề xuất và snapshot còn sau khi khởi động lại', async () => {
+    const db = await createTestDbService();
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(DbService)
+      .useValue(db)
+      .compile();
+    const app = moduleRef.createNestApplication();
+    await app.init();
+    const bi = app.get(BiService);
+
+    // Dữ liệu mẫu mốc 3 đã nạp lúc khởi động: 40 SKU, 120 đơn, 13 đơn
+    // hoàn, ngày tham chiếu 22/11/2026.
+    const { referenceDate, rows } = await bi.forecast();
+    expect(referenceDate).toBe('2026-11-22');
+    expect(rows.filter((row) => row.channelId === null)).toHaveLength(40);
+    const { anomalies } = await bi.anomalies();
+    expect(anomalies).toHaveLength(9);
+    const recs = await bi.listRecommendations();
+    expect(recs).toHaveLength(9);
+    expect(recs.every((rec) => rec.status === 'Chờ duyệt')).toBe(true);
+    const score = await bi.dxScore();
+    expect(score.p.score).toBe(15);
+    expect(score.d.score).toBe(30);
+    expect(score.i.score).toBe(0);
+    expect(score.h.score).toBe(55);
+    expect(score.total).toBe(100);
+
+    // Quản lý duyệt 1 đề xuất: quyết định ghi bền qua kho Postgres.
+    const decided = await bi.decideRecommendation(
+      recs[0].id,
+      { decision: 'approved' },
+      MANAGER,
+    );
+    expect(decided.status).toBe('Đã duyệt');
+
+    const secondRef = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(DbService)
+      .useValue(db)
+      .compile();
+    const secondApp = secondRef.createNestApplication();
+    await secondApp.init();
+    const secondBi = secondApp.get(BiService);
+    // Đề xuất đã duyệt và snapshot vẫn còn sau khi khởi động lại; gọi
+    // anomalies lại không tạo đề xuất trùng (upsert theo anomalyKey).
+    const kept = await secondBi.getRecommendation(recs[0].id);
+    expect(kept.status).toBe('Đã duyệt');
+    expect(kept.decidedBy).toBe('quan-ly');
+    expect((await secondBi.listRecommendations())).toHaveLength(9);
+    await secondBi.anomalies();
+    expect((await secondBi.listRecommendations())).toHaveLength(9);
+    const latest = await secondBi.latestDxScoreSnapshot();
+    expect(latest?.total).toBe(100);
+    // Tính lại sau khi có 1 đề xuất đã duyệt (chưa có phản hồi): trục I
+    // giờ đo được, giá trị 0/1 = 0, mẫu nhỏ, tổng vẫn 100.
+    const rescored = await secondBi.dxScore();
+    expect(rescored.i.correctApproved.measured).toBe(true);
+    expect(rescored.i.correctApproved.value).toBe(0);
+    expect(rescored.i.correctApproved.n).toBe(1);
+    expect(rescored.i.smallSample).toBe(true);
+    expect(rescored.total).toBe(100);
   }, 60000);
 });

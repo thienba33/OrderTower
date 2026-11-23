@@ -7,6 +7,7 @@ import { AssignmentModule } from './assignments/assignment.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
+import { BiModule } from './bi/bi.module';
 import { ChannelsModule } from './channels/channel.module';
 import { CustomersModule } from './customers/customer.module';
 import { DeliveryEventsModule } from './delivery-events/delivery-event.module';
@@ -26,6 +27,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     AssignmentModule,
     AuditModule,
     AuthModule,
+    BiModule,
     ChannelsModule,
     CustomersModule,
     DeliveryEventsModule,
