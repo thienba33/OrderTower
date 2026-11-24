@@ -11,6 +11,7 @@
       "drivers/data/*.json",
       "orders/data/*.json",
       "seed/data/*.json",
+      "tickets/data/*.json",
       "db/migrations/*.sql"
     ],
     "deleteOutDir": true
