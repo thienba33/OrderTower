@@ -447,8 +447,20 @@ export default function CskhPage({
     patch: Partial<{ result: CallResult; duration: string; note: string }>,
   ) => setCallForms((prev) => ({ ...prev, [id]: { ...callFormFor(id), ...patch } }));
 
-  // Bảng đơn ưu tiên: giữ nguyên cột và bộ lọc của màn Telesale cũ, thêm
-  // cột Phân đơn và (chỉ điều phối viên) cột Chia đơn.
+  // 4 tab của mục Cuộc gọi, theo 4 chế độ xem của màn Telesale cũ:
+  // Tổng quan, Phân chia đơn, Công việc, Nhân viên. Tab mặc định là
+  // Tổng quan; tab Công việc chỉ hiện với vai CSKH.
+  type CallTab = "overview" | "assign" | "work" | "staff";
+  const CALL_TABS: { key: CallTab; label: string }[] = [
+    { key: "overview", label: "Tổng quan" },
+    { key: "assign", label: "Phân chia đơn" },
+    { key: "work", label: "Công việc" },
+    { key: "staff", label: "Nhân viên" },
+  ];
+  const [callTab, setCallTab] = useState<CallTab>("overview");
+
+  // Bảng đơn ưu tiên ở tab Tổng quan: giữ nguyên cột và bộ lọc của màn
+  // Telesale cũ (tìm kiếm, sắp xếp ETA, 7 dòng 1 trang).
   const [callSearch, setCallSearch] = useState("");
   const [callSortByEta, setCallSortByEta] = useState(false);
   const [callPage, setCallPage] = useState(1);
@@ -479,7 +491,7 @@ export default function CskhPage({
     callPage * CALL_PAGE_SIZE,
   );
 
-  const priorityColumns: TableColumn<PriorityRow>[] = [
+  const priorityOverviewColumns: TableColumn<PriorityRow>[] = [
     { key: "id", header: "Mã đơn", render: (row) => <span className="font-medium text-gray-900">{row.id}</span>, cellClassName: "w-[109px]" },
     { key: "channel", header: "Kênh", render: (row) => row.channel, cellClassName: "w-[89px]" },
     { key: "customer", header: "Khách hàng", render: (row) => row.customer, cellClassName: "w-[149px]" },
@@ -498,13 +510,18 @@ export default function CskhPage({
     },
     { key: "suggestion", header: "Gợi ý", render: (row) => row.suggestion, cellClassName: "w-[129px]" },
     { key: "reason", header: "Lý do", render: (row) => row.reason, cellClassName: "w-[179px]" },
+  ];
+  // Bảng đơn ưu tiên ở tab Phân chia đơn: thêm cột Phân đơn và (chỉ điều
+  // phối viên) cột Chia đơn; các cột khác giữ nguyên như tab Tổng quan.
+  const priorityAssignColumns: TableColumn<PriorityRow>[] = [
+    ...priorityOverviewColumns,
     {
       key: "assign",
       header: "Phân đơn",
       render: (row) => {
         const item = latestAssignmentByOrder.get(row.id);
         const label = assignmentLabel(row);
-              return (
+        return (
           <span className="flex flex-col gap-1">
             <span
               className={`inline-flex h-[22px] w-fit items-center rounded-full px-[10px] text-xs font-medium ${ASSIGN_STATUS_PILL[label] ?? "bg-gray-100 text-gray-700"}`}
@@ -519,7 +536,7 @@ export default function CskhPage({
     },
   ];
   if (isDispatcher) {
-    priorityColumns.push({
+    priorityAssignColumns.push({
       key: "assign-action",
       header: "Chia đơn",
       render: (row) => {
@@ -623,6 +640,73 @@ export default function CskhPage({
         },
       ]
     : ticketColumns;
+
+  // Khối bảng đơn ưu tiên (tìm kiếm, sắp xếp ETA, phân trang 7 dòng),
+  // dùng chung cho tab Tổng quan và tab Phân chia đơn, chỉ khác cột.
+  const priorityTable = (columns: TableColumn<PriorityRow>[]) => (
+    <div>
+      <p className="mb-2 text-sm font-semibold text-gray-900">
+        ĐƠN NÊN ƯU TIÊN GỌI ({filteredPriority.length})
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          value={callSearch}
+          onChange={(e) => {
+            setCallSearch(e.target.value);
+            setCallPage(1);
+          }}
+          placeholder="Tìm mã đơn, SĐT, khách hàng..."
+          aria-label="Tìm đơn ưu tiên"
+          className="h-10 w-[340px] max-w-full rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setCallSortByEta((current) => !current);
+            setCallPage(1);
+          }}
+          className={`flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium ${
+            callSortByEta
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-gray-300 bg-white text-gray-700"
+          }`}
+        >
+          Sắp xếp theo ETA
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setCallSearch("");
+            setCallSortByEta(false);
+            setCallPage(1);
+          }}
+          className="flex h-9 items-center justify-center rounded-md bg-white px-3 text-sm font-medium text-gray-700"
+        >
+          Xóa bộ lọc
+        </button>
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <Table
+          columns={columns}
+          rows={callPageRows}
+          rowKey={(row) => row.id}
+          emptyText="Không có đơn nào cần ưu tiên gọi"
+          bare
+        />
+      </div>
+      <Pagination
+        page={callPage}
+        totalPages={callTotalPages}
+        onPageChange={setCallPage}
+        range={{
+          start: filteredPriority.length === 0 ? 0 : (callPage - 1) * CALL_PAGE_SIZE + 1,
+          end: Math.min(callPage * CALL_PAGE_SIZE, filteredPriority.length),
+          total: filteredPriority.length,
+        }}
+      />
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -832,97 +916,34 @@ export default function CskhPage({
           </p>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
-                <p className="text-sm font-medium text-gray-600">Tổng quan đội</p>
-                <p className="text-2xl font-semibold text-gray-900">{teamStats.total} cuộc</p>
-              </div>
-              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
-                <p className="text-sm font-medium text-gray-600">Thành công</p>
-                <p className="text-2xl font-semibold text-gray-900">{teamStats.success}</p>
-              </div>
-              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
-                <p className="text-sm font-medium text-gray-600">Thất bại</p>
-                <p className="text-2xl font-semibold text-gray-900">{teamStats.failed}</p>
-              </div>
-              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
-                <p className="text-sm font-medium text-gray-600">Tỷ lệ thành công</p>
-                <p className="text-2xl font-semibold text-gray-900">{teamStats.rate}%</p>
-              </div>
-              <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
-                <p className="text-sm font-medium text-gray-600">Thời gian gọi TB</p>
-                <p className="text-2xl font-semibold text-gray-900">{teamStats.avgSeconds} giây</p>
-              </div>
+            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Chế độ xem cuộc gọi">
+              {CALL_TABS.filter((item) => item.key !== "work" || isCskh).map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={callTab === item.key}
+                  onClick={() => setCallTab(item.key)}
+                  className={`flex h-9 items-center justify-center rounded-md px-3 text-sm ${
+                    callTab === item.key
+                      ? "bg-red-700 font-bold text-white"
+                      : "border border-gray-100 bg-white font-medium text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
 
             {callsErrorText !== "" && (
               <p className="text-sm text-red-700">{callsErrorText}</p>
             )}
 
-            <div>
-              <p className="mb-2 text-sm font-semibold text-gray-900">
-                ĐƠN NÊN ƯU TIÊN GỌI ({filteredPriority.length})
-              </p>
-              <div className="flex flex-wrap items-center gap-3">
-                <input
-                  type="text"
-                  value={callSearch}
-                  onChange={(e) => {
-                    setCallSearch(e.target.value);
-                    setCallPage(1);
-                  }}
-                  placeholder="Tìm mã đơn, SĐT, khách hàng..."
-                  aria-label="Tìm đơn ưu tiên"
-                  className="h-10 w-[340px] max-w-full rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCallSortByEta((current) => !current);
-                    setCallPage(1);
-                  }}
-                  className={`flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium ${
-                    callSortByEta
-                      ? "border-red-200 bg-red-50 text-red-700"
-                      : "border-gray-300 bg-white text-gray-700"
-                  }`}
-                >
-                  Sắp xếp theo ETA
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCallSearch("");
-                    setCallSortByEta(false);
-                    setCallPage(1);
-                  }}
-                  className="flex h-9 items-center justify-center rounded-md bg-white px-3 text-sm font-medium text-gray-700"
-                >
-                  Xóa bộ lọc
-                </button>
-              </div>
-              <div className="mt-3 overflow-x-auto">
-                <Table
-                  columns={priorityColumns}
-                  rows={callPageRows}
-                  rowKey={(row) => row.id}
-                  emptyText="Không có đơn nào cần ưu tiên gọi"
-                  bare
-                />
-              </div>
-              <Pagination
-                page={callPage}
-                totalPages={callTotalPages}
-                onPageChange={setCallPage}
-                range={{
-                  start: filteredPriority.length === 0 ? 0 : (callPage - 1) * CALL_PAGE_SIZE + 1,
-                  end: Math.min(callPage * CALL_PAGE_SIZE, filteredPriority.length),
-                  total: filteredPriority.length,
-                }}
-              />
-            </div>
+            {callTab === "overview" && priorityTable(priorityOverviewColumns)}
 
-            {isCskh && (
+            {callTab === "assign" && priorityTable(priorityAssignColumns)}
+
+            {callTab === "work" && isCskh && (
               <div>
                 <p className="mb-2 text-sm font-semibold text-gray-900">VIỆC CỦA TÔI</p>
                 {myAssignments.length === 0 ? (
@@ -1042,16 +1063,42 @@ export default function CskhPage({
               </div>
             )}
 
-            <div>
-              <p className="mb-2 text-sm font-semibold text-gray-900">NHÂN VIÊN</p>
-              <Table
-                columns={staffColumns}
-                rows={staffRows}
-                rowKey={(row) => row.name}
-                emptyText="Chưa có nhân viên được giao đơn"
-                bare
-              />
-            </div>
+            {callTab === "staff" && (
+              <>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                  <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                    <p className="text-sm font-medium text-gray-600">Tổng quan đội</p>
+                    <p className="text-2xl font-semibold text-gray-900">{teamStats.total} cuộc</p>
+                  </div>
+                  <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                    <p className="text-sm font-medium text-gray-600">Thành công</p>
+                    <p className="text-2xl font-semibold text-gray-900">{teamStats.success}</p>
+                  </div>
+                  <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                    <p className="text-sm font-medium text-gray-600">Thất bại</p>
+                    <p className="text-2xl font-semibold text-gray-900">{teamStats.failed}</p>
+                  </div>
+                  <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                    <p className="text-sm font-medium text-gray-600">Tỷ lệ thành công</p>
+                    <p className="text-2xl font-semibold text-gray-900">{teamStats.rate}%</p>
+                  </div>
+                  <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
+                    <p className="text-sm font-medium text-gray-600">Thời gian gọi TB</p>
+                    <p className="text-2xl font-semibold text-gray-900">{teamStats.avgSeconds} giây</p>
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-gray-900">NHÂN VIÊN</p>
+                  <Table
+                    columns={staffColumns}
+                    rows={staffRows}
+                    rowKey={(row) => row.name}
+                    emptyText="Chưa có nhân viên được giao đơn"
+                    bare
+                  />
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
