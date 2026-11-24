@@ -9,16 +9,20 @@ import type {
   ApiAssignment,
   ApiCallLog,
   ApiReturn,
+  ApiTicket,
+  ApiTicketKpis,
   CallsError,
   PriorityRow,
   ReturnChannelStat,
   ReturnsError,
+  TicketsError,
 } from "./customer-care-types";
 import type {
   ApiChannel,
   ApiInventoryItem,
   ApiOrder,
 } from "../orders/orders-types";
+import type { TicketRow } from "../../data/cskh";
 
 // Lấy danh sách từ API, trả về mảng đã kiểm tra dạng.
 async function fetchList<T>(path: string): Promise<T[]> {
@@ -31,6 +35,19 @@ async function fetchList<T>(path: string): Promise<T[]> {
     throw new ApiError(response.status, "API trả về dữ liệu không đúng dạng.");
   }
   return data as T[];
+}
+
+// Lấy 1 object từ API, trả về object đã kiểm tra dạng (dùng cho KPI).
+async function fetchObject<T>(path: string): Promise<T> {
+  const response = await apiFetch(path);
+  if (!response.ok) {
+    throw new ApiError(response.status, `API trả về ${response.status}.`);
+  }
+  const data: unknown = await response.json();
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new ApiError(response.status, "API trả về dữ liệu không đúng dạng.");
+  }
+  return data as T;
 }
 
 // Tính hoàn hàng theo từng kênh từ 3 danh sách API: đơn của kênh nào
@@ -206,8 +223,40 @@ export default async function CskhPage() {
     ).length;
   } catch (error) {
     // Panel hoàn hàng là dữ liệu phụ: lỗi tải thì chỉ báo lỗi ở panel,
-    // phần yêu cầu hỗ trợ vẫn hiện bằng dữ liệu mẫu như trước.
+    // mục yêu cầu hỗ trợ và mục Cuộc gọi vẫn hiện như thường.
     returnsError =
+      error instanceof ApiError && error.status === 401
+        ? "unauthorized"
+        : "load-failed";
+  }
+
+  // Ticket và KPI ticket là dữ liệu chính của màn, lấy riêng thành 1
+  // khối: lỗi tải thì chỉ báo lỗi ở mục yêu cầu hỗ trợ, panel hoàn hàng
+  // và mục Cuộc gọi vẫn hiện như thường. Giờ cập nhật ISO của API đổi
+  // sang HH:MM giờ Việt Nam để khớp cột "Cập nhật" của bảng đóng băng.
+  let tickets: TicketRow[] = [];
+  let ticketKpis: ApiTicketKpis | null = null;
+  let ticketsError: TicketsError | null = null;
+  try {
+    const [apiTickets, kpis] = await Promise.all([
+      fetchList<ApiTicket>("/tickets"),
+      fetchObject<ApiTicketKpis>("/tickets/kpis"),
+    ]);
+    tickets = apiTickets.map((ticket) => ({
+      id: ticket.id,
+      customer: ticket.customer,
+      orderId: ticket.orderId,
+      type: ticket.type,
+      channel: ticket.channel,
+      content: ticket.content,
+      status: ticket.status,
+      handler: ticket.handler,
+      updated: formatDeadlineTime(ticket.updatedAt) || "-",
+      needsCall: ticket.needsCall,
+    }));
+    ticketKpis = kpis;
+  } catch (error) {
+    ticketsError =
       error instanceof ApiError && error.status === 401
         ? "unauthorized"
         : "load-failed";
@@ -241,6 +290,9 @@ export default async function CskhPage() {
 
   return (
     <CskhClient
+      tickets={tickets}
+      ticketKpis={ticketKpis}
+      ticketsError={ticketsError}
       returnChannels={returnChannels}
       pendingReturns={pendingReturns}
       returnsError={returnsError}

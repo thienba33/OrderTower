@@ -1,11 +1,50 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  TicketChannel,
+  TicketStatus,
+  TicketType,
+} from "../../data/cskh";
+
 // Hình API của trả hàng, phân đơn gọi điện và nhật ký cuộc gọi, chỉ lấy
 // trường màn Chăm sóc khách hàng dùng. Kiểu ReturnChannelRow trong
 // data/cskh.ts là dữ liệu mẫu đóng băng nên không dùng lại ở đây; panel
 // hoàn hàng theo kênh đọc API thật, không import RETURN_CHANNELS nữa.
 // Đơn/kênh/tồn kho lấy từ app/orders/orders-types.ts (hình đầy đủ của
 // API), không định nghĩa lại ở đây.
+
+// Một ticket CSKH từ API: giống dòng TicketRow trong data/cskh.ts nhưng
+// giờ cập nhật là ISO (updatedAt) thay vì HH:MM, cộng thêm người tạo và
+// thời điểm đóng. Mã đơn là chuỗi tự do, không có khóa ngoại tới đơn.
+export interface ApiTicket {
+  id: string;
+  customer: string;
+  orderId: string;
+  type: TicketType;
+  channel: TicketChannel;
+  content: string;
+  status: TicketStatus;
+  handler: string;
+  needsCall: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+}
+
+// 4 KPI đầu của màn CSKH, tính từ DB (KPI thứ 5, hoàn/trả chờ xử lý, đã
+// nối API thật từ PR #59, không tính ở đây).
+export interface ApiTicketKpis {
+  newRequests: number;
+  inProgress: number;
+  waitingCustomer: number;
+  closedToday: number;
+}
+
+// Lỗi tải ticket: hết phiên thì hiện link đăng nhập lại, lỗi khác thì
+// báo tải lại trang. null là tải được. Cùng quy ước như ReturnsError
+// của panel hoàn hàng.
+export type TicketsError = "unauthorized" | "load-failed";
 
 export type ApiReturnStatus =
   | "Chờ xử lý"
