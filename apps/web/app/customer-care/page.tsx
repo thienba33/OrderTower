@@ -22,7 +22,11 @@ import type {
   ApiInventoryItem,
   ApiOrder,
 } from "../orders/orders-types";
-import type { TicketRow } from "../../data/cskh";
+import type {
+  ContactHistoryRow,
+  TicketChannel,
+  TicketRow,
+} from "../../data/cskh";
 
 // Lấy danh sách từ API, trả về mảng đã kiểm tra dạng.
 async function fetchList<T>(path: string): Promise<T[]> {
@@ -198,6 +202,50 @@ function buildPriorityRows(
   return rows;
 }
 
+// Lịch sử liên hệ gần đây từ nhật ký cuộc gọi thật: mỗi CallLog nối
+// với đơn của nó để lấy tên khách, nối tiếp với kênh của đơn để lấy tên
+// kênh. Log không nối được đơn (đơn không bao giờ bị xóa nên thực tế
+// không xảy ra) hoặc không nối được kênh thì bỏ qua. Mới nhất lên trước.
+function buildHistoryRows(
+  logs: ApiCallLog[],
+  orders: ApiOrder[],
+  channels: ApiChannel[],
+): ContactHistoryRow[] {
+  const orderById = new Map(orders.map((order) => [order.id, order]));
+  const channelNameById = new Map(
+    channels.map((channel) => [channel.id, channel.name]),
+  );
+  const rows: ContactHistoryRow[] = [];
+  const sorted = [...logs].sort(
+    (a, b) =>
+      Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
+      b.id.localeCompare(a.id),
+  );
+  for (const log of sorted) {
+    const order = orderById.get(log.orderId);
+    if (order === undefined) continue;
+    const channelName =
+      order.channelId === null
+        ? undefined
+        : channelNameById.get(order.channelId);
+    if (
+      channelName !== "Điện thoại" &&
+      channelName !== "Chat" &&
+      channelName !== "Web"
+    ) {
+      continue;
+    }
+    rows.push({
+      time: formatDeadlineTime(log.createdAt) || "-",
+      customer: order.customer,
+      channel: channelName as TicketChannel,
+      result: log.result,
+      note: log.note ?? "—",
+    });
+  }
+  return rows;
+}
+
 export default async function CskhPage() {
   const session = await getSession();
   if (!session) {
@@ -269,6 +317,7 @@ export default async function CskhPage() {
   let priorityRows: PriorityRow[] = [];
   let telesaleAssignments: ApiAssignment[] = [];
   let callLogs: ApiCallLog[] = [];
+  let historyRows: ContactHistoryRow[] = [];
   let callsError: CallsError | null = null;
   try {
     const [orders, channels, products, assignments, logs] = await Promise.all([
@@ -281,6 +330,7 @@ export default async function CskhPage() {
     priorityRows = buildPriorityRows(orders, channels, products, Date.now());
     telesaleAssignments = assignments.filter((item) => item.kind === "telesale");
     callLogs = logs;
+    historyRows = buildHistoryRows(logs, orders, channels);
   } catch (error) {
     callsError =
       error instanceof ApiError && error.status === 401
@@ -299,6 +349,7 @@ export default async function CskhPage() {
       priorityRows={priorityRows}
       assignments={telesaleAssignments}
       callLogs={callLogs}
+      historyRows={historyRows}
       callsError={callsError}
       username={session.username}
       roles={session.roles}

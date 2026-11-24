@@ -9,7 +9,6 @@ import { Modal } from "../../components/ui/Modal";
 import { Pagination } from "../../components/ui/Pagination";
 import { Table, type TableColumn } from "../../components/ui/Table";
 import {
-  CONTACT_HISTORY,
   CSKH_KPIS,
   TICKET_CHANNELS,
   TICKET_STATUSES,
@@ -46,6 +45,7 @@ interface CskhClientProps {
   priorityRows: PriorityRow[];
   assignments: ApiAssignment[];
   callLogs: ApiCallLog[];
+  historyRows: ContactHistoryRow[];
   callsError: CallsError | null;
   username: string;
   roles: string[];
@@ -133,6 +133,7 @@ export default function CskhPage({
   priorityRows,
   assignments,
   callLogs,
+  historyRows,
   callsError,
   username,
   roles,
@@ -1107,13 +1108,29 @@ export default function CskhPage({
         <div className="flex h-11 items-center px-4">
           <p className="text-sm font-semibold text-gray-900">Lịch sử liên hệ gần đây</p>
         </div>
-        <Table
-          columns={historyColumns}
-          rows={CONTACT_HISTORY}
-          rowKey={(row) => `${row.time}-${row.customer}`}
-          emptyText="Chưa có lịch sử liên hệ"
-          bare
-        />
+        {callsError !== null ? (
+          <p className="px-4 py-6 text-sm text-gray-700">
+            {callsError === "unauthorized" ? (
+              <>
+                Phiên đăng nhập đã hết hạn.{" "}
+                <Link href="/api/auth/login" className="font-medium text-red-700 underline">
+                  Đăng nhập lại
+                </Link>{" "}
+                để xem lịch sử liên hệ từ API.
+              </>
+            ) : (
+              "Không tải được lịch sử liên hệ. Tải lại trang để thử lại."
+            )}
+          </p>
+        ) : (
+          <Table
+            columns={historyColumns}
+            rows={historyRows}
+            rowKey={(row, index) => `${row.time}-${row.customer}-${index}`}
+            emptyText="Chưa có lịch sử liên hệ. Ghi nhật ký cuộc gọi ở tab Công việc để hiện ở đây."
+            bare
+          />
+        )}
       </div>
 
       <Modal
