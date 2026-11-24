@@ -12,7 +12,6 @@ import {
   CONTACT_HISTORY,
   CSKH_KPIS,
   TICKET_CHANNELS,
-  TICKET_ROWS,
   TICKET_STATUSES,
   TICKET_STATUS_PILL,
   TICKET_TYPES,
@@ -27,15 +26,20 @@ import {
   DEMO_CSKH_ACCOUNTS,
   type ApiAssignment,
   type ApiCallLog,
+  type ApiTicketKpis,
   type AssignmentStatus,
   type CallResult,
   type CallsError,
   type PriorityRow,
   type ReturnChannelStat,
   type ReturnsError,
+  type TicketsError,
 } from "./customer-care-types";
 
 interface CskhClientProps {
+  tickets: TicketRow[];
+  ticketKpis: ApiTicketKpis | null;
+  ticketsError: TicketsError | null;
   returnChannels: ReturnChannelStat[];
   pendingReturns: number | null;
   returnsError: ReturnsError | null;
@@ -48,6 +52,14 @@ interface CskhClientProps {
 }
 
 const PAGE_SIZE = 6;
+
+// Trạng thái kế tiếp khi đổi trạng thái ticket: chỉ đi xuôi 1 bước,
+// không nhảy cóc, không quay lại trạng thái trước.
+const NEXT_TICKET_STATUS: Record<Exclude<TicketStatus, "Đã đóng">, TicketStatus> = {
+  "Mới": "Đang xử lý",
+  "Đang xử lý": "Chờ khách",
+  "Chờ khách": "Đã đóng",
+};
 
 const ticketColumns: TableColumn<TicketRow>[] = [
   { key: "id", header: "Mã YC", render: (row) => <span className="font-medium text-gray-900">{row.id}</span>, cellClassName: "w-[100px]" },
@@ -112,6 +124,9 @@ const staffColumns: TableColumn<StaffRow>[] = [
 ];
 
 export default function CskhPage({
+  tickets,
+  ticketKpis,
+  ticketsError,
   returnChannels,
   pendingReturns,
   returnsError,
@@ -122,20 +137,23 @@ export default function CskhPage({
   username,
   roles,
 }: CskhClientProps) {
-  const [tickets, setTickets] = useState<TicketRow[]>(TICKET_ROWS);
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [channelFilter, setChannelFilter] = useState("");
   const [callOnly, setCallOnly] = useState(false);
   const [page, setPage] = useState(1);
-  const [createdCount, setCreatedCount] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
   const [formCustomer, setFormCustomer] = useState("");
   const [formOrderId, setFormOrderId] = useState("");
   const [formType, setFormType] = useState<TicketType>("Giao trễ");
   const [formChannel, setFormChannel] = useState<TicketChannel>("Chat");
   const [formContent, setFormContent] = useState("");
+  // Lỗi và trạng thái bận của thao tác ticket (tạo mới, đổi trạng thái).
+  const [ticketFormError, setTicketFormError] = useState("");
+  const [ticketErrorText, setTicketErrorText] = useState("");
+  const [busyTicket, setBusyTicket] = useState<string | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
   const bannerCounts = useMemo(
@@ -161,13 +179,23 @@ export default function CskhPage({
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Thẻ "Hoàn / trả chờ xử lý" lấy số trả hàng chờ xử lý từ API; 4 thẻ
-  // đầu vẫn là số mẫu đóng băng. Tải lỗi thì thẻ này hiện dấu gạch ngang.
-  const kpis = CSKH_KPIS.map((kpi) =>
-    kpi.label === "Hoàn / trả chờ xử lý"
-      ? { ...kpi, value: pendingReturns === null ? "–" : pendingReturns }
-      : kpi,
-  );
+  // 4 thẻ đầu lấy số ticket từ API; thẻ "Hoàn / trả chờ xử lý" lấy số
+  // trả hàng chờ xử lý từ API. Tải lỗi thì thẻ đó hiện dấu gạch ngang.
+  const ticketKpiByLabel: Record<string, number> = {
+    "Yêu cầu mới": ticketKpis?.newRequests ?? 0,
+    "Đang xử lý": ticketKpis?.inProgress ?? 0,
+    "Chờ khách phản hồi": ticketKpis?.waitingCustomer ?? 0,
+    "Đã đóng hôm nay": ticketKpis?.closedToday ?? 0,
+  };
+  const kpis = CSKH_KPIS.map((kpi) => {
+    if (kpi.label === "Hoàn / trả chờ xử lý") {
+      return { ...kpi, value: pendingReturns === null ? "–" : pendingReturns };
+    }
+    return {
+      ...kpi,
+      value: ticketKpis === null ? "–" : (ticketKpiByLabel[kpi.label] ?? 0),
+    };
+  });
 
   // Tổng panel hoàn hàng theo kênh, tính từ các dòng theo kênh để tiêu
   // đề khớp với tổng các dòng.
@@ -202,37 +230,56 @@ export default function CskhPage({
     setFormType("Giao trễ");
     setFormChannel("Chat");
     setFormContent("");
+    setTicketFormError("");
     setFormOpen(true);
   };
 
-  const submitTicket = () => {
+  // Tạo ticket mới qua API rồi tải lại dữ liệu server; ticket mới có
+  // trạng thái "Mới", chưa gán người xử lý, hiện đầu bảng. Lỗi hiện
+  // message của API trong form.
+  const submitTicket = async () => {
     if (!formCustomer.trim() || !formOrderId.trim() || !formContent.trim()) return;
-    const now = new Date();
-    const updated = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    setTickets((prev) => [
-      {
-        id: `YC-0${32 + createdCount}`,
-        customer: formCustomer.trim(),
-        orderId: formOrderId.trim(),
-        type: formType,
-        channel: formChannel,
-        content: formContent.trim(),
-        status: "Mới",
-        handler: "Chưa gán",
-        updated,
-        needsCall: false,
-      },
-      ...prev,
-    ]);
-    setCreatedCount((count) => count + 1);
-    setPage(1);
-    setFormOpen(false);
+    setBusyTicket("create");
+    setTicketFormError("");
+    try {
+      const response = await fetch("/api/tickets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          customer: formCustomer.trim(),
+          orderId: formOrderId.trim(),
+          type: formType,
+          channel: formChannel,
+          content: formContent.trim(),
+        }),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setTicketFormError(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Tạo yêu cầu lỗi (${response.status}).`,
+        );
+        return;
+      }
+      setPage(1);
+      setFormOpen(false);
+      router.refresh();
+    } catch {
+      setTicketFormError("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setBusyTicket(null);
+    }
   };
 
   // ---- Mục Cuộc gọi (gộp từ màn Telesale cũ) ----
-  const router = useRouter();
   const isDispatcher = roles.includes("Điều phối viên");
   const isCskh = roles.includes("Nhân viên chăm sóc khách hàng");
+  // Ghi ticket (tạo mới, đổi trạng thái): chỉ CSKH, Quản lý và Quản trị
+  // viên; điều phối viên chỉ xem bảng ticket để chia đơn gọi điện.
+  const canWriteTicket =
+    isCskh || roles.includes("Quản lý") || roles.includes("Quản trị viên");
 
   const [assignTo, setAssignTo] = useState<Record<string, string>>({});
   const [callsErrorText, setCallsErrorText] = useState("");
@@ -457,7 +504,7 @@ export default function CskhPage({
       render: (row) => {
         const item = latestAssignmentByOrder.get(row.id);
         const label = assignmentLabel(row);
-        return (
+              return (
           <span className="flex flex-col gap-1">
             <span
               className={`inline-flex h-[22px] w-fit items-center rounded-full px-[10px] text-xs font-medium ${ASSIGN_STATUS_PILL[label] ?? "bg-gray-100 text-gray-700"}`}
@@ -514,17 +561,82 @@ export default function CskhPage({
     });
   }
 
+  // Đổi trạng thái ticket: chỉ đi xuôi 1 bước, gọi API rồi tải lại dữ
+  // liệu server. Ẩn/hiện nút chỉ là tiện ích giao diện; API kiểm tra
+  // lại vai trò và trạng thái ở mỗi thao tác.
+  const changeTicketStatus = async (row: TicketRow) => {
+    const next = row.status === "Đã đóng" ? null : NEXT_TICKET_STATUS[row.status];
+    if (!next) return;
+    setBusyTicket(`status-${row.id}`);
+    setTicketErrorText("");
+    try {
+      const response = await fetch(`/api/tickets/${encodeURIComponent(row.id)}/status`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: next }),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setTicketErrorText(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Đổi trạng thái lỗi (${response.status}).`,
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setTicketErrorText("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setBusyTicket(null);
+    }
+  };
+
+  // Bảng ticket thêm cột Thao tác khi vai được ghi: nút chuyển sang trạng
+  // thái kế tiếp, chỉ hiện khi ticket chưa đóng. Vai không được ghi thì
+  // bảng giữ nguyên 9 cột đóng băng.
+  const ticketTableColumns: TableColumn<TicketRow>[] = canWriteTicket
+    ? [
+        ...ticketColumns,
+        {
+          key: "action",
+          header: "Thao tác",
+          render: (row) => {
+            const next = row.status === "Đã đóng" ? null : NEXT_TICKET_STATUS[row.status];
+            if (!next) {
+              return <span className="text-xs text-gray-400">Đã đóng</span>;
+            }
+            const busy = busyTicket === `status-${row.id}`;
+            return (
+              <button
+                type="button"
+                disabled={busyTicket !== null}
+                onClick={() => changeTicketStatus(row)}
+                className="flex h-8 items-center justify-center whitespace-normal rounded-md border border-gray-300 px-2 text-xs font-medium text-gray-700 disabled:opacity-50"
+              >
+                {busy ? "Đang chuyển..." : `Chuyển sang ${next}`}
+              </button>
+            );
+          },
+          cellClassName: "w-[160px]",
+        },
+      ]
+    : ticketColumns;
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
         <h1 className="flex-1 text-xl font-semibold text-gray-900">Chăm sóc khách hàng</h1>
-        <button
-          type="button"
-          onClick={openForm}
-          className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white"
-        >
-          Tạo yêu cầu hỗ trợ
-        </button>
+        {canWriteTicket && (
+          <button
+            type="button"
+            onClick={openForm}
+            className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white"
+          >
+            Tạo yêu cầu hỗ trợ
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
@@ -536,6 +648,25 @@ export default function CskhPage({
         ))}
       </div>
 
+      {ticketsError !== null ? (
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+          <p className="text-sm font-semibold text-gray-900">Yêu cầu hỗ trợ</p>
+          <p className="mt-2 text-sm text-gray-700">
+            {ticketsError === "unauthorized" ? (
+              <>
+                Phiên đăng nhập đã hết hạn.{" "}
+                <Link href="/api/auth/login" className="font-medium text-red-700 underline">
+                  Đăng nhập lại
+                </Link>{" "}
+                để xem yêu cầu hỗ trợ từ API.
+              </>
+            ) : (
+              "Không tải được yêu cầu hỗ trợ. Tải lại trang để thử lại."
+            )}
+          </p>
+        </div>
+      ) : (
+        <>
       <div className="rounded-lg border border-gray-200 bg-white">
         <div className="flex items-center gap-3 px-4 py-3">
           <p className="flex-1 text-sm">
@@ -622,8 +753,11 @@ export default function CskhPage({
         <div className="flex h-11 items-center px-4">
           <p className="text-sm font-semibold text-gray-900">Yêu cầu hỗ trợ</p>
         </div>
+        {ticketErrorText !== "" && (
+          <p className="px-4 pb-2 text-sm text-red-700">{ticketErrorText}</p>
+        )}
         <Table
-          columns={ticketColumns}
+          columns={ticketTableColumns}
           rows={pageRows}
           rowKey={(row) => row.id}
           emptyText="Không có yêu cầu nào khớp bộ lọc"
@@ -636,6 +770,8 @@ export default function CskhPage({
           range={{ start: filtered.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1, end: Math.min(page * PAGE_SIZE, filtered.length), total: filtered.length }}
         />
       </div>
+        </>
+      )}
 
       <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
         <p className="text-sm font-semibold text-gray-900">
@@ -949,10 +1085,10 @@ export default function CskhPage({
             <button
               type="button"
               onClick={submitTicket}
-              disabled={!formCustomer.trim() || !formOrderId.trim() || !formContent.trim()}
+              disabled={!formCustomer.trim() || !formOrderId.trim() || !formContent.trim() || busyTicket !== null}
               className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white disabled:opacity-50"
             >
-              Tạo yêu cầu
+              {busyTicket === "create" ? "Đang tạo..." : "Tạo yêu cầu"}
             </button>
           </>
         }
@@ -1017,6 +1153,9 @@ export default function CskhPage({
             />
           </div>
           <p className="text-xs text-gray-500">Yêu cầu mới tạo có trạng thái &quot;Mới&quot;, chưa gán người xử lý, hiện đầu bảng.</p>
+          {ticketFormError !== "" && (
+            <p className="text-sm text-red-700">{ticketFormError}</p>
+          )}
         </div>
       </Modal>
     </div>
