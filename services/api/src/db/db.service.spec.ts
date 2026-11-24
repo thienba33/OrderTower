@@ -15,7 +15,7 @@ describe('DbService', () => {
     }
   });
 
-  it('migration 001, 002, 003, 004, 005, 006, 007, 008, 009, 010, 011 và 012 áp dụng được và chạy lại là không làm gì thêm', async () => {
+  it('migration 001, 002, 003, 004, 005, 006, 007, 008, 009, 010, 011, 012 và 013 áp dụng được và chạy lại là không làm gì thêm', async () => {
     const db = await createTestDbService();
     const first = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
@@ -33,6 +33,7 @@ describe('DbService', () => {
       '010_assignments_call_logs',
       '011_restricted_flags',
       '012_bi',
+      '013_tickets',
     ]);
     for (const table of [
       'audit_log',
@@ -56,6 +57,7 @@ describe('DbService', () => {
       'bi_recommendations',
       'bi_feedback',
       'dx_score_snapshots',
+      'tickets',
       'schema_migrations',
     ]) {
       // Bảng tồn tại khi truy vấn được, dù chưa có hàng nào.
@@ -66,7 +68,7 @@ describe('DbService', () => {
     const second = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(second.rows).toHaveLength(12);
+    expect(second.rows).toHaveLength(13);
     expect((second.rows as Array<{ version: string }>).map((row) => row.version)).toEqual([
       '001_init',
       '002_shipments',
@@ -80,6 +82,7 @@ describe('DbService', () => {
       '010_assignments_call_logs',
       '011_restricted_flags',
       '012_bi',
+      '013_tickets',
     ]);
   });
 });
