@@ -104,6 +104,9 @@ export default function DistributionClient({
   const [page, setPage] = useState(1);
   const [staffSearch, setStaffSearch] = useState("");
   const [staffPage, setStaffPage] = useState(1);
+  // Trang của từng cột ở tab Cần chú ý; 2 cột phân trang độc lập nhau.
+  const [waitingPage, setWaitingPage] = useState(1);
+  const [packingPage, setPackingPage] = useState(1);
   const [dialogRow, setDialogRow] = useState<PackingRow | null>(null);
   const [dialogAssignee, setDialogAssignee] = useState("");
   const [dialogErrorText, setDialogErrorText] = useState("");
@@ -208,6 +211,45 @@ export default function DistributionClient({
     () => packingRows.filter((row) => row.order.state === "Đang đóng gói"),
     [packingRows],
   );
+
+  // Phân trang 2 cột ở tab Cần chú ý, theo đúng mẫu của tab Xem tất cả
+  // và tab Nhân viên: 5 dòng/trang, trang an toàn kẹp trong tổng số
+  // trang, khoảng hiển thị dạng 1-5 / tổng.
+  const waitingTotalPages = Math.max(
+    1,
+    Math.ceil(unassignedWaiting.length / PAGE_SIZE),
+  );
+  const waitingSafePage = Math.min(waitingPage, waitingTotalPages);
+  const waitingPaged = unassignedWaiting.slice(
+    (waitingSafePage - 1) * PAGE_SIZE,
+    waitingSafePage * PAGE_SIZE,
+  );
+  const waitingRange =
+    unassignedWaiting.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (waitingSafePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(waitingSafePage * PAGE_SIZE, unassignedWaiting.length),
+          total: unassignedWaiting.length,
+        };
+
+  const packingTotalPages = Math.max(
+    1,
+    Math.ceil(packingInProgress.length / PAGE_SIZE),
+  );
+  const packingSafePage = Math.min(packingPage, packingTotalPages);
+  const packingPaged = packingInProgress.slice(
+    (packingSafePage - 1) * PAGE_SIZE,
+    packingSafePage * PAGE_SIZE,
+  );
+  const packingRange =
+    packingInProgress.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (packingSafePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(packingSafePage * PAGE_SIZE, packingInProgress.length),
+          total: packingInProgress.length,
+        };
 
   const filteredAll = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -670,7 +712,7 @@ export default function DistributionClient({
                     Không có đơn nào chờ phân công.
                   </p>
                 ) : (
-                  unassignedWaiting.map((row) => {
+                  waitingPaged.map((row) => {
                     const assignee = choiceFor(row.order.id);
                     const overloaded = overloadFor(assignee);
                     return (
@@ -728,6 +770,16 @@ export default function DistributionClient({
                     );
                   })
                 )}
+                {unassignedWaiting.length > 0 && (
+                  <div className="rounded-lg border border-gray-200 bg-white">
+                    <Pagination
+                      page={waitingSafePage}
+                      totalPages={waitingTotalPages}
+                      onPageChange={setWaitingPage}
+                      range={waitingRange}
+                    />
+                  </div>
+                )}
                 {attentionErrorText !== "" && (
                   <p className="text-sm text-red-700">{attentionErrorText}</p>
                 )}
@@ -742,7 +794,7 @@ export default function DistributionClient({
                     Không có đơn nào đang đóng gói.
                   </p>
                 ) : (
-                  packingInProgress.map((row) => (
+                  packingPaged.map((row) => (
                     <div key={row.order.id} className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4">
                       <p className="text-xs font-medium text-gray-900">
                         {row.order.id} - {itemsSummary(row.order)}
@@ -761,6 +813,16 @@ export default function DistributionClient({
                       </Link>
                     </div>
                   ))
+                )}
+                {packingInProgress.length > 0 && (
+                  <div className="rounded-lg border border-gray-200 bg-white">
+                    <Pagination
+                      page={packingSafePage}
+                      totalPages={packingTotalPages}
+                      onPageChange={setPackingPage}
+                      range={packingRange}
+                    />
+                  </div>
                 )}
               </div>
 
