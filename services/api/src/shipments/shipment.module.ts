@@ -7,6 +7,7 @@ import { DeliveryEventsModule } from '../delivery-events/delivery-event.module';
 import { DriversModule } from '../drivers/driver.module';
 import { ORDER_SHIPMENT_GATE } from '../orders/order-shipment-gate';
 import { OrdersModule } from '../orders/orders.module';
+import { StorageModule } from '../storage/storage.module';
 import { VehiclesModule } from '../vehicles/vehicle.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { ShipmentGateAdapter } from './shipment-gate.adapter';
@@ -27,6 +28,7 @@ import type { ShipmentStore } from './shipment.types';
     DeliveryEventsModule,
     DriversModule,
     forwardRef(() => OrdersModule),
+    StorageModule,
     VehiclesModule,
     WorkflowModule,
   ],

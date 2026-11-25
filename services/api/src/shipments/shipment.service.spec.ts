@@ -607,7 +607,7 @@ describe('ShipmentsService', () => {
     );
     await expect(
       services.shipments.deliver(shipment.id, { proofPhotoKey: '' }, DRIVER),
-    ).rejects.toThrow('cần có proofPhotoKey');
+    ).rejects.toThrow('proofPhotoFileId');
   });
 
   it('giao hàng bởi Điều phối viên thì 409 và ghi audit denied', async () => {

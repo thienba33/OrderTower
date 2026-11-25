@@ -89,6 +89,7 @@ export interface ApiShipment {
   driverId: string | null;
   vehicleId: string | null;
   proofPhotoKey: string | null;
+  proofPhotoFileId?: string | null;
   history: ApiShipmentHistoryEntry[];
   createdAt: string;
   updatedAt: string;
