@@ -34,6 +34,7 @@ describe('DbService', () => {
       '011_restricted_flags',
       '012_bi',
       '013_tickets',
+      '014_files',
     ]);
     for (const table of [
       'audit_log',
@@ -58,6 +59,7 @@ describe('DbService', () => {
       'bi_feedback',
       'dx_score_snapshots',
       'tickets',
+      'files',
       'schema_migrations',
     ]) {
       // Bảng tồn tại khi truy vấn được, dù chưa có hàng nào.
@@ -68,7 +70,7 @@ describe('DbService', () => {
     const second = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(second.rows).toHaveLength(13);
+    expect(second.rows).toHaveLength(14);
     expect((second.rows as Array<{ version: string }>).map((row) => row.version)).toEqual([
       '001_init',
       '002_shipments',
@@ -83,6 +85,7 @@ describe('DbService', () => {
       '011_restricted_flags',
       '012_bi',
       '013_tickets',
+      '014_files',
     ]);
   });
 });

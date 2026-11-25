@@ -218,14 +218,14 @@ function DriverDetailOk({ view }: { view: Extract<DriverDetailView, { kind: "ok"
   const [nextStatus, setNextStatus] = useState<UpdateChoice>("Đã giao");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogStatus, setDialogStatus] = useState<UpdateChoice>("Đã giao");
-  const [proofPhotoKey, setProofPhotoKey] = useState("");
+  const [proofPhotoFile, setProofPhotoFile] = useState<File | null>(null);
   const [failReason, setFailReason] = useState("");
   const [dialogError, setDialogError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const openDialog = (preset: UpdateChoice) => {
     setDialogStatus(preset);
-    setProofPhotoKey("");
+    setProofPhotoFile(null);
     setFailReason("");
     setDialogError("");
     setDialogOpen(true);
@@ -233,7 +233,9 @@ function DriverDetailOk({ view }: { view: Extract<DriverDetailView, { kind: "ok"
 
   const canConfirm =
     !submitting &&
-    (dialogStatus === "Đã giao" ? proofPhotoKey.trim() !== "" : failReason.trim() !== "");
+    (dialogStatus === "Đã giao"
+      ? proofPhotoFile !== null
+      : failReason.trim() !== "");
 
   const confirmUpdate = async () => {
     if (!canConfirm) {
@@ -241,29 +243,73 @@ function DriverDetailOk({ view }: { view: Extract<DriverDetailView, { kind: "ok"
     }
     setSubmitting(true);
     setDialogError("");
-    const path =
-      dialogStatus === "Đã giao"
-        ? `/api/shipments/${shipment.id}/deliver`
-        : `/api/shipments/${shipment.id}/fail`;
-    const body =
-      dialogStatus === "Đã giao"
-        ? { proofPhotoKey: proofPhotoKey.trim() }
-        : { reason: failReason.trim() };
     try {
-      const response = await fetch(path, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        const data: unknown = await response.json().catch(() => null);
-        const message = (data as { message?: unknown } | null)?.message;
-        setDialogError(
-          typeof message === "string" && message !== ""
-            ? message
-            : `Cập nhật giao hàng lỗi (${response.status}).`,
+      if (dialogStatus === "Đã giao") {
+        if (!proofPhotoFile) {
+          setDialogError("Chọn ảnh bằng chứng giao hàng.");
+          return;
+        }
+        const form = new FormData();
+        form.append("file", proofPhotoFile);
+        form.append("kind", "proof_photo");
+        form.append("orderId", order.id);
+        const upload = await fetch("/api/files", {
+          method: "POST",
+          body: form,
+        });
+        if (!upload.ok) {
+          const data: unknown = await upload.json().catch(() => null);
+          const message = (data as { message?: unknown } | null)?.message;
+          setDialogError(
+            typeof message === "string" && message !== ""
+              ? message
+              : `Upload ảnh bằng chứng lỗi (${upload.status}).`,
+          );
+          return;
+        }
+        const uploaded: unknown = await upload.json().catch(() => null);
+        const fileId = (uploaded as { id?: unknown } | null)?.id;
+        if (typeof fileId !== "string" || fileId === "") {
+          setDialogError("API không trả về mã file bằng chứng.");
+          return;
+        }
+        const response = await fetch(
+          `/api/shipments/${shipment.id}/deliver`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ proofPhotoFileId: fileId }),
+          },
         );
-        return;
+        if (!response.ok) {
+          const data: unknown = await response.json().catch(() => null);
+          const message = (data as { message?: unknown } | null)?.message;
+          setDialogError(
+            typeof message === "string" && message !== ""
+              ? message
+              : `Cập nhật giao hàng lỗi (${response.status}).`,
+          );
+          return;
+        }
+      } else {
+        const response = await fetch(
+          `/api/shipments/${shipment.id}/fail`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ reason: failReason.trim() }),
+          },
+        );
+        if (!response.ok) {
+          const data: unknown = await response.json().catch(() => null);
+          const message = (data as { message?: unknown } | null)?.message;
+          setDialogError(
+            typeof message === "string" && message !== ""
+              ? message
+              : `Cập nhật giao hàng lỗi (${response.status}).`,
+          );
+          return;
+        }
       }
       setDialogOpen(false);
       router.refresh();
@@ -455,20 +501,21 @@ function DriverDetailOk({ view }: { view: Extract<DriverDetailView, { kind: "ok"
           </div>
           {dialogStatus === "Đã giao" ? (
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="driver-proof-key" className="text-sm font-medium text-gray-700">
-                Khóa tệp bằng chứng (bắt buộc)
+              <label htmlFor="driver-proof-file" className="text-sm font-medium text-gray-700">
+                Ảnh bằng chứng giao hàng (bắt buộc)
               </label>
               <input
-                id="driver-proof-key"
-                type="text"
-                value={proofPhotoKey}
-                onChange={(event) => setProofPhotoKey(event.target.value)}
-                placeholder="Nhập khóa tệp bằng chứng"
-                aria-label="Khóa tệp bằng chứng"
-                className={INPUT_CLASS}
+                id="driver-proof-file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) =>
+                  setProofPhotoFile(event.target.files?.[0] ?? null)
+                }
+                aria-label="Ảnh bằng chứng giao hàng"
+                className="text-sm text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-red-700 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-red-800"
               />
               <p className="text-xs text-gray-500">
-                Nhập khóa tệp bằng chứng đã lưu trong kho đối tượng; upload file làm sau.
+                Ảnh được upload lên kho đối tượng và kiểm dịch trước khi giao.
               </p>
             </div>
           ) : (

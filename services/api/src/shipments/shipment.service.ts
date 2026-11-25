@@ -16,6 +16,7 @@ import { computeNextNumber } from '../db/id-counter';
 import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
 import type { DeliveryEventType } from '../delivery-events/delivery-event.types';
 import { OrdersService } from '../orders/orders.service';
+import { StorageService } from '../storage/storage.service';
 import { VehiclesService } from '../vehicles/vehicle.service';
 import type { Vehicle } from '../vehicles/vehicle.types';
 import { DriversService } from '../drivers/driver.service';
@@ -102,6 +103,11 @@ export class ShipmentsService implements OnModuleInit {
     // động: sự kiện là nhật ký, không phải rào chắn.
     @Optional()
     private readonly deliveryEvents?: DeliveryEventsService,
+    // Dịch vụ file tùy chọn: có khi chạy qua module, không có khi dựng
+    // service bằng tay trong test. Khi có, deliver có thể nhận file id
+    // bằng chứng thay vì chuỗi proofPhotoKey.
+    @Optional()
+    private readonly storage?: StorageService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có GH-1001 thì shipment mới là GH-1002,
@@ -152,6 +158,7 @@ export class ShipmentsService implements OnModuleInit {
       driverId: null,
       vehicleId: null,
       proofPhotoKey: null,
+      proofPhotoFileId: null,
       history: [
         {
           from: null,
@@ -527,12 +534,16 @@ export class ShipmentsService implements OnModuleInit {
     // thời gian, vắng thì lấy thời điểm hiện tại.
     opts?: { at?: string },
   ): Promise<Shipment> {
-    const proofPhotoKey = requireNonEmpty(
-      input.proofPhotoKey,
-      'Giao hàng cần có proofPhotoKey (khóa tệp bằng chứng).',
-    );
     const shipment = await this.get(id);
     const now = opts?.at ?? new Date().toISOString();
+    let proofPhotoKey =
+      typeof input.proofPhotoKey === 'string'
+        ? input.proofPhotoKey.trim()
+        : '';
+    const proofPhotoFileId =
+      typeof input.proofPhotoFileId === 'string'
+        ? input.proofPhotoFileId.trim()
+        : '';
     const deny = async (reason: string): Promise<never> => {
       await this.audit.append({
         actor: caller.username,
@@ -546,6 +557,30 @@ export class ShipmentsService implements OnModuleInit {
       });
       throw new ConflictException(reason);
     };
+    if (proofPhotoFileId !== '') {
+      if (!this.storage) {
+        await deny(
+          'Chưa nối dịch vụ file nên không kiểm tra được proofPhotoFileId.',
+        );
+      }
+      try {
+        const file = await this.storage!.getProofPhotoForOrder(
+          proofPhotoFileId,
+          shipment.orderId,
+        );
+        proofPhotoKey = file.objectKey;
+      } catch (error) {
+        await deny(
+          error instanceof Error
+            ? error.message
+            : `File bằng chứng ${proofPhotoFileId} không hợp lệ.`,
+        );
+      }
+    } else if (proofPhotoKey === '') {
+      await deny(
+        'Giao hàng cần proofPhotoFileId (file đã upload) hoặc proofPhotoKey.',
+      );
+    }
     if (shipment.status !== 'Đang giao') {
       await deny(
         `Shipment ${id} đang ở trạng thái "${shipment.status}", không giao hàng được.`,
@@ -566,6 +601,8 @@ export class ShipmentsService implements OnModuleInit {
     const from = shipment.status;
     shipment.status = 'Đã giao';
     shipment.proofPhotoKey = proofPhotoKey;
+    shipment.proofPhotoFileId =
+      proofPhotoFileId !== '' ? proofPhotoFileId : null;
     shipment.updatedAt = now;
     shipment.history.push({
       from,
@@ -582,7 +619,9 @@ export class ShipmentsService implements OnModuleInit {
       orderId: shipment.orderId,
       from,
       to: 'Đã giao',
-      detail: `Bằng chứng ${proofPhotoKey}.`,
+      detail: `Bằng chứng ${proofPhotoKey}${
+        proofPhotoFileId !== '' ? ` (file ${proofPhotoFileId})` : ''
+      }.`,
     });
     await this.store.save(shipment);
     // Shipment đã lưu thì đơn mới theo được: rào chắn "có ảnh bằng chứng"

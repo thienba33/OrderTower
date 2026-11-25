@@ -19,6 +19,7 @@ import { RestrictedFlagModule } from './restricted-flags/restricted-flag.module'
 import { ReturnsModule } from './returns/return.module';
 import { SeedModule } from './seed/seed.module';
 import { ShipmentsModule } from './shipments/shipment.module';
+import { StorageModule } from './storage/storage.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { VehiclesModule } from './vehicles/vehicle.module';
 import { WorkflowModule } from './workflow/workflow.module';
@@ -40,6 +41,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     ReturnsModule,
     SeedModule,
     ShipmentsModule,
+    StorageModule,
     TicketsModule,
     VehiclesModule,
     WorkflowModule,

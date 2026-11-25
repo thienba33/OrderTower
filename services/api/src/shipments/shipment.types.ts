@@ -32,6 +32,9 @@ export interface Shipment {
   driverId: string | null;
   vehicleId: string | null;
   proofPhotoKey: string | null;
+  // File bằng chứng trong dịch vụ dữ liệu phi cấu trúc. Optional để dữ
+  // liệu cũ/seed chỉ có proofPhotoKey vẫn đọc được.
+  proofPhotoFileId?: string | null;
   history: ShipmentHistoryEntry[];
   createdAt: string;
   updatedAt: string;
@@ -47,7 +50,9 @@ export interface DispatchShipmentInput {
 }
 
 export interface DeliverShipmentInput {
-  proofPhotoKey: string;
+  // Một trong hai phải có: file id từ dịch vụ storage, hoặc khóa object cũ.
+  proofPhotoKey?: string;
+  proofPhotoFileId?: string;
 }
 
 export interface FailShipmentInput {

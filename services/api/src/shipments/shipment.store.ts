@@ -40,6 +40,8 @@ function mapShipmentRow(
     driverId: (row.driver_id as string | null) ?? null,
     vehicleId: (row.vehicle_id as string | null) ?? null,
     proofPhotoKey: (row.proof_photo_key as string | null) ?? null,
+    proofPhotoFileId:
+      (row.proof_photo_file_id as string | null | undefined) ?? null,
     history: historyRows.map(mapHistoryRow),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
@@ -47,7 +49,7 @@ function mapShipmentRow(
 }
 
 const SHIPMENT_COLUMNS = `id, order_id, status, driver_id, vehicle_id,
-  proof_photo_key, created_at, updated_at`;
+  proof_photo_key, proof_photo_file_id, created_at, updated_at`;
 
 const HISTORY_COLUMNS = `from_state, to_state, actor, role, reason,
   created_at`;
@@ -88,14 +90,15 @@ export class PostgresShipmentStore implements ShipmentStore {
       await client.query(
         `INSERT INTO shipments
            (id, order_id, status, driver_id, vehicle_id, proof_photo_key,
-            created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            proof_photo_file_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (id) DO UPDATE SET
            order_id = EXCLUDED.order_id,
            status = EXCLUDED.status,
            driver_id = EXCLUDED.driver_id,
            vehicle_id = EXCLUDED.vehicle_id,
            proof_photo_key = EXCLUDED.proof_photo_key,
+           proof_photo_file_id = EXCLUDED.proof_photo_file_id,
            created_at = EXCLUDED.created_at,
            updated_at = EXCLUDED.updated_at`,
         [
@@ -105,6 +108,7 @@ export class PostgresShipmentStore implements ShipmentStore {
           shipment.driverId,
           shipment.vehicleId,
           shipment.proofPhotoKey,
+          shipment.proofPhotoFileId ?? null,
           shipment.createdAt,
           shipment.updatedAt,
         ],
