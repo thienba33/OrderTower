@@ -38,12 +38,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     items: [
       { href: "/orders", icon: ClipboardList, label: "Đơn hàng" },
-      {
-        badge: "8",
-        href: "/approval-queue",
-        icon: Clock,
-        label: "Hàng đợi duyệt",
-      },
+      { href: "/approval-queue", icon: Clock, label: "Hàng đợi duyệt" },
       { href: "/restricted-list", icon: Ban, label: "Danh sách hạn chế" },
       { href: "/bi-dx-score", icon: BarChart3, label: "BI và DX-Score" },
       { href: "/address-split", icon: MapPin, label: "Phân tách địa chỉ" },

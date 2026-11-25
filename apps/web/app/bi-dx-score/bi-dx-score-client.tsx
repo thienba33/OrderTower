@@ -11,6 +11,7 @@ import {
   BI_TABS,
   type ApiDxRatio,
   type ApiDxScore,
+  type ApiFeedback,
   type ApiForecastRow,
   type ApiRecommendation,
   type BiDxScoreClientProps,
@@ -214,18 +215,49 @@ export default function BiDxScorePage({
     }));
   }, [forecastRows]);
 
-  const totalPages = Math.max(1, Math.ceil(forecastRows.length / PAGE_SIZE));
+  // Hàng theo kênh và hàng sắp hết tồn kho, dùng cho các tab Kênh bán và
+  // Tồn kho. daysLeft có sẵn trên từng dòng dự báo; chỉ khi API chưa trả
+  // daysLeft mới suy ra từ bất thường loại hết tồn kho.
+  const channelRows = useMemo(
+    () => forecastRows.filter((row) => row.channelId !== null),
+    [forecastRows],
+  );
+  const lowStockRows = useMemo(() => {
+    const aggregate = forecastRows.filter((row) => row.channelId === null);
+    if (aggregate.some((row) => row.daysLeft !== null)) {
+      return aggregate.filter(
+        (row) => row.daysLeft !== null && row.daysLeft < 7,
+      );
+    }
+    const lowSkus = new Set(
+      anomalies
+        .filter((anomaly) => anomaly.type === "ton-kho-sap-het")
+        .map((anomaly) => anomaly.sku),
+    );
+    return aggregate.filter((row) => lowSkus.has(row.sku));
+  }, [forecastRows, anomalies]);
+
+  // Mỗi tab bảng dùng một tập dòng riêng; đổi tab thì về trang 1 để
+  // không kẹt ở số trang vượt quá tổng số trang của tập mới.
+  const tabRows = useMemo(() => {
+    if (activeTab === "Kênh bán") return channelRows;
+    if (activeTab === "Tồn kho") return lowStockRows;
+    if (activeTab === "Thực tế" || activeTab === "Dự báo") return forecastRows;
+    return [];
+  }, [activeTab, channelRows, lowStockRows, forecastRows]);
+
+  const totalPages = Math.max(1, Math.ceil(tabRows.length / PAGE_SIZE));
   const pageRows = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
-    return forecastRows.slice(start, start + PAGE_SIZE);
-  }, [forecastRows, page]);
+    return tabRows.slice(start, start + PAGE_SIZE);
+  }, [tabRows, page]);
   const range = useMemo(
     () => ({
       start: (page - 1) * PAGE_SIZE + 1,
-      end: Math.min(page * PAGE_SIZE, forecastRows.length),
-      total: forecastRows.length,
+      end: Math.min(page * PAGE_SIZE, tabRows.length),
+      total: tabRows.length,
     }),
-    [forecastRows, page],
+    [tabRows, page],
   );
 
   const decide = async (
@@ -315,6 +347,26 @@ export default function BiDxScorePage({
       cellClassName: "w-[129px]",
     },
     { key: "explanation", header: "Giải thích (đầu vào)", render: (row) => forecastExplanation(row), cellClassName: "w-[299px] !whitespace-normal" },
+  ];
+
+  // Tab Thực tế chỉ hiện doanh số thật: 7 ngày qua so với 7 ngày trước
+  // đó, cùng cột thay đổi; không hiện dự báo và giải thích.
+  const actualColumns: TableColumn<ApiForecastRow>[] = [
+    ...forecastColumns.filter((column) =>
+      ["sku", "name", "channel", "lastWeek"].includes(column.key),
+    ),
+    { key: "prevWeek", header: "7 ngày trước đó", render: (row) => String(row.salesPrev7d), cellClassName: "w-[129px]" },
+    ...forecastColumns.filter((column) => column.key === "change"),
+  ];
+
+  // Tab Tồn kho chỉ hiện các SKU sắp hết hàng, kèm số ngày còn lại.
+  const lowStockColumns: TableColumn<ApiForecastRow>[] = [
+    { key: "sku", header: "SKU", render: (row) => <span className="font-medium text-gray-900">{row.sku}</span>, cellClassName: "w-[129px]" },
+    { key: "name", header: "Sản phẩm", render: (row) => row.name ?? row.sku, cellClassName: "w-[218px]" },
+    { key: "stock", header: "Tồn kho", render: (row) => String(row.stock), cellClassName: "w-[129px]" },
+    { key: "velocity", header: "Tốc độ bán/ngày", render: (row) => String(row.velocityPerDay), cellClassName: "w-[129px]" },
+    { key: "daysLeft", header: "Số ngày còn lại", render: (row) => (row.daysLeft === null ? "-" : String(row.daysLeft)), cellClassName: "w-[129px]" },
+    { key: "forecast", header: "Dự báo 7 ngày", render: (row) => String(row.forecast7d), cellClassName: "w-[129px]" },
   ];
 
   const renderRecommendationActions = (row: ApiRecommendation) => {
@@ -434,6 +486,20 @@ export default function BiDxScorePage({
     { key: "actions", header: "Hành động", render: (row) => renderRecommendationActions(row), cellClassName: "w-[199px]" },
   ];
 
+  const recommendationById = useMemo(
+    () => new Map(recommendations.map((rec) => [rec.id, rec])),
+    [recommendations],
+  );
+
+  // Bảng phản hồi đã ghi, dùng cho tab Hoạt động.
+  const feedbackColumns: TableColumn<ApiFeedback>[] = [
+    { key: "title", header: "Đề xuất", render: (item) => recommendationById.get(item.recommendationId)?.title ?? item.recommendationId, cellClassName: "w-[259px] !whitespace-normal" },
+    { key: "correct", header: "Xác minh", render: (item) => (item.correct ? "Đúng" : "Sai"), cellClassName: "w-[119px]" },
+    { key: "by", header: "Người ghi", render: (item) => item.recordedBy, cellClassName: "w-[159px]" },
+    { key: "at", header: "Thời gian", render: (item) => formatDateTime(item.recordedAt), cellClassName: "w-[159px]" },
+    { key: "note", header: "Ghi chú", render: (item) => item.note ?? "-", cellClassName: "w-[258px] !whitespace-normal" },
+  ];
+
   const dxAxes = dxScore
     ? [
         { key: "P", value: dxScore.p.score, max: 30 },
@@ -540,6 +606,18 @@ export default function BiDxScorePage({
     { key: "check", header: "Kiểm tra", render: () => "Xem log gốc", cellClassName: "w-[239px]" },
   ];
 
+  // Tiêu đề, cột và dòng trống của bảng ở 4 tab dùng bảng dự báo.
+  const tabTable =
+    activeTab === "Thực tế"
+      ? { title: "Doanh số thật - 7 ngày qua so với 7 ngày trước", columns: actualColumns, emptyText: "Không có dữ liệu dự báo." }
+      : activeTab === "Dự báo"
+        ? { title: "Dự báo nhu cầu theo SKU và kênh (7 ngày tới)", columns: forecastColumns, emptyText: undefined }
+        : activeTab === "Kênh bán"
+          ? { title: "Dự báo nhu cầu theo kênh (7 ngày tới)", columns: forecastColumns, emptyText: "Không có dữ liệu theo kênh." }
+          : activeTab === "Tồn kho"
+            ? { title: "SKU sắp hết hàng - dưới 7 ngày tồn kho", columns: lowStockColumns, emptyText: "Không có SKU sắp hết hàng." }
+            : null;
+
   const hWaitEmpty =
     dxScore !== null &&
     dxScore.h.avgApprovalWaitMsByType.length === 0 &&
@@ -561,7 +639,10 @@ export default function BiDxScorePage({
             type="button"
             role="tab"
             aria-selected={activeTab === tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => {
+              setActiveTab(tab);
+              setPage(1);
+            }}
             className={`flex h-9 items-center justify-center rounded-md px-4 text-sm ${
               activeTab === tab
                 ? "bg-red-700 font-medium text-white"
@@ -573,194 +654,219 @@ export default function BiDxScorePage({
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        <div className="rounded-lg border bg-white p-5">
-          <p className="text-sm font-medium text-gray-500">SKU đủ lịch sử</p>
-          <p className="mt-3 text-2xl font-semibold text-gray-900">
-            {forecastError !== null
-              ? "–"
-              : `${skuWithHistory} / ${aggregateRows.length}`}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-white p-5">
-          <p className="text-sm font-medium text-gray-500">Bất thường đang mở</p>
-          <p className="mt-3 text-2xl font-semibold text-gray-900">
-            {biError !== null ? "–" : anomalies.length}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-white p-5">
-          <p className="text-sm font-medium text-gray-500">Đề xuất chờ duyệt</p>
-          <p className="mt-3 text-2xl font-semibold text-gray-900">
-            {biError !== null ? "–" : pendingRecommendations}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-white p-5">
-          <p className="text-sm font-medium text-gray-500">Phản hồi đã ghi</p>
-          <p className="mt-3 text-2xl font-semibold text-gray-900">
-            {biError !== null ? "–" : feedback.length}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-white p-5">
-          <p className="text-sm font-medium text-gray-500">DX-Score</p>
-          <p className="mt-3 text-2xl font-semibold text-gray-900">
-            {dxScore === null ? "–" : `${dxScore.total} / 100`}
-          </p>
-        </div>
-      </div>
+      {activeTab === "Tổng quan" && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+            <div className="rounded-lg border bg-white p-5">
+              <p className="text-sm font-medium text-gray-500">SKU đủ lịch sử</p>
+              <p className="mt-3 text-2xl font-semibold text-gray-900">
+                {forecastError !== null
+                  ? "–"
+                  : `${skuWithHistory} / ${aggregateRows.length}`}
+              </p>
+            </div>
+            <div className="rounded-lg border bg-white p-5">
+              <p className="text-sm font-medium text-gray-500">Bất thường đang mở</p>
+              <p className="mt-3 text-2xl font-semibold text-gray-900">
+                {biError !== null ? "–" : anomalies.length}
+              </p>
+            </div>
+            <div className="rounded-lg border bg-white p-5">
+              <p className="text-sm font-medium text-gray-500">Đề xuất chờ duyệt</p>
+              <p className="mt-3 text-2xl font-semibold text-gray-900">
+                {biError !== null ? "–" : pendingRecommendations}
+              </p>
+            </div>
+            <div className="rounded-lg border bg-white p-5">
+              <p className="text-sm font-medium text-gray-500">Phản hồi đã ghi</p>
+              <p className="mt-3 text-2xl font-semibold text-gray-900">
+                {biError !== null ? "–" : feedback.length}
+              </p>
+            </div>
+            <div className="rounded-lg border bg-white p-5">
+              <p className="text-sm font-medium text-gray-500">DX-Score</p>
+              <p className="mt-3 text-2xl font-semibold text-gray-900">
+                {dxScore === null ? "–" : `${dxScore.total} / 100`}
+              </p>
+            </div>
+          </div>
 
-      <div className="flex flex-col gap-3 xl:flex-row">
-        <section className="min-w-0 flex-1 rounded-lg border bg-white p-4">
-          <h2 className="text-sm font-semibold text-gray-900">Dự báo tuần tới - nhóm SKU đủ lịch sử</h2>
+          <div className="flex flex-col gap-3 xl:flex-row">
+            <section className="min-w-0 flex-1 rounded-lg border bg-white p-4">
+              <h2 className="text-sm font-semibold text-gray-900">Dự báo tuần tới - nhóm SKU đủ lịch sử</h2>
+              {forecastError !== null ? (
+                <SectionError error={forecastError} />
+              ) : (
+                <div className="mt-3 flex flex-col gap-3">
+                  {miniRows.map((row) => (
+                    <div key={`${row.sku}-${row.channelId ?? "all"}`} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <p className="flex-1 text-[13px] font-medium text-gray-900">
+                          {row.sku} - {row.channelId === null ? "Tất cả" : (channelNameById[row.channelId] ?? row.channelId)}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {row.forecast7d} đơn (tuần trước {row.salesLast7d}, {formatChange(row.change)})
+                        </p>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-2 rounded-full bg-red-700" style={{ width: `${row.barPercent}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-lg border bg-white p-4 xl:w-[468px] xl:shrink-0">
+              <h2 className="text-sm font-semibold text-gray-900">Những việc cần làm</h2>
+              <div className="mt-3 flex flex-col gap-3">
+                {BI_TODOS.map((todo) => (
+                  <div key={todo.rank} className="flex items-center gap-2">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-red-700 text-xs font-bold text-white">
+                      {todo.rank}
+                    </span>
+                    <p className="flex-1 text-[13px] text-gray-700">{todo.text}</p>
+                    <Link
+                      href={todo.href}
+                      className="flex h-8 shrink-0 items-center justify-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white"
+                    >
+                      {todo.button}
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </>
+      )}
+
+      {tabTable !== null && (
+        <section className="overflow-x-auto rounded-lg border bg-white">
+          <div className="flex h-11 items-center px-4">
+            <h2 className="text-sm font-semibold text-gray-900">{tabTable.title}</h2>
+          </div>
           {forecastError !== null ? (
             <SectionError error={forecastError} />
           ) : (
-            <div className="mt-3 flex flex-col gap-3">
-              {miniRows.map((row) => (
-                <div key={`${row.sku}-${row.channelId ?? "all"}`} className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <p className="flex-1 text-[13px] font-medium text-gray-900">
-                      {row.sku} - {row.channelId === null ? "Tất cả" : (channelNameById[row.channelId] ?? row.channelId)}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {row.forecast7d} đơn (tuần trước {row.salesLast7d}, {formatChange(row.change)})
-                    </p>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
-                    <div className="h-2 rounded-full bg-red-700" style={{ width: `${row.barPercent}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <>
+              <Table columns={tabTable.columns} rows={pageRows} rowKey={(row) => `${row.sku}-${row.channelId ?? "all"}`} bare emptyText={tabTable.emptyText} />
+              {tabRows.length > 0 && (
+                <Pagination page={page} totalPages={totalPages} onPageChange={setPage} range={range} />
+              )}
+            </>
           )}
         </section>
+      )}
 
-        <section className="rounded-lg border bg-white p-4 xl:w-[468px] xl:shrink-0">
-          <h2 className="text-sm font-semibold text-gray-900">Những việc cần làm</h2>
-          <div className="mt-3 flex flex-col gap-3">
-            {BI_TODOS.map((todo) => (
-              <div key={todo.rank} className="flex items-center gap-2">
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-red-700 text-xs font-bold text-white">
-                  {todo.rank}
-                </span>
-                <p className="flex-1 text-[13px] text-gray-700">{todo.text}</p>
-                <Link
-                  href={todo.href}
-                  className="flex h-8 shrink-0 items-center justify-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white"
-                >
-                  {todo.button}
-                </Link>
-              </div>
-            ))}
+      {activeTab === "Cảnh báo" && (
+        <section className="overflow-x-auto rounded-lg border bg-white">
+          <div className="flex h-11 items-center px-4">
+            <h2 className="text-sm font-semibold text-gray-900">Phát hiện bất thường và đề xuất (kèm giải thích, cần duyệt)</h2>
           </div>
-        </section>
-      </div>
-
-      <section className="overflow-x-auto rounded-lg border bg-white">
-        <div className="flex h-11 items-center px-4">
-          <h2 className="text-sm font-semibold text-gray-900">Dự báo nhu cầu theo SKU và kênh (7 ngày tới)</h2>
-        </div>
-        {forecastError !== null ? (
-          <SectionError error={forecastError} />
-        ) : (
-          <>
-            <Table columns={forecastColumns} rows={pageRows} rowKey={(row) => `${row.sku}-${row.channelId ?? "all"}`} bare />
-            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} range={range} />
-          </>
-        )}
-      </section>
-
-      <section className="overflow-x-auto rounded-lg border bg-white">
-        <div className="flex h-11 items-center px-4">
-          <h2 className="text-sm font-semibold text-gray-900">Phát hiện bất thường và đề xuất (kèm giải thích, cần duyệt)</h2>
-        </div>
-        {biError !== null ? (
-          <SectionError error={biError} />
-        ) : (
-          <>
-            {actionError !== null && (
-              <p className="border-b px-4 py-3 text-sm text-red-700">{actionError}</p>
-            )}
-            <Table
-              columns={anomalyColumns}
-              rows={recommendations}
-              rowKey={(row) => row.id}
-              bare
-              emptyText="Không có bất thường đang mở"
-            />
-          </>
-        )}
-      </section>
-
-      <section className="rounded-lg border bg-white p-4">
-        <div className="flex items-center gap-2">
-          <h2 className="flex-1 text-sm font-semibold text-gray-900">DX-Score radar HPDI - đo từ log vận hành thật</h2>
-          {dxScore !== null && (
-            <p className="shrink-0 text-sm font-semibold text-red-700">
-              {dxScore.total} / 100 - H {dxScore.h.score}/100
-            </p>
+          {biError !== null ? (
+            <SectionError error={biError} />
+          ) : (
+            <>
+              {actionError !== null && (
+                <p className="border-b px-4 py-3 text-sm text-red-700">{actionError}</p>
+              )}
+              <Table
+                columns={anomalyColumns}
+                rows={recommendations}
+                rowKey={(row) => row.id}
+                bare
+                emptyText="Không có bất thường đang mở"
+              />
+            </>
           )}
-        </div>
-        {dxError !== null ? (
-          <SectionError error={dxError} />
-        ) : dxScore === null ? (
-          <p className="mt-3 text-sm text-gray-700">Chưa có điểm DX-Score.</p>
-        ) : (
-          <>
-            <div className="mt-3 flex flex-col gap-3">
-              {dxAxes.map((axis) => (
-                <div key={axis.key} className="flex items-center gap-3">
-                  <p className="w-6 shrink-0 text-[13px] font-semibold text-gray-900">{axis.key}</p>
-                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-200">
-                    <div
-                      className="h-2.5 rounded-full bg-red-700"
-                      style={{ width: `${(axis.value / axis.max) * 100}%` }}
-                    />
-                  </div>
-                  <p className="w-[70px] shrink-0 text-[13px] font-semibold text-gray-900">
-                    {axis.value} / {axis.max}
-                  </p>
-                </div>
-              ))}
+        </section>
+      )}
+
+      {activeTab === "Hoạt động" && (
+        <>
+          <section className="rounded-lg border bg-white p-4">
+            <div className="flex items-center gap-2">
+              <h2 className="flex-1 text-sm font-semibold text-gray-900">DX-Score radar HPDI - đo từ log vận hành thật</h2>
+              {dxScore !== null && (
+                <p className="shrink-0 text-sm font-semibold text-red-700">
+                  {dxScore.total} / 100 - H {dxScore.h.score}/100
+                </p>
+              )}
             </div>
-            {dxNotes.length > 0 && (
-              <ul className="mt-3 flex flex-col gap-1">
-                {dxNotes.map((note) => (
-                  <li key={note} className="text-xs text-gray-500">
-                    {note}
-                  </li>
-                ))}
-              </ul>
+            {dxError !== null ? (
+              <SectionError error={dxError} />
+            ) : dxScore === null ? (
+              <p className="mt-3 text-sm text-gray-700">Chưa có điểm DX-Score.</p>
+            ) : (
+              <>
+                <div className="mt-3 flex flex-col gap-3">
+                  {dxAxes.map((axis) => (
+                    <div key={axis.key} className="flex items-center gap-3">
+                      <p className="w-6 shrink-0 text-[13px] font-semibold text-gray-900">{axis.key}</p>
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-200">
+                        <div
+                          className="h-2.5 rounded-full bg-red-700"
+                          style={{ width: `${(axis.value / axis.max) * 100}%` }}
+                        />
+                      </div>
+                      <p className="w-[70px] shrink-0 text-[13px] font-semibold text-gray-900">
+                        {axis.value} / {axis.max}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                {dxNotes.length > 0 && (
+                  <ul className="mt-3 flex flex-col gap-1">
+                    {dxNotes.map((note) => (
+                      <li key={note} className="text-xs text-gray-500">
+                        {note}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
-          </>
-        )}
-      </section>
+          </section>
 
-      <section className="overflow-x-auto rounded-lg border bg-white">
-        {dxError !== null ? (
-          <SectionError error={dxError} />
-        ) : (
-          <Table columns={dxPeriodColumns} rows={dxPeriodRows} rowKey={(row) => row.label} bare />
-        )}
-      </section>
-
-      <section className="overflow-x-auto rounded-lg border bg-white">
-        <div className="flex h-11 items-center px-4">
-          <h2 className="text-sm font-semibold text-gray-900">Log gốc bấm xuống được (mỗi điểm số đều có log)</h2>
-        </div>
-        {dxError !== null ? (
-          <SectionError error={dxError} />
-        ) : (
-          <>
-            <Table columns={dxLogColumns} rows={dxLogRows} rowKey={(row) => row.id} bare />
-            {hWaitEmpty && (
-              <p className="border-t px-4 py-3 text-xs text-gray-500">
-                Chưa có phê duyệt nào trong log nên chưa đo được thời gian chờ
-                duyệt và số quyết định theo người/ngày.
-              </p>
+          <section className="overflow-x-auto rounded-lg border bg-white">
+            {dxError !== null ? (
+              <SectionError error={dxError} />
+            ) : (
+              <Table columns={dxPeriodColumns} rows={dxPeriodRows} rowKey={(row) => row.label} bare />
             )}
-          </>
-        )}
-      </section>
+          </section>
+
+          <section className="overflow-x-auto rounded-lg border bg-white">
+            <div className="flex h-11 items-center px-4">
+              <h2 className="text-sm font-semibold text-gray-900">Log gốc bấm xuống được (mỗi điểm số đều có log)</h2>
+            </div>
+            {dxError !== null ? (
+              <SectionError error={dxError} />
+            ) : (
+              <>
+                <Table columns={dxLogColumns} rows={dxLogRows} rowKey={(row) => row.id} bare />
+                {hWaitEmpty && (
+                  <p className="border-t px-4 py-3 text-xs text-gray-500">
+                    Chưa có phê duyệt nào trong log nên chưa đo được thời gian chờ
+                    duyệt và số quyết định theo người/ngày.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+
+          <section className="overflow-x-auto rounded-lg border bg-white">
+            <div className="flex h-11 items-center px-4">
+              <h2 className="text-sm font-semibold text-gray-900">Phản hồi đã ghi</h2>
+            </div>
+            {biError !== null ? (
+              <SectionError error={biError} />
+            ) : (
+              <Table columns={feedbackColumns} rows={feedback} rowKey={(item) => item.id} bare emptyText="Chưa có phản hồi nào." />
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 }
