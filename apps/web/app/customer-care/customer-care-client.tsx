@@ -448,6 +448,17 @@ export default function CskhPage({
     patch: Partial<{ result: CallResult; duration: string; note: string }>,
   ) => setCallForms((prev) => ({ ...prev, [id]: { ...callFormFor(id), ...patch } }));
 
+  // 3 tab cấp trang: Yêu cầu hỗ trợ, Cuộc gọi, Lịch sử liên hệ. Tab
+  // mặc định là Yêu cầu hỗ trợ (mục đầu tiên như hiện tại); một tab
+  // hiện tại một thời điểm, bấm tab thì hiện nội dung thay vì kéo xuống.
+  type PageTab = "tickets" | "calls" | "history";
+  const PAGE_TABS: { key: PageTab; label: string }[] = [
+    { key: "tickets", label: "Yêu cầu hỗ trợ" },
+    { key: "calls", label: "Cuộc gọi" },
+    { key: "history", label: "Lịch sử liên hệ" },
+  ];
+  const [pageTab, setPageTab] = useState<PageTab>("tickets");
+
   // 4 tab của mục Cuộc gọi, theo 4 chế độ xem của màn Telesale cũ:
   // Tổng quan, Phân chia đơn, Công việc, Nhân viên. Tab mặc định là
   // Tổng quan; tab Công việc chỉ hiện với vai CSKH.
@@ -733,7 +744,26 @@ export default function CskhPage({
         ))}
       </div>
 
-      {ticketsError !== null ? (
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Mục chăm sóc khách hàng">
+        {PAGE_TABS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={pageTab === item.key}
+            onClick={() => setPageTab(item.key)}
+            className={`flex h-9 items-center justify-center rounded-md px-3 text-sm ${
+              pageTab === item.key
+                ? "bg-red-700 font-bold text-white"
+                : "border border-gray-100 bg-white font-medium text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {pageTab === "tickets" && (ticketsError !== null ? (
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <p className="text-sm font-semibold text-gray-900">Yêu cầu hỗ trợ</p>
           <p className="mt-2 text-sm text-gray-700">
@@ -856,8 +886,9 @@ export default function CskhPage({
         />
       </div>
         </>
-      )}
+      ))}
 
+      {pageTab === "tickets" && (
       <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
         <p className="text-sm font-semibold text-gray-900">
           {returnsError === null
@@ -898,7 +929,9 @@ export default function CskhPage({
           </>
         )}
       </div>
+      )}
 
+      {pageTab === "calls" && (
       <div className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4">
         <p className="text-sm font-semibold text-gray-900">Cuộc gọi</p>
         {callsError !== null ? (
@@ -1103,7 +1136,9 @@ export default function CskhPage({
           </>
         )}
       </div>
+      )}
 
+      {pageTab === "history" && (
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div className="flex h-11 items-center px-4">
           <p className="text-sm font-semibold text-gray-900">Lịch sử liên hệ gần đây</p>
@@ -1132,6 +1167,7 @@ export default function CskhPage({
           />
         )}
       </div>
+      )}
 
       <Modal
         open={formOpen}
