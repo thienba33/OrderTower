@@ -387,10 +387,15 @@ export default async function OverviewPage({
   let audit: ApiAuditRecord[];
   let definition: ApiWorkflowDefinition;
   try {
+    // Chỉ vai có quyền đọc hàng đợi duyệt mới gọi endpoint này; vai khác
+    // nhận mảng rỗng để trang Tổng quan vẫn tải được phần của mình.
+    const canReadApprovals = isAdmin || isManager || isDispatcher;
     const [orderList, approvalList, auditList, definitionData] =
       await Promise.all([
         fetchList<ApiOrder>("/orders"),
-        fetchList<ApiApproval>("/approvals?status=pending"),
+        canReadApprovals
+          ? fetchList<ApiApproval>("/approvals?status=pending")
+          : Promise.resolve([] as ApiApproval[]),
         fetchList<ApiAuditRecord>("/audit"),
         fetchDefinition(),
       ]);

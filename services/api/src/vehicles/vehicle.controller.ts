@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import {
+  VEHICLE_READ_ROLES,
+  VEHICLE_WRITE_ROLES,
+} from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { VehiclesService } from './vehicle.service';
 import type {
   CreateVehicleInput,
@@ -9,10 +14,12 @@ import type {
 } from './vehicle.types';
 
 @Controller('vehicles')
+@Roles(...VEHICLE_READ_ROLES)
 export class VehiclesController {
   constructor(private readonly vehicles: VehiclesService) {}
 
   @Post()
+  @Roles(...VEHICLE_WRITE_ROLES)
   create(
     @Body() body: CreateVehicleInput,
     @Req() req: AuthenticatedRequest,
@@ -33,6 +40,7 @@ export class VehiclesController {
   }
 
   @Post(':id/maintenance')
+  @Roles(...VEHICLE_WRITE_ROLES)
   maintenance(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
@@ -41,6 +49,7 @@ export class VehiclesController {
   }
 
   @Post(':id/activate')
+  @Roles(...VEHICLE_WRITE_ROLES)
   activate(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,

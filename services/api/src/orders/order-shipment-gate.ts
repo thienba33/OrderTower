@@ -14,6 +14,9 @@ export const ORDER_SHIPMENT_GATE = 'ORDER_SHIPMENT_GATE';
 export interface OrderShipmentEvidence {
   status: string;
   proofPhotoKey: string | null;
+  // Tài xế đang giữ shipment; dùng để scope quyền đọc đơn của vai Tài xế.
+  // Optional để các test cũ dựng evidence bằng tay không phải sửa.
+  driverId?: string | null;
 }
 
 export interface OrderShipmentGate {

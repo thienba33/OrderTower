@@ -9,6 +9,8 @@ import {
   Req,
 } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { WORKFLOW_READ_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { WorkflowService } from './workflow.service';
 import type {
   TransitionCheck,
@@ -22,6 +24,7 @@ interface TransitionCheckBody {
 }
 
 @Controller('workflow')
+@Roles(...WORKFLOW_READ_ROLES)
 export class WorkflowController {
   constructor(private readonly workflow: WorkflowService) {}
 

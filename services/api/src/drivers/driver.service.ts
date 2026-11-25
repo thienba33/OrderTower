@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -13,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { isDriverOnly } from '../auth/permissions';
 import { computeNextNumber } from '../db/id-counter';
 import { VehiclesService } from '../vehicles/vehicle.service';
 import { InMemoryDriverStore, DRIVER_STORE } from './driver.store';
@@ -193,6 +195,13 @@ export class DriversService implements OnModuleInit {
     return driver ? copyDriver(driver) : null;
   }
 
+  // Tra tài xế theo username Keycloak. Dùng để scope dữ liệu của vai Tài
+  // xế (chỉ thấy chuyến/đơn của mình) mà không tin tham số từ client.
+  async findByUsername(username: string): Promise<Driver | null> {
+    const driver = await this.store.findByUsername(username);
+    return driver ? copyDriver(driver) : null;
+  }
+
   async list(
     filters: {
       status?: DriverStatus;
@@ -203,6 +212,33 @@ export class DriversService implements OnModuleInit {
       (driver) =>
         filters.status === undefined || driver.status === filters.status,
     );
+  }
+
+  // Vai tài xế thuần chỉ thấy hồ sơ của chính mình; vai nội bộ khác thấy
+  // danh sách đầy đủ để điều xe/phân công.
+  async listForCaller(
+    filters: { status?: DriverStatus },
+    caller: Caller,
+  ): Promise<Driver[]> {
+    if (!isDriverOnly(caller.roles)) {
+      return this.list(filters);
+    }
+    const own = await this.findByUsername(caller.username);
+    return own ? [own] : [];
+  }
+
+  async getForCaller(id: string, caller: Caller): Promise<Driver> {
+    const driver = await this.get(id);
+    if (!isDriverOnly(caller.roles)) {
+      return driver;
+    }
+    const own = await this.findByUsername(caller.username);
+    if (!own || own.id !== id) {
+      throw new ForbiddenException(
+        `Tài xế ${caller.username} không được xem hồ sơ tài xế ${id}.`,
+      );
+    }
+    return driver;
   }
 
   async assignVehicle(

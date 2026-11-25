@@ -7,6 +7,7 @@ import { ChannelsModule } from '../channels/channel.module';
 import { CustomersModule } from '../customers/customer.module';
 import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
+import { DriversModule } from '../drivers/driver.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { ReturnsModule } from '../returns/return.module';
 import { ShipmentsModule } from '../shipments/shipment.module';
@@ -23,6 +24,7 @@ import { ORDER_STORE, PostgresOrderStore } from './orders.store';
     ChannelsModule,
     CustomersModule,
     DbModule,
+    DriversModule,
     InventoryModule,
     WorkflowModule,
     // Lấy cổng đọc shipment từ ShipmentsModule. Hai mô-đun tham chiếu nhau

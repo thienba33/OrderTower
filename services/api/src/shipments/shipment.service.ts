@@ -2,6 +2,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { isDriverOnly } from '../auth/permissions';
 import { computeNextNumber } from '../db/id-counter';
 import { DeliveryEventsService } from '../delivery-events/delivery-event.service';
 import type { DeliveryEventType } from '../delivery-events/delivery-event.types';
@@ -198,6 +200,44 @@ export class ShipmentsService implements OnModuleInit {
           shipment.orderId === filters.orderId) &&
         (filters.status === undefined || shipment.status === filters.status),
     );
+  }
+
+  // Đọc shipment theo người gọi: tài xế thuần chỉ thấy shipment của mình;
+  // các vai nội bộ khác thấy đầy đủ.
+  async listForCaller(
+    filters: {
+      orderId?: string;
+      status?: ShipmentStatus;
+    },
+    caller: Caller,
+  ): Promise<Shipment[]> {
+    const shipments = await this.list(filters);
+    if (!isDriverOnly(caller.roles)) {
+      return shipments;
+    }
+    const driver = this.drivers
+      ? await this.drivers.findByUsername(caller.username)
+      : null;
+    if (!driver) {
+      return [];
+    }
+    return shipments.filter((shipment) => shipment.driverId === driver.id);
+  }
+
+  async getForCaller(id: string, caller: Caller): Promise<Shipment> {
+    const shipment = await this.get(id);
+    if (!isDriverOnly(caller.roles)) {
+      return shipment;
+    }
+    const driver = this.drivers
+      ? await this.drivers.findByUsername(caller.username)
+      : null;
+    if (!driver || shipment.driverId !== driver.id) {
+      throw new ForbiddenException(
+        `Tài xế ${caller.username} không được xem shipment ${id} của tài xế khác.`,
+      );
+    }
+    return shipment;
   }
 
   // Kiểm tra trước khi đổi shipment: đơn phải ở đúng trạng thái nguồn và

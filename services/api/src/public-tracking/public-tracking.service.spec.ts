@@ -528,8 +528,6 @@ describe('PublicTrackingService', () => {
     expect(result.shipment).toEqual({
       id: 'GH-1001',
       state: 'Đã giao',
-      driverName: 'Nam',
-      vehiclePlate: '29A-12345',
     });
     expect(result.deliveryEvents).toEqual([
       {
@@ -594,16 +592,16 @@ describe('PublicTrackingService', () => {
     ]);
   });
 
-  it('tài xế/xe không còn trong kho thì tên và biển số về null, không lỗi', async () => {
+  it('shipment công khai chỉ trả id và trạng thái, không trả tài xế/biển số', async () => {
     const { tracking } = await buildServices();
     const result = await tracking.track('DH-1005', '0905555555');
     expect(result.shipment).toEqual({
       id: 'GH-1005',
       state: 'Đang giao',
-      driverName: null,
-      vehiclePlate: null,
     });
     expect(result.proofPhotoKey).toBeNull();
+    expect(JSON.stringify(result)).not.toContain('driverName');
+    expect(JSON.stringify(result)).not.toContain('vehiclePlate');
   });
 });
 

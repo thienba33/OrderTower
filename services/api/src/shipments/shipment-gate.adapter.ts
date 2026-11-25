@@ -17,6 +17,7 @@ export class ShipmentGateAdapter implements OrderShipmentGate {
     return shipments.map((shipment) => ({
       status: shipment.status,
       proofPhotoKey: shipment.proofPhotoKey,
+      driverId: shipment.driverId,
     }));
   }
 }

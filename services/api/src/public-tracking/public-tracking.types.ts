@@ -33,13 +33,11 @@ export interface PublicTrackingTimelineEntry {
   at: string;
 }
 
-// Shipment mới nhất của đơn, tên tài xế và biển số xe đã tra sẵn; null khi
-// đơn chưa có shipment nào.
+// Shipment mới nhất của đơn: chỉ trạng thái và mã shipment. Không trả tên
+// tài xế, biển số xe hay người ghi nhật ký giao hàng ra màn công khai.
 export interface PublicTrackingShipment {
   id: string;
   state: string;
-  driverName: string | null;
-  vehiclePlate: string | null;
 }
 
 // 1 sự kiện trong nhật ký giao hàng, chỉ loại, ghi chú và thời điểm; tên

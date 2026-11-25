@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { TICKET_READ_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { TicketsService } from './tickets.service';
 import type {
   ChangeTicketStatusInput,
@@ -13,6 +15,7 @@ import type {
 } from './tickets.types';
 
 @Controller('tickets')
+@Roles(...TICKET_READ_ROLES)
 export class TicketsController {
   constructor(private readonly tickets: TicketsService) {}
 

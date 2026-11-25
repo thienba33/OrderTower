@@ -159,13 +159,12 @@ export default function TrackingClient() {
     [result],
   );
 
-  const driverText = useMemo(() => {
+  // Màn công khai không trả tên tài xế/biển số; chỉ hiển thị trạng thái
+  // chuyến giao để khách biết đơn đã được điều xe hay chưa.
+  const shipmentText = useMemo(() => {
     const shipment = result?.shipment ?? null;
     if (!shipment) return "Chưa điều xe";
-    const parts = [shipment.driverName, shipment.vehiclePlate].filter(
-      (part): part is string => typeof part === "string" && part.length > 0,
-    );
-    return parts.length > 0 ? parts.join(" - ") : "Chưa điều xe";
+    return `${shipment.id} - ${shipment.state}`;
   }, [result]);
 
   const order = result?.order ?? null;
@@ -298,7 +297,7 @@ export default function TrackingClient() {
 
             <section className="rounded-lg border bg-white p-4 xl:w-[468px] xl:shrink-0">
               <h2 className="text-sm font-semibold text-gray-900">Giao hàng</h2>
-              <p className="mt-3 text-[13px] text-gray-800">Tài xế: {driverText}</p>
+              <p className="mt-3 text-[13px] text-gray-800">Chuyến giao: {shipmentText}</p>
               <p className="mt-1 text-xs text-gray-500">Địa chỉ giao: {formatAddress(order)}</p>
             </section>
           </div>

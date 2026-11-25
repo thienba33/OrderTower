@@ -115,11 +115,22 @@ export default function OrdersClient({
   orders,
   channels,
   products,
+  roles,
 }: {
   orders: ApiOrder[];
   channels: ApiChannel[];
   products: ApiInventoryItem[];
+  roles: string[];
 }) {
+  // Chỉ vai được API cho tạo đơn mới thấy nút; nhân viên kho chỉ xem đơn.
+  const canOpenCreate = roles.some((role) =>
+    [
+      "Quản trị viên",
+      "Quản lý",
+      "Điều phối viên",
+      "Nhân viên chăm sóc khách hàng",
+    ].includes(role),
+  );
   const router = useRouter();
   // Chỉ sản phẩm có giá mới chọn được: tổng tiền đơn do server tính từ
   // giá tồn kho, SKU chưa có giá đóng góp 0.
@@ -400,13 +411,15 @@ export default function OrdersClient({
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
         <h1 className="flex-1 text-xl font-semibold text-gray-900">Đơn hàng</h1>
-        <button
-          type="button"
-          onClick={() => setCreateOpen(true)}
-          className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800"
-        >
-          Tạo đơn mới
-        </button>
+        {canOpenCreate ? (
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800"
+          >
+            Tạo đơn mới
+          </button>
+        ) : null}
       </div>
 
       <section aria-label="Chỉ số đơn hàng" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import {
+  DRIVER_READ_ROLES,
+  DRIVER_WRITE_ROLES,
+} from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { DriversService } from './driver.service';
 import type {
   AssignVehicleInput,
@@ -14,6 +19,7 @@ export class DriversController {
   constructor(private readonly drivers: DriversService) {}
 
   @Post()
+  @Roles(...DRIVER_WRITE_ROLES)
   create(
     @Body() body: CreateDriverInput,
     @Req() req: AuthenticatedRequest,
@@ -22,18 +28,30 @@ export class DriversController {
   }
 
   @Get()
-  list(@Query('status') status?: DriverStatus): Promise<Driver[]> {
-    return this.drivers.list({
-      ...(status ? { status } : {}),
-    });
+  @Roles(...DRIVER_READ_ROLES)
+  list(
+    @Req() req: AuthenticatedRequest,
+    @Query('status') status?: DriverStatus,
+  ): Promise<Driver[]> {
+    return this.drivers.listForCaller(
+      {
+        ...(status ? { status } : {}),
+      },
+      req.user,
+    );
   }
 
   @Get(':id')
-  getOne(@Param('id') id: string): Promise<Driver> {
-    return this.drivers.get(id);
+  @Roles(...DRIVER_READ_ROLES)
+  getOne(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<Driver> {
+    return this.drivers.getForCaller(id, req.user);
   }
 
   @Post(':id/assign-vehicle')
+  @Roles(...DRIVER_WRITE_ROLES)
   assignVehicle(
     @Param('id') id: string,
     @Body() body: AssignVehicleInput,
@@ -43,6 +61,7 @@ export class DriversController {
   }
 
   @Post(':id/unassign-vehicle')
+  @Roles(...DRIVER_WRITE_ROLES)
   unassignVehicle(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
@@ -51,6 +70,7 @@ export class DriversController {
   }
 
   @Post(':id/rest')
+  @Roles(...DRIVER_WRITE_ROLES)
   rest(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
@@ -59,6 +79,7 @@ export class DriversController {
   }
 
   @Post(':id/activate')
+  @Roles(...DRIVER_WRITE_ROLES)
   activate(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,

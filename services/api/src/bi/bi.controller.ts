@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { BI_READ_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { BiService } from './bi.service';
 import type {
   DecisionRecommendationInput,
@@ -12,6 +14,7 @@ import type {
 // lai. Đọc forecast/anomalies/dx-score chỉ cần đăng nhập; quyết định đề
 // xuất và ghi phản hồi chỉ Quản lý/Quản trị viên (BiService kiểm tra).
 @Controller('bi')
+@Roles(...BI_READ_ROLES)
 export class BiController {
   constructor(private readonly biService: BiService) {}
 
