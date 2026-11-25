@@ -6,8 +6,11 @@
 // Chia theo ĐÚNG NGHIỆP VỤ, tức ai LÀM việc đó trong luồng đơn, khớp với
 // luật vai đã có trong API (chuyển trạng thái nào vai nào được làm, ai
 // được duyệt, ai được điều xe), không chia theo ai muốn xem:
-// - Tổng quan là màn chỉ huy của Điều phối viên + Quản lý, không phải
-//   màn chung, nên Nhân viên kho và CSKH không có.
+// - Tổng quan là trang chủ của từng role, hiển thị nội dung hợp lý
+//   theo role (quyết 25/11): Nhân viên kho và CSKH cũng có Tổng quan
+//   nhưng chỉ thấy mục việc của mình, không thấy KPI chung, hàng đợi
+//   duyệt hay bảng SLA. Tài xế và Khách hàng mô phỏng vẫn không có
+//   Tổng quan (màn của họ đã là danh sách việc / theo dõi đơn).
 // - Hàng đợi duyệt chỉ dành cho người duyệt (Quản lý/Quản trị viên);
 //   Điều phối viên không duyệt nên không có.
 // - Phân tách địa chỉ là việc xác nhận địa chỉ với khách nên chỉ CSKH +
@@ -65,8 +68,9 @@ export const ROLE_SCREENS: Record<string, readonly string[]> = {
     "/customer-care",
     "/tracking",
   ],
-  "Nhân viên kho": ["/orders", "/warehouse", "/tracking"],
+  "Nhân viên kho": ["/", "/orders", "/warehouse", "/tracking"],
   "Nhân viên chăm sóc khách hàng": [
+    "/",
     "/orders",
     "/customer-care",
     "/address-split",
