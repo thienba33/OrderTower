@@ -10,15 +10,62 @@
   "roles": {
     "client": {
       "ordertower-web": [
-        { "name": "admin" },
-        { "name": "dispatcher" },
-        { "name": "warehouse-staff" },
-        { "name": "customer-service" },
-        { "name": "driver" },
-        { "name": "manager" },
-        { "name": "customer" }
+        {
+          "name": "admin"
+        },
+        {
+          "name": "dispatcher"
+        },
+        {
+          "name": "warehouse-staff"
+        },
+        {
+          "name": "customer-service"
+        },
+        {
+          "name": "driver"
+        },
+        {
+          "name": "manager"
+        },
+        {
+          "name": "customer"
+        }
+      ],
+      "ordertower-portal": [
+        {
+          "name": "admin"
+        },
+        {
+          "name": "dispatcher"
+        },
+        {
+          "name": "warehouse-staff"
+        },
+        {
+          "name": "customer-service"
+        },
+        {
+          "name": "driver"
+        },
+        {
+          "name": "manager"
+        },
+        {
+          "name": "customer"
+        }
       ]
-    }
+    },
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Vai bắt buộc MFA"
+      },
+      {
+        "name": "manager",
+        "description": "Vai quản lý bắt buộc MFA"
+      }
+    ]
   },
   "clients": [
     {
@@ -32,9 +79,56 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": true,
-      "redirectUris": ["http://localhost:3000/auth/callback"],
-      "webOrigins": ["http://localhost:3000"],
-      "defaultClientScopes": ["profile", "email", "roles"],
+      "redirectUris": [
+        "http://localhost:3000/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles"
+      ],
+      "protocolMappers": [
+        {
+          "name": "ordertower-web-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "ordertower-web",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/"
+      }
+    },
+    {
+      "clientId": "ordertower-portal",
+      "name": "OrderTower Portal (Tầng 2)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:3000/workspace/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles"
+      ],
       "protocolMappers": [
         {
           "name": "ordertower-web-audience",
@@ -71,8 +165,20 @@
         "ordertower-web": [
           "admin"
         ],
-        "account": ["view-profile", "manage-account"]
-      }
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "admin"
+        ]
+      },
+      "realmRoles": [
+        "admin"
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ]
     },
     {
       "username": "demo.dispatcher",
@@ -91,7 +197,13 @@
         "ordertower-web": [
           "dispatcher"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "dispatcher"
+        ]
       }
     },
     {
@@ -111,7 +223,13 @@
         "ordertower-web": [
           "warehouse-staff"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "warehouse-staff"
+        ]
       }
     },
     {
@@ -131,7 +249,13 @@
         "ordertower-web": [
           "customer-service"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "customer-service"
+        ]
       }
     },
     {
@@ -151,7 +275,13 @@
         "ordertower-web": [
           "driver"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "driver"
+        ]
       }
     },
     {
@@ -171,8 +301,20 @@
         "ordertower-web": [
           "manager"
         ],
-        "account": ["view-profile", "manage-account"]
-      }
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "manager"
+        ]
+      },
+      "realmRoles": [
+        "manager"
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ]
     },
     {
       "username": "demo.customer",
@@ -191,8 +333,271 @@
         "ordertower-web": [
           "customer"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "customer"
+        ]
       }
     }
+  ],
+  "authenticationFlows": [
+    {
+      "id": "78bc347c-45fe-498c-bf21-7df50d31e526",
+      "alias": "browser-mfa-v2",
+      "description": "",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 0,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 0,
+          "autheticatorFlow": true,
+          "flowAlias": "mfa2-admin",
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 0,
+          "autheticatorFlow": true,
+          "flowAlias": "mfa2-manager",
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 1,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "55f79fa4-ccbd-4b1e-8996-28c33c52e257",
+      "alias": "mfa2-admin",
+      "description": "",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-otp-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 0,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorConfig": "mfa2-admin-role",
+          "authenticator": "conditional-user-role",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 0,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "7b48367e-39f5-4ef8-853d-451de5b8cf5b",
+      "alias": "mfa2-manager",
+      "description": "",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-otp-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 0,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorConfig": "mfa2-manager-role",
+          "authenticator": "conditional-user-role",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 0,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "id": "a22479fd-901c-4115-8d4e-cbfdcc3b4c82",
+      "alias": "mfa2-admin-role",
+      "config": {
+        "condUserRole": "admin",
+        "negate": "false"
+      }
+    },
+    {
+      "id": "7b05e32b-f5bf-4045-adf1-cdd04f8c5a2a",
+      "alias": "mfa2-manager-role",
+      "config": {
+        "condUserRole": "manager",
+        "negate": "false"
+      }
+    }
+  ],
+  "requiredActions": [
+    {
+      "alias": "TERMS_AND_CONDITIONS",
+      "name": "Terms and Conditions",
+      "providerId": "TERMS_AND_CONDITIONS",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 20,
+      "config": {}
+    },
+    {
+      "alias": "UPDATE_PROFILE",
+      "name": "Update Profile",
+      "providerId": "UPDATE_PROFILE",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 40,
+      "config": {}
+    },
+    {
+      "alias": "VERIFY_EMAIL",
+      "name": "Verify Email",
+      "providerId": "VERIFY_EMAIL",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 50,
+      "config": {}
+    },
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 54,
+      "config": {}
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 57,
+      "config": {}
+    },
+    {
+      "alias": "delete_account",
+      "name": "Delete Account",
+      "providerId": "delete_account",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 60,
+      "config": {}
+    },
+    {
+      "alias": "UPDATE_EMAIL",
+      "name": "Update Email",
+      "providerId": "UPDATE_EMAIL",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 70,
+      "config": {}
+    },
+    {
+      "alias": "webauthn-register",
+      "name": "Webauthn Register",
+      "providerId": "webauthn-register",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 80,
+      "config": {}
+    },
+    {
+      "alias": "webauthn-register-passwordless",
+      "name": "Webauthn Register Passwordless",
+      "providerId": "webauthn-register-passwordless",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 90,
+      "config": {}
+    },
+    {
+      "alias": "VERIFY_PROFILE",
+      "name": "Verify Profile",
+      "providerId": "VERIFY_PROFILE",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 100,
+      "config": {}
+    },
+    {
+      "alias": "delete_credential",
+      "name": "Delete Credential",
+      "providerId": "delete_credential",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 110,
+      "config": {}
+    },
+    {
+      "alias": "idp_link",
+      "name": "Linking Identity Provider",
+      "providerId": "idp_link",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 120,
+      "config": {}
+    },
+    {
+      "alias": "CONFIGURE_RECOVERY_AUTHN_CODES",
+      "name": "Recovery Authentication Codes",
+      "providerId": "CONFIGURE_RECOVERY_AUTHN_CODES",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 130,
+      "config": {}
+    },
+    {
+      "alias": "update_user_locale",
+      "name": "Update User Locale",
+      "providerId": "update_user_locale",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 1000,
+      "config": {}
+    }
+  ],
+  "browserFlow": "browser-mfa-v2",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyInitialCounter": 0,
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "otpPolicyCodeReusable": false,
+  "otpSupportedApplications": [
+    "totpAppFreeOTPName",
+    "totpAppGoogleName",
+    "totpAppMicrosoftAuthenticatorName"
   ]
 }
