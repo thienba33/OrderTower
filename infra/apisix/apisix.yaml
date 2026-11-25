@@ -40,6 +40,38 @@ routes:
       request-id:
         include_in_response: true
     upstream_id: keycloak
+  # Health check công khai, không cần token. Đặt priority cao hơn route
+  # /api/* để request không bị openid-connect chặn trước khi tới API.
+  - id: ordertower-health
+    uri: /api/health
+    methods: ["GET"]
+    priority: 100
+    plugins:
+      request-id:
+        include_in_response: true
+    upstream:
+      type: roundrobin
+      nodes:
+        "api:3001": 1
+  # Tra cứu đơn công khai: khách chỉ có mã đơn + SĐT, không có token.
+  # Rate limit riêng để hạn chế dò mã đơn/SĐT.
+  - id: ordertower-public-tracking
+    uri: /api/public/tracking
+    methods: ["GET"]
+    priority: 100
+    plugins:
+      limit-req:
+        rate: 5
+        burst: 10
+        nodelay: true
+        key: remote_addr
+        rejected_code: 429
+      request-id:
+        include_in_response: true
+    upstream:
+      type: roundrobin
+      nodes:
+        "api:3001": 1
   # API nghiệp vụ yêu cầu access token.
   - id: ordertower-api
     uri: /api/*
