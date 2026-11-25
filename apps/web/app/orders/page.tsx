@@ -68,5 +68,12 @@ export default async function OrdersPage() {
     );
   }
 
-  return <OrdersClient orders={orders} channels={channels} products={products} />;
+  return (
+    <OrdersClient
+      orders={orders}
+      channels={channels}
+      products={products}
+      roles={session.roles}
+    />
+  );
 }

@@ -63,8 +63,6 @@ export interface PublicTrackingTimelineEntry {
 export interface PublicTrackingShipment {
   id: string;
   state: string;
-  driverName: string | null;
-  vehiclePlate: string | null;
 }
 
 export interface PublicTrackingDeliveryEvent {

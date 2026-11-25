@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import {
+  BUSINESS_ROLE,
+  ORDER_TRANSITION_ROLES,
+  ORDER_VIEW_ROLES,
+  ORDER_WRITE_ROLES,
+} from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { OrdersService } from './orders.service';
 import type {
   CreateOrderInput,
@@ -14,6 +21,7 @@ export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
   @Post()
+  @Roles(...ORDER_WRITE_ROLES)
   create(
     @Body() body: CreateOrderInput,
     @Req() req: AuthenticatedRequest,
@@ -22,6 +30,7 @@ export class OrdersController {
   }
 
   @Get()
+  @Roles(...ORDER_VIEW_ROLES)
   list(
     @Query('channelId') channelId?: string,
     @Query('customerId') customerId?: string,
@@ -33,11 +42,16 @@ export class OrdersController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string): Promise<Order> {
-    return this.orders.findOne(id);
+  @Roles(...ORDER_VIEW_ROLES, BUSINESS_ROLE.DRIVER)
+  findOne(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<Order> {
+    return this.orders.findOneForCaller(id, req.user);
   }
 
   @Post(':id/transitions')
+  @Roles(...ORDER_TRANSITION_ROLES)
   transition(
     @Param('id') id: string,
     @Body() body: TransitionOrderInput,
@@ -47,6 +61,7 @@ export class OrdersController {
   }
 
   @Patch(':id')
+  @Roles(...ORDER_WRITE_ROLES)
   update(
     @Param('id') id: string,
     @Body() body: UpdateOrderInput,

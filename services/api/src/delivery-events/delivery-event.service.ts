@@ -2,6 +2,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import { isDriverOnly } from '../auth/permissions';
 import { computeNextNumber } from '../db/id-counter';
 import { InMemoryDriverStore, DRIVER_STORE } from '../drivers/driver.store';
 import type { Driver, DriverStore } from '../drivers/driver.types';
@@ -220,6 +222,52 @@ export class DeliveryEventsService implements OnModuleInit {
         (filters.orderId === undefined ||
           event.orderId === filters.orderId) &&
         (filters.type === undefined || event.type === filters.type),
+    );
+  }
+
+  // Tài xế thuần chỉ thấy sự kiện thuộc shipment của mình; vai nội bộ khác
+  // thấy đầy đủ. Dùng shipmentStore/driverStore đã tiêm sẵn, không tạo vòng
+  // lặp module với ShipmentsModule.
+  async listForCaller(
+    filters: {
+      shipmentId?: string;
+      orderId?: string;
+      type?: DeliveryEventType;
+    },
+    caller: Caller,
+  ): Promise<DeliveryEvent[]> {
+    const events = await this.list(filters);
+    if (!isDriverOnly(caller.roles)) {
+      return events;
+    }
+    const allowed = await this.allowedShipmentIds(caller);
+    return events.filter((event) => allowed.has(event.shipmentId));
+  }
+
+  async getForCaller(id: string, caller: Caller): Promise<DeliveryEvent> {
+    const event = await this.get(id);
+    if (!isDriverOnly(caller.roles)) {
+      return event;
+    }
+    const allowed = await this.allowedShipmentIds(caller);
+    if (!allowed.has(event.shipmentId)) {
+      throw new ForbiddenException(
+        `Tài xế ${caller.username} không được xem sự kiện ${id} của tài xế khác.`,
+      );
+    }
+    return event;
+  }
+
+  private async allowedShipmentIds(caller: Caller): Promise<Set<string>> {
+    const driver = await this.driverStore.findByUsername(caller.username);
+    if (!driver) {
+      return new Set();
+    }
+    const shipments = await this.shipmentStore.list();
+    return new Set(
+      shipments
+        .filter((shipment) => shipment.driverId === driver.id)
+        .map((shipment) => shipment.id),
     );
   }
 

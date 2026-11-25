@@ -7,6 +7,7 @@ import { AssignmentModule } from './assignments/assignment.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
+import { RolesGuard } from './auth/roles.guard';
 import { BiModule } from './bi/bi.module';
 import { ChannelsModule } from './channels/channel.module';
 import { CustomersModule } from './customers/customer.module';
@@ -44,6 +45,9 @@ import { WorkflowModule } from './workflow/workflow.module';
     WorkflowModule,
   ],
   controllers: [AppController],
-  providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+  ],
 })
 export class AppModule {}

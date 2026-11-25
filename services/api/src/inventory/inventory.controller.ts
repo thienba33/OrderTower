@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
+import { INVENTORY_READ_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { InventoryService } from './inventory.service';
 import type { InventoryItem } from './inventory.types';
 
 @Controller('inventory')
+@Roles(...INVENTORY_READ_ROLES)
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
 

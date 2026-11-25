@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { CHANNEL_READ_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { ChannelsService } from './channel.service';
 import type {
   Channel,
@@ -9,6 +11,7 @@ import type {
 } from './channel.types';
 
 @Controller('channels')
+@Roles(...CHANNEL_READ_ROLES)
 export class ChannelsController {
   constructor(private readonly channels: ChannelsService) {}
 

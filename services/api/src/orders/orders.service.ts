@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -18,7 +19,9 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { ChannelsService } from '../channels/channel.service';
+import { isDriverOnly } from '../auth/permissions';
 import { CustomersService } from '../customers/customer.service';
+import { DriversService } from '../drivers/driver.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { ApprovalService } from '../approvals/approval.service';
 import type { Approval } from '../approvals/approval.types';
@@ -129,6 +132,11 @@ export class OrdersService implements OnModuleInit {
     @Optional()
     @Inject(ORDER_RETURN_GATE)
     private readonly returnGate?: OrderReturnGate,
+    // Tài xế chỉ được đọc đơn có shipment giao cho chính mình; cần tra
+    // driver theo username. Optional để test đơn vị cũ dựng service bằng
+    // tay không phải sửa.
+    @Optional()
+    private readonly drivers?: DriversService,
   ) {}
 
   // Nạp 8 đơn mẫu qua đường dịch vụ thật (create rồi transition hợp lệ
@@ -444,6 +452,34 @@ export class OrdersService implements OnModuleInit {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
     }
     return copyOrder(order);
+  }
+
+  // Đọc đơn theo người gọi. Vai nội bộ xem bình thường; tài xế thuần chỉ
+  // được xem đơn có shipment do chính mình phụ trách. Khách hàng mô phỏng
+  // không dùng endpoint này (đi qua public tracking).
+  async findOneForCaller(id: string, caller: Caller): Promise<Order> {
+    const order = await this.findOne(id);
+    if (!isDriverOnly(caller.roles)) {
+      return order;
+    }
+    const driver = this.drivers
+      ? await this.drivers.findByUsername(caller.username)
+      : null;
+    if (!driver) {
+      throw new ForbiddenException(
+        `Tài khoản ${caller.username} chưa gắn với hồ sơ tài xế.`,
+      );
+    }
+    const evidence = this.shipmentGate
+      ? await this.shipmentGate.findByOrderId(id)
+      : [];
+    const ownsOrder = evidence.some((item) => item.driverId === driver.id);
+    if (!ownsOrder) {
+      throw new ForbiddenException(
+        `Tài xế ${caller.username} không được xem đơn ${id} vì không có chuyến giao thuộc về mình.`,
+      );
+    }
+    return order;
   }
 
   // Chuyển trạng thái đơn qua endpoint: kiểm đủ vai theo định nghĩa.

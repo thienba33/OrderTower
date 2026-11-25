@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { RETURN_READ_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { ReturnsService } from './return.service';
 import type {
   CreateReturnInput,
@@ -10,6 +12,7 @@ import type {
 } from './return.types';
 
 @Controller('returns')
+@Roles(...RETURN_READ_ROLES)
 export class ReturnsController {
   constructor(private readonly returns: ReturnsService) {}
 

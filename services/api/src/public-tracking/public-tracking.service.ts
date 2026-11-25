@@ -112,8 +112,6 @@ export class PublicTrackingService {
         ? {
             id: shipment.id,
             state: shipment.status,
-            driverName: await this.findDriverName(shipment.driverId),
-            vehiclePlate: await this.findVehiclePlate(shipment.vehicleId),
           }
         : null,
       deliveryEvents: [...events]

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { WORKFLOW_INSTANCE_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { WorkflowInstanceService } from './instance.service';
 import type {
   StartInstanceInput,
@@ -10,6 +12,7 @@ import type {
 } from './instance.types';
 
 @Controller('workflow/instances')
+@Roles(...WORKFLOW_INSTANCE_ROLES)
 export class WorkflowInstanceController {
   constructor(private readonly instances: WorkflowInstanceService) {}
 

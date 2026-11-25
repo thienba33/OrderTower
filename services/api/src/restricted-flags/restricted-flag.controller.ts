@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { RESTRICTED_FLAG_READ_ROLES } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
 import { RestrictedFlagsService } from './restricted-flag.service';
 import type {
   CreateRestrictedFlagInput,
@@ -12,6 +14,7 @@ import type {
 } from './restricted-flag.types';
 
 @Controller('restricted-flags')
+@Roles(...RESTRICTED_FLAG_READ_ROLES)
 export class RestrictedFlagsController {
   constructor(private readonly flags: RestrictedFlagsService) {}
 
