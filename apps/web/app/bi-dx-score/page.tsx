@@ -51,6 +51,17 @@ async function fetchObject<T>(path: string): Promise<T | null> {
   return data as T;
 }
 
+// Lấy mảng nằm trong 1 đối tượng trả về của API, ví dụ
+// {referenceDate, rows} của /bi/forecast hay {referenceDate,
+// anomalies} của /bi/anomalies. Sai dạng thì ném lỗi như fetchList.
+async function fetchWrappedList<T>(path: string, key: string): Promise<T[]> {
+  const data = await fetchObject<Record<string, unknown>>(path);
+  if (data === null || !Array.isArray(data[key])) {
+    throw new ApiError(502, "API trả về dữ liệu không đúng dạng.");
+  }
+  return data[key] as T[];
+}
+
 function toSectionError(error: unknown): BiSectionError {
   return error instanceof ApiError && error.status === 401
     ? "unauthorized"
@@ -74,7 +85,7 @@ export default async function BiDxScorePage() {
   let forecastError: BiSectionError | null = null;
   try {
     const [forecast, channels] = await Promise.all([
-      fetchList<ApiForecastRow>("/bi/forecast"),
+      fetchWrappedList<ApiForecastRow>("/bi/forecast", "rows"),
       fetchList<ApiChannel>("/channels"),
     ]);
     forecastRows = forecast;
@@ -93,7 +104,7 @@ export default async function BiDxScorePage() {
   let feedback: ApiFeedback[] = [];
   let biError: BiSectionError | null = null;
   try {
-    anomalies = await fetchList<ApiAnomaly>("/bi/anomalies");
+    anomalies = await fetchWrappedList<ApiAnomaly>("/bi/anomalies", "anomalies");
     const [recs, fb] = await Promise.all([
       fetchList<ApiRecommendation>("/bi/recommendations"),
       fetchList<ApiFeedback>("/bi/feedback"),
