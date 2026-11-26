@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Injectable } from '@nestjs/common';
 import type { InventoryItem } from './inventory.types';
-import type { Transactional } from '../db/db.types';
+import type { Queryable, Transactional } from '../db/db.types';
 
 export const INVENTORY_STORE = 'INVENTORY_STORE';
 
@@ -9,8 +9,14 @@ export const INVENTORY_STORE = 'INVENTORY_STORE';
 // bản Postgres là kho mặc định khi chạy thật.
 export interface InventoryStore {
   list(): Promise<InventoryItem[]>;
-  get(sku: string): Promise<InventoryItem | null>;
-  save(item: InventoryItem): Promise<void>;
+  // client/forUpdate dùng khi giữ hàng trong transaction của đơn; khóa hàng
+  // tồn kho để hai đơn đồng thời không cùng thấy đủ hàng.
+  get(
+    sku: string,
+    client?: Queryable,
+    forUpdate?: boolean,
+  ): Promise<InventoryItem | null>;
+  save(item: InventoryItem, client?: Queryable): Promise<void>;
 }
 
 function copyItem(item: InventoryItem): InventoryItem {
@@ -40,12 +46,16 @@ export class InMemoryInventoryStore implements InventoryStore {
     return [...this.items.values()].map(copyItem);
   }
 
-  async get(sku: string): Promise<InventoryItem | null> {
+  async get(
+    sku: string,
+    _client?: Queryable,
+    _forUpdate?: boolean,
+  ): Promise<InventoryItem | null> {
     const item = this.items.get(sku);
     return item ? copyItem(item) : null;
   }
 
-  async save(item: InventoryItem): Promise<void> {
+  async save(item: InventoryItem, _client?: Queryable): Promise<void> {
     this.items.set(item.sku, copyItem(item));
   }
 }
@@ -63,9 +73,16 @@ export class PostgresInventoryStore implements InventoryStore {
     );
   }
 
-  async get(sku: string): Promise<InventoryItem | null> {
-    const found = await this.db.query(
-      `SELECT ${INVENTORY_COLUMNS} FROM inventory WHERE sku = $1`,
+  async get(
+    sku: string,
+    client?: Queryable,
+    forUpdate = false,
+  ): Promise<InventoryItem | null> {
+    const runner = client ?? this.db;
+    const found = await runner.query(
+      `SELECT ${INVENTORY_COLUMNS} FROM inventory WHERE sku = $1${
+        forUpdate ? ' FOR UPDATE' : ''
+      }`,
       [sku],
     );
     if (found.rows.length === 0) {
@@ -74,8 +91,9 @@ export class PostgresInventoryStore implements InventoryStore {
     return mapInventoryRow(found.rows[0] as Record<string, unknown>);
   }
 
-  async save(item: InventoryItem): Promise<void> {
-    await this.db.query(
+  async save(item: InventoryItem, client?: Queryable): Promise<void> {
+    const runner = client ?? this.db;
+    await runner.query(
       `INSERT INTO inventory (sku, name, unit, unit_price, stock, reserved)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (sku) DO UPDATE SET

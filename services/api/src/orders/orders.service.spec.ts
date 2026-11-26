@@ -22,8 +22,19 @@ import {
   PostgresCustomerStore,
 } from '../customers/customer.store';
 import { DbService } from '../db/db.service';
+import {
+  IdSequenceService,
+  PostgresIdSequenceStore,
+} from '../db/id-sequence';
 import { createTestDbService } from '../db/test-helpers';
 import { InventoryService } from '../inventory/inventory.service';
+import { OutboxService } from '../outbox/outbox.service';
+import {
+  InMemoryOutboxStore,
+  PostgresOutboxStore,
+} from '../outbox/outbox.store';
+import type { NewOutboxEvent } from '../outbox/outbox.types';
+import type { Queryable } from '../db/db.types';
 import { PostgresInventoryStore } from '../inventory/inventory.store';
 import type { Return } from '../returns/return.types';
 import { ShipmentsService } from '../shipments/shipment.service';
@@ -42,6 +53,21 @@ import type { OrderShipmentEvidence } from './order-shipment-gate';
 import type { OrderReturnGate } from './order-return-gate';
 import { OrdersService } from './orders.service';
 import { PostgresOrderStore } from './orders.store';
+
+// Outbox giả có công tắc lỗi để kiểm tra rollback transaction.
+class ToggleOutboxStore extends InMemoryOutboxStore {
+  fail = false;
+
+  override async append(
+    input: NewOutboxEvent,
+    _client?: Queryable,
+  ) {
+    if (this.fail) {
+      throw new Error('outbox down');
+    }
+    return super.append(input);
+  }
+}
 
 async function buildServices(options: {
   withReturnGate?: boolean;
@@ -1279,7 +1305,10 @@ describe('OrdersService', () => {
 describe('PostgresOrderStore', () => {
   // Dựng toàn bộ service trên 1 DB ảo. Truyền db đã có để mô phỏng khởi
   // động lại API: service mới, cùng dữ liệu Postgres.
-  async function buildPostgresStack(sharedDb?: DbService) {
+  async function buildPostgresStack(
+    sharedDb?: DbService,
+    options?: { outbox?: OutboxService },
+  ) {
     const db = sharedDb ?? (await createTestDbService());
     const workflow = new WorkflowService();
     workflow.onModuleInit();
@@ -1288,10 +1317,14 @@ describe('PostgresOrderStore', () => {
     await inventory.onModuleInit();
     const address = new AddressService();
     address.onModuleInit();
+    const idSequence = new IdSequenceService(
+      new PostgresIdSequenceStore(db),
+    );
     const instances = new WorkflowInstanceService(
       workflow,
       audit,
       new PostgresWorkflowInstanceStore(db),
+      idSequence,
     );
     await instances.onModuleInit();
     const approvals = new ApprovalService(
@@ -1310,6 +1343,8 @@ describe('PostgresOrderStore', () => {
     );
     await customers.onModuleInit();
     const store = new PostgresOrderStore(db);
+    const outbox =
+      options?.outbox ?? new OutboxService(new PostgresOutboxStore(db));
     const orders = new OrdersService(
       workflow,
       audit,
@@ -1321,9 +1356,26 @@ describe('PostgresOrderStore', () => {
       undefined,
       channels,
       customers,
+      undefined,
+      undefined,
+      db,
+      outbox,
+      idSequence,
     );
     await orders.onModuleInit();
-    return { db, orders, audit, inventory, instances, approvals, store, channels, customers };
+    return {
+      db,
+      orders,
+      audit,
+      inventory,
+      instances,
+      approvals,
+      store,
+      channels,
+      customers,
+      outbox,
+      idSequence,
+    };
   }
 
   it('tạo đơn rồi đọc lại giống hệt, kèm lịch sử và instance', async () => {
@@ -1454,6 +1506,159 @@ describe('PostgresOrderStore', () => {
     expect(reopened.phone).toBe('0901234567');
     expect(reopened.deadline).toBe('2026-11-20T10:00:00.000Z');
     expect(reopened.total).toBe(186000);
+  });
+
+  it('cấp DH/WF qua DB counter và tiếp tục đúng sau restart', async () => {
+    const first = await buildPostgresStack();
+    const one = await first.orders.create(
+      createInput('key-dbseq-1'),
+      COORDINATOR,
+    );
+    expect(one.id).toBe('DH-1009');
+    expect(one.workflowInstanceId).toBe('WF-1009');
+
+    // Mô phỏng restart: service mới, cùng DB; counter phải tiếp tục.
+    const second = await buildPostgresStack(first.db);
+    const two = await second.orders.create(
+      createInput('key-dbseq-2'),
+      COORDINATOR,
+    );
+    expect(two.id).toBe('DH-1010');
+    expect(two.workflowInstanceId).toBe('WF-1010');
+
+    const counters = await first.db.query(
+      'SELECT name, value FROM id_counters ORDER BY name',
+    );
+    const values = new Map(
+      (counters.rows as Array<{ name: string; value: number | string }>).map(
+        (row) => [row.name, Number(row.value)],
+      ),
+    );
+    expect(values.get('order:DH')).toBe(1011);
+    expect(values.get('workflow:WF')).toBe(1011);
+  });
+
+  it('cấp LS qua counter riêng, không lẫn dãy DH', async () => {
+    const { orders, db } = await buildPostgresStack();
+    const order = await orders.create(
+      createInput('key-ls-1'),
+      COORDINATOR,
+      { idPrefix: 'LS' },
+    );
+    expect(order.id).toBe('LS-1001');
+    expect(order.workflowInstanceId).toBe('WF-1009');
+
+    const counters = await db.query(
+      "SELECT name, value FROM id_counters WHERE name LIKE 'order:%' ORDER BY name",
+    );
+    const values = new Map(
+      (counters.rows as Array<{ name: string; value: number | string }>).map(
+        (row) => [row.name, Number(row.value)],
+      ),
+    );
+    expect(values.get('order:LS')).toBe(1002);
+    expect(values.get('order:DH')).toBe(1009);
+  });
+
+  it('ghi outbox cùng transaction và relay idempotent', async () => {
+    const { orders, outbox } = await buildPostgresStack();
+    const order = await orders.create(
+      createInput('key-outbox-1'),
+      COORDINATOR,
+    );
+    await orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    await orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR);
+    await orders.transition(
+      order.id,
+      { to: 'Đang đóng gói' },
+      WAREHOUSE,
+    );
+
+    const events = (await outbox.list({})).filter(
+      (event) => event.aggregateId === order.id,
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      'order.created',
+      'order.transitioned',
+      'order.transitioned',
+      'order.transitioned',
+      'inventory.reserved',
+    ]);
+    expect(
+      events.find((event) => event.type === 'inventory.reserved')?.payload,
+    ).toMatchObject({
+      orderId: order.id,
+      items: [{ sku: 'NM-40', quantity: 2 }],
+    });
+
+    const pending = await outbox.list({ status: 'pending' });
+    const relayed = await outbox.relay();
+    expect(relayed.processed).toBe(pending.length);
+    expect(await outbox.list({ status: 'pending' })).toHaveLength(0);
+    expect((await outbox.relay()).processed).toBe(0);
+  });
+
+  it('outbox lỗi khi transition thì lỗi lan ra ngoài và không phát event', async () => {
+    const toggle = new ToggleOutboxStore();
+    const outbox = new OutboxService(toggle);
+    const { orders } = await buildPostgresStack(undefined, { outbox });
+    const order = await orders.create(
+      createInput('key-rollback-transition'),
+      COORDINATOR,
+    );
+
+    toggle.fail = true;
+    await expect(
+      orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR),
+    ).rejects.toThrow('outbox down');
+
+    // pg-mem không mô phỏng ROLLBACK đầy đủ; phần rollback order/instance/
+    // audit/tồn kho được kiểm tra trên Postgres thật ở runtime. Ở đây phải
+    // chắc chắn không có event mới và lỗi không bị nuốt.
+    expect(
+      (await outbox.list({})).filter(
+        (event) =>
+          event.type === 'order.transitioned' &&
+          event.aggregateId === order.id,
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('outbox lỗi khi tạo đơn thì không phát order.created', async () => {
+    const toggle = new ToggleOutboxStore();
+    const outbox = new OutboxService(toggle);
+    const { orders } = await buildPostgresStack(undefined, { outbox });
+
+    toggle.fail = true;
+    await expect(
+      orders.create(createInput('key-rollback-create'), COORDINATOR),
+    ).rejects.toThrow('outbox down');
+
+    expect(
+      (await outbox.list({})).filter(
+        (event) =>
+          event.type === 'order.created' &&
+          event.aggregateId === 'DH-1009',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('denial vẫn ghi audit sau khi transaction rollback', async () => {
+    const { orders, audit, store } = await buildPostgresStack();
+    const order = await orders.create(
+      createInput('key-denial-tx'),
+      COORDINATOR,
+    );
+    await expect(
+      orders.transition(order.id, { to: 'Đã kiểm tra' }, WAREHOUSE),
+    ).rejects.toThrow('yêu cầu vai');
+
+    expect((await store.findById(order.id))?.state).toBe('Mới tạo');
+    expect(
+      (await audit.getAll()).filter(
+        (record) => record.action === 'order.transition.denied',
+      ),
+    ).toHaveLength(1);
   });
 });
 

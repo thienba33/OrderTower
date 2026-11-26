@@ -9,6 +9,7 @@ import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
 import { DriversModule } from '../drivers/driver.module';
 import { InventoryModule } from '../inventory/inventory.module';
+import { OutboxModule } from '../outbox/outbox.module';
 import { ReturnsModule } from '../returns/return.module';
 import { ShipmentsModule } from '../shipments/shipment.module';
 import { WorkflowModule } from '../workflow/workflow.module';
@@ -26,6 +27,7 @@ import { ORDER_STORE, PostgresOrderStore } from './orders.store';
     DbModule,
     DriversModule,
     InventoryModule,
+    OutboxModule,
     WorkflowModule,
     // Lấy cổng đọc shipment từ ShipmentsModule. Hai mô-đun tham chiếu nhau
     // (đơn cần bằng chứng shipment, shipment cần chuyển đơn) nên cả hai

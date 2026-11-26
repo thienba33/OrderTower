@@ -66,11 +66,18 @@ const HISTORY_COLUMNS = `from_state, to_state, actor, role, reason, handling,
 export class InMemoryWorkflowInstanceStore implements WorkflowInstanceStore {
   private readonly instances = new Map<string, WorkflowInstance>();
 
-  async save(instance: WorkflowInstance): Promise<void> {
+  async save(
+    instance: WorkflowInstance,
+    _client?: Queryable,
+  ): Promise<void> {
     this.instances.set(instance.id, copyInstance(instance));
   }
 
-  async findById(id: string): Promise<WorkflowInstance | null> {
+  async findById(
+    id: string,
+    _client?: Queryable,
+    _forUpdate?: boolean,
+  ): Promise<WorkflowInstance | null> {
     const found = this.instances.get(id);
     return found ? copyInstance(found) : null;
   }
@@ -78,6 +85,8 @@ export class InMemoryWorkflowInstanceStore implements WorkflowInstanceStore {
   async findByBusinessKey(
     definitionId: string,
     businessKey: string,
+    _client?: Queryable,
+    _forUpdate?: boolean,
   ): Promise<WorkflowInstance | null> {
     for (const instance of this.instances.values()) {
       if (
@@ -101,9 +110,12 @@ export class InMemoryWorkflowInstanceStore implements WorkflowInstanceStore {
 export class PostgresWorkflowInstanceStore implements WorkflowInstanceStore {
   constructor(private readonly db: Transactional) {}
 
-  async save(instance: WorkflowInstance): Promise<void> {
-    await this.db.withTransaction(async (client) => {
-      await client.query(
+  async save(
+    instance: WorkflowInstance,
+    client?: Queryable,
+  ): Promise<void> {
+    const write = async (runner: Queryable): Promise<void> => {
+      await runner.query(
         `INSERT INTO workflow_instances
            (id, definition_id, definition_version, business_key,
             current_state, status, context, created_at, updated_at)
@@ -130,12 +142,12 @@ export class PostgresWorkflowInstanceStore implements WorkflowInstanceStore {
           instance.updatedAt,
         ],
       );
-      await client.query(
+      await runner.query(
         'DELETE FROM workflow_instance_history WHERE instance_id = $1',
         [instance.id],
       );
       for (const entry of instance.history) {
-        await client.query(
+        await runner.query(
           `INSERT INTO workflow_instance_history
              (instance_id, from_state, to_state, actor, role, reason,
               handling, created_at)
@@ -152,27 +164,40 @@ export class PostgresWorkflowInstanceStore implements WorkflowInstanceStore {
           ],
         );
       }
-    });
+    };
+    if (client) {
+      return write(client);
+    }
+    await this.db.withTransaction(write);
   }
 
-  async findById(id: string): Promise<WorkflowInstance | null> {
-    return this.loadById(this.db, id);
+  async findById(
+    id: string,
+    client?: Queryable,
+    forUpdate = false,
+  ): Promise<WorkflowInstance | null> {
+    return this.loadById(client ?? this.db, id, forUpdate);
   }
 
   async findByBusinessKey(
     definitionId: string,
     businessKey: string,
+    client?: Queryable,
+    forUpdate = false,
   ): Promise<WorkflowInstance | null> {
-    const found = await this.db.query(
+    const runner = client ?? this.db;
+    const found = await runner.query(
       `SELECT ${INSTANCE_COLUMNS} FROM workflow_instances
-        WHERE definition_id = $1 AND business_key = $2`,
+        WHERE definition_id = $1 AND business_key = $2${
+          forUpdate ? ' FOR UPDATE' : ''
+        }`,
       [definitionId, businessKey],
     );
     if (found.rows.length === 0) {
       return null;
     }
     return this.loadById(
-      this.db,
+      runner,
       (found.rows[0] as Record<string, unknown>).id as string,
     );
   }
@@ -199,9 +224,12 @@ export class PostgresWorkflowInstanceStore implements WorkflowInstanceStore {
   private async loadById(
     db: Queryable,
     id: string,
+    forUpdate = false,
   ): Promise<WorkflowInstance | null> {
     const found = await db.query(
-      `SELECT ${INSTANCE_COLUMNS} FROM workflow_instances WHERE id = $1`,
+      `SELECT ${INSTANCE_COLUMNS} FROM workflow_instances WHERE id = $1${
+        forUpdate ? ' FOR UPDATE' : ''
+      }`,
       [id],
     );
     if (found.rows.length === 0) {

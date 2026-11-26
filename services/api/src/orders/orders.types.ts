@@ -3,6 +3,7 @@ import type {
   AddressInput,
   AddressLevel,
 } from '../address/address.types';
+import type { Queryable } from '../db/db.types';
 
 export interface OrderItem {
   sku: string;
@@ -58,8 +59,15 @@ export interface Order {
 // interface này, service phía trên không đổi. Mọi phương thức đều bất đồng bộ
 // vì kho Postgres cần chờ truy vấn.
 export interface OrderStore {
-  save(order: Order): Promise<void>;
-  findById(id: string): Promise<Order | null>;
+  // client dùng để ghi/đọc trong transaction của service; không truyền thì
+  // store tự mở giao dịch riêng. forUpdate khóa hàng order khi chuyển trạng
+  // thái để hai request đồng thời không cùng thắng.
+  save(order: Order, client?: Queryable): Promise<void>;
+  findById(
+    id: string,
+    client?: Queryable,
+    forUpdate?: boolean,
+  ): Promise<Order | null>;
   findByIdempotencyKey(key: string): Promise<Order | null>;
   list(): Promise<Order[]>;
 }
