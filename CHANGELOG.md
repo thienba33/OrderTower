@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Changelog
 
-Định dạng theo Keep a Changelog, phiên bản theo SemVer.
-
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-26
 
 ### Added
 
@@ -49,6 +49,19 @@
 - Nối màn Phân phối đơn (PR #66): bàn điều phối đóng gói 3 tab từ phân công kho và đơn hàng thật, cảnh báo vượt tải chuẩn 30 đơn, mục Việc của tôi ở màn Kho chỉ nhân viên kho thấy.
 - API theo dõi công khai (PR #67): `GET /api/public/tracking?orderId=&phone=` không cần đăng nhập, sai mã đơn hay số điện thoại đều trả chung 404, không trả số điện thoại hay hash audit, 321 test.
 - Nối màn Theo dõi đơn hàng sang endpoint công khai (PR #68): khách vãng lai tra cứu bằng mã đơn và số điện thoại, không cần đăng nhập; bỏ route tra cứu cũ cần đăng nhập.
+- Cập nhật tài liệu tổng hợp đến commit `5abcf9f` (PR #69): cập nhật `CHANGELOG.md`, `docs/architecture.md` và ghi chú biến môi trường mẫu CI trong `.github/workflows/ci.yml`.
+- Mở rộng dữ liệu mẫu Mốc 3 (PR #71): thêm `scripts/generate-sample-data.mjs` sinh xác định 40 SKU và 112 đơn lịch sử (`LS-1001`..`LS-1112`) trong 28 ngày kèm 13 đơn hoàn, nạp qua đường dịch vụ thật lúc khởi động để đạt 120 đơn mẫu (cùng 8 đơn demo `DH-1001`..`DH-1008`).
+- Mô-đun BI pilot (`services/api/src/bi/`, migration `012_bi.sql`, PR #72): dự báo nhu cầu theo SKU và kênh từ dữ liệu đã giao, phát hiện 3 bất thường (tồn kho dưới 7 ngày, tỷ lệ hoàn kênh cao, cầu tăng đột biến), sinh đề xuất kèm đầu vào đối soát, duyệt/từ chối và ghi nhận phản hồi (`Quản lý`/`Quản trị viên`), tính và lưu snapshot `DX-Score v1` theo 4 trục H-P-D-I.
+- Nối màn BI & DX-Score (`/bi-dx-score`, PR #73): hiển thị dự báo, bất thường, duyệt/từ chối đề xuất, ghi phản hồi kết quả và tính DX-Score từ API BI thật.
+- API ticket chăm sóc khách hàng (`services/api/src/tickets/`, migration `013_tickets.sql`, PR #74): tạo và chuyển trạng thái xuôi 1 chiều (`Mới` -> `Đang xử lý` -> `Chờ khách` -> `Đã đóng`), tính 4 KPI trực tiếp từ DB và nạp 14 dòng mẫu đóng băng (`YC-018`..`YC-031`) khi bảng trống.
+- Nối phần ticket và 4 KPI trạng thái trên màn Chăm sóc khách hàng (`/customer-care`, PR #75) với API ticket thật.
+- Tổ chức mục Cuộc gọi trên màn Chăm sóc khách hàng thành 4 tab telesale theo trạng thái phân công và độ tin cậy địa chỉ (PR #76).
+- Nối phần Lịch sử liên hệ trên màn Chăm sóc khách hàng với API nhật ký cuộc gọi thật (`/api/call-logs`, PR #77).
+- Tách mục Cuộc gọi trên màn Chăm sóc khách hàng thành tab riêng trên giao diện CSKH (PR #81).
+- Hiển thị nội dung màn Tổng quan (`/`) phù hợp theo từng vai trò đăng nhập (PR #82).
+- Siết chặt phân quyền RBAC trên API (`RolesGuard`, `@Roles()`, `services/api/src/auth/permissions.ts`, PR #83) và giới hạn phạm vi dữ liệu tài xế chỉ xem đơn/shipment/sự kiện của chính mình.
+- Dịch vụ dữ liệu phi cấu trúc Tầng 1 (`services/api/src/storage/`, migration `014_files.sql`, PR #86): upload/tải file qua SeaweedFS S3 (`@aws-sdk/client-s3`), kiểm dịch ClamAV qua `INSTREAM` (tùy chọn fail-closed với `CLAMAV_REQUIRED=true`), route proxy `/api/files` trên web và gắn ảnh bằng chứng giao hàng (`proofPhotoFileId`) ở màn tài xế.
+- Hồ sơ phát hành `0.1.0`: cập nhật `sbom/api.cyclonedx.json` (491 thành phần) và `LICENSES.md` (bổ sung `@aws-sdk/client-s3` và `ClamAV`).
 
 ### Fixed
 
@@ -58,3 +71,7 @@
 - Sửa lỗi tràn số thứ tự audit (PR #54): ép kiểu BIGINT của Postgres về số trước khi cộng, kèm test hồi quy.
 - Sửa chuyển hướng đăng nhập và đăng xuất (PR #56): callback dùng `APP_ORIGIN` thay cho `request.url`, đăng xuất dùng đúng URI đã đăng ký.
 - Đọc vai trò từ access token (PR #58): Keycloak 26 không gắn vai trò vào ID token, web đọc vai trò từ access token, ID token chỉ làm dự phòng.
+- Tách nội dung màn BI & DX-Score theo từng tab và bỏ badge phê duyệt viết cứng trên thanh điều hướng (PR #78).
+- Đọc đúng mảng `rows` và `anomalies` từ object trả về của `/api/bi/forecast` và `/api/bi/anomalies` trên màn BI & DX-Score (PR #79).
+- Phân trang các cột trong tab cần chú ý ở màn Phân phối đơn (`/distribution`, PR #80).
+- Cho phép các route công khai `/api/health` và `/api/public/tracking` đi qua APISIX mà không bị chặn xác thực (PR #83).
