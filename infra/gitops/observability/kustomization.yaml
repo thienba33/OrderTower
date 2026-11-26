@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ordertower-observability
+resources:
+  - namespace.yaml
+  - prometheus.yaml
+  - grafana.yaml
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml=prometheus-k8s.yml
+  - name: grafana-datasources
+    files:
+      - prometheus.yml=grafana-datasource.yml
+  - name: grafana-dashboard-provider
+    files:
+      - ordertower.yml=grafana-dashboard-provider.yml
+  - name: grafana-dashboards
+    files:
+      - ordertower-api.json=ordertower-api.json
+generatorOptions:
+  disableNameSuffixHash: true

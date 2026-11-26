@@ -7,6 +7,7 @@ out/
 *.log
 coverage/
 uploads/
+backups/
 .DS_Store
 .idea/
 *.tsbuildinfo

@@ -117,6 +117,35 @@ services:
       seaweedfs:
         condition: service_healthy
 
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3002:3000"
+    depends_on:
+      - prometheus
+
   web:
     build: ./apps/web
     ports:
@@ -137,3 +166,5 @@ volumes:
   pgdata:
   swdata:
   clamdb:
+  promdata:
+  grafanadata:
