@@ -2,16 +2,23 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import type {
   TransitionCheck,
   WorkflowDefinition,
   WorkflowTransition,
 } from './workflow.types';
+import {
+  WORKFLOW_VERSION_STORE,
+  type WorkflowVersionStore,
+} from './version.store';
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -25,20 +32,64 @@ function copyDefinition(definition: WorkflowDefinition): WorkflowDefinition {
   return JSON.parse(JSON.stringify(definition)) as WorkflowDefinition;
 }
 
-// Registry định nghĩa luồng: nạp mọi tệp JSON trong thư mục definitions,
-// mỗi tệp là 1 luồng có phiên bản. Thêm luồng mới cho ứng dụng khác chỉ cần
-// thêm 1 tệp, engine và API instance dùng lại nguyên vẹn, không sửa code.
+function compareVersions(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+// Registry định nghĩa luồng: nạp mọi file JSON trong definitions, nhóm theo
+// definitionId + version. Mỗi definition có một version active; instance
+// đang chạy pin version lúc start và transition theo đúng version đó.
 @Injectable()
-export class WorkflowService implements OnModuleInit {
+export class WorkflowService implements OnModuleInit, OnApplicationBootstrap {
   private readonly logger = new Logger(WorkflowService.name);
-  private definitions = new Map<string, WorkflowDefinition>();
+  private definitions = new Map<string, Map<string, WorkflowDefinition>>();
+  private activeVersions = new Map<string, string>();
+
+  constructor(
+    @Optional()
+    @Inject(WORKFLOW_VERSION_STORE)
+    private readonly versionStore?: WorkflowVersionStore,
+  ) {}
 
   onModuleInit(): void {
     this.definitions = this.loadDefinitions();
-    for (const definition of this.definitions.values()) {
+    for (const [definitionId, versions] of this.definitions) {
+      const active = this.pickFallbackVersion(versions);
+      this.activeVersions.set(definitionId, active);
+      const definition = versions.get(active) as WorkflowDefinition;
       this.logger.log(
-        `Đã nạp định nghĩa luồng ${definition.definitionId} v${definition.version} (${definition.states.length} trạng thái, ${definition.transitions.length} chuyển).`,
+        `Đã nạp định nghĩa luồng ${definitionId} v${definition.version} (${definition.states.length} trạng thái, ${definition.transitions.length} chuyển).`,
       );
+    }
+  }
+
+  // Đọc version active đã được duyệt từ DB sau khi registry file đã nạp.
+  // Chạy ở application bootstrap để instance mới dùng đúng version active.
+  async onApplicationBootstrap(): Promise<void> {
+    if (!this.versionStore) {
+      return;
+    }
+    let stored: Map<string, string>;
+    try {
+      stored = await this.versionStore.listActiveVersions();
+    } catch (error) {
+      this.logger.warn(
+        `Không đọc được version workflow active: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    for (const [definitionId, version] of stored) {
+      const versions = this.definitions.get(definitionId);
+      if (!versions?.has(version)) {
+        this.logger.warn(
+          `Bỏ qua version active ${definitionId} v${version}: không có file definition tương ứng.`,
+        );
+        continue;
+      }
+      this.activeVersions.set(definitionId, version);
+      this.logger.log(`Dùng version active ${definitionId} v${version} từ DB.`);
     }
   }
 
@@ -50,50 +101,110 @@ export class WorkflowService implements OnModuleInit {
     return join(__dirname, 'definitions');
   }
 
-  getDefinition(definitionId: string): WorkflowDefinition {
-    const definition = this.definitions.get(definitionId);
-    if (!definition) {
+  getDefinition(definitionId: string, version?: string): WorkflowDefinition {
+    const versions = this.definitions.get(definitionId);
+    if (!versions) {
       throw new NotFoundException(
         `Không tìm thấy định nghĩa luồng "${definitionId}".`,
+      );
+    }
+    const resolvedVersion = version ?? this.activeVersions.get(definitionId);
+    const definition =
+      resolvedVersion === undefined ? undefined : versions.get(resolvedVersion);
+    if (!definition) {
+      throw new NotFoundException(
+        `Không tìm thấy định nghĩa luồng "${definitionId}" version "${resolvedVersion ?? ''}".`,
       );
     }
     return copyDefinition(definition);
   }
 
   listDefinitions(): WorkflowDefinition[] {
-    return [...this.definitions.values()].map(copyDefinition);
+    return [...this.definitions.keys()].map((definitionId) =>
+      this.getDefinition(definitionId),
+    );
   }
 
-  getStates(definitionId: string): string[] {
-    return [...this.getDefinition(definitionId).states];
+  listVersions(definitionId: string): string[] {
+    const versions = this.definitions.get(definitionId);
+    if (!versions) {
+      throw new NotFoundException(
+        `Không tìm thấy định nghĩa luồng "${definitionId}".`,
+      );
+    }
+    return [...versions.keys()].sort((a, b) => compareVersions(b, a));
   }
 
-  getTransitions(definitionId: string): WorkflowTransition[] {
-    return copyDefinition(this.getDefinition(definitionId)).transitions;
+  getActiveVersion(definitionId: string): string {
+    const version = this.activeVersions.get(definitionId);
+    if (!version) {
+      throw new NotFoundException(
+        `Không tìm thấy định nghĩa luồng "${definitionId}".`,
+      );
+    }
+    return version;
   }
 
-  // Trạng thái đầu là phần tử đầu tiên của states trong tệp định nghĩa.
-  getInitialState(definitionId: string): string {
-    return this.getDefinition(definitionId).states[0];
+  setActiveVersion(definitionId: string, version: string): void {
+    const versions = this.definitions.get(definitionId);
+    if (!versions?.has(version)) {
+      throw new NotFoundException(
+        `Không tìm thấy định nghĩa luồng "${definitionId}" version "${version}".`,
+      );
+    }
+    this.activeVersions.set(definitionId, version);
+  }
+
+  getStates(definitionId: string, version?: string): string[] {
+    return [...this.getDefinition(definitionId, version).states];
+  }
+
+  getTransitions(
+    definitionId: string,
+    version?: string,
+  ): WorkflowTransition[] {
+    return copyDefinition(this.getDefinition(definitionId, version)).transitions;
+  }
+
+  getTransition(
+    definitionId: string,
+    from: string,
+    to: string,
+    version?: string,
+  ): WorkflowTransition | undefined {
+    return this.getDefinition(definitionId, version).transitions.find(
+      (item) => item.from === from && item.to === to,
+    );
+  }
+
+  // Trạng thái đầu là phần tử đầu tiên của states trong file definition.
+  getInitialState(definitionId: string, version?: string): string {
+    return this.getDefinition(definitionId, version).states[0];
   }
 
   // Trạng thái cuối là trạng thái không còn chuyển nào đi ra.
-  isTerminalState(definitionId: string, state: string): boolean {
-    return !this.getDefinition(definitionId).transitions.some(
+  isTerminalState(
+    definitionId: string,
+    state: string,
+    version?: string,
+  ): boolean {
+    return !this.getDefinition(definitionId, version).transitions.some(
       (item) => item.from === state,
     );
   }
 
-  // Chỉ dựa vào tệp định nghĩa, không có điều kiện chuyển nào ghi trong code.
-  // roles là vai nghiệp vụ của người gọi; không truyền roles thì chỉ kiểm
-  // tra chuyển có tồn tại, không kiểm tra vai.
+  // Chỉ dựa vào file definition, không có điều kiện chuyển nào ghi trong code.
+  // roles là vai nghiệp vụ của người gọi; không truyền roles thì chỉ kiểm tra
+  // chuyển có tồn tại, không kiểm tra vai. version để đánh giá theo đúng bản
+  // instance đã pin, không theo bản active mới.
   canTransition(
     definitionId: string,
     from: string,
     to: string,
     roles?: string[],
+    version?: string,
   ): TransitionCheck {
-    const definition = this.getDefinition(definitionId);
+    const definition = this.getDefinition(definitionId, version);
     const transition = definition.transitions.find(
       (item) => item.from === from && item.to === to,
     );
@@ -114,23 +225,33 @@ export class WorkflowService implements OnModuleInit {
     return { allowed: true, requiredRole: transition.role, reason: null };
   }
 
-  private loadDefinitions(): Map<string, WorkflowDefinition> {
+  private pickFallbackVersion(
+    versions: Map<string, WorkflowDefinition>,
+  ): string {
+    // Khi chưa có quyết định deploy, chọn version thấp nhất để file mới chưa
+    // được duyệt không tự động trở thành active.
+    return [...versions.keys()].sort(compareVersions)[0];
+  }
+
+  private loadDefinitions(): Map<string, Map<string, WorkflowDefinition>> {
     const dir = this.resolveDefinitionsDir();
     let files: string[];
     try {
       files = readdirSync(dir);
     } catch (error) {
       throw new Error(
-        `Không đọc được thư mục định nghĩa luồng tại ${dir}: ${error instanceof Error ? error.message : String(error)}`,
+        `Không đọc được thư mục định nghĩa luồng tại ${dir}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
     const jsonFiles = files.filter((file) => file.endsWith('.json')).sort();
     if (jsonFiles.length === 0) {
       throw new Error(
-        `Thư mục định nghĩa luồng tại ${dir} không có tệp JSON nào.`,
+        `Thư mục định nghĩa luồng tại ${dir} không có tập JSON nào.`,
       );
     }
-    const definitions = new Map<string, WorkflowDefinition>();
+    const definitions = new Map<string, Map<string, WorkflowDefinition>>();
     for (const file of jsonFiles) {
       const path = join(dir, file);
       let raw: string;
@@ -138,7 +259,9 @@ export class WorkflowService implements OnModuleInit {
         raw = readFileSync(path, 'utf-8');
       } catch (error) {
         throw new Error(
-          `Không đọc được tệp định nghĩa luồng tại ${path}: ${error instanceof Error ? error.message : String(error)}`,
+          `Không đọc được tập định nghĩa luồng tại ${path}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         );
       }
       let parsed: unknown;
@@ -146,28 +269,32 @@ export class WorkflowService implements OnModuleInit {
         parsed = JSON.parse(raw) as unknown;
       } catch (error) {
         throw new Error(
-          `Tệp định nghĩa luồng tại ${path} không phải JSON hợp lệ: ${error instanceof Error ? error.message : String(error)}`,
+          `Tập định nghĩa luồng tại ${path} không phải JSON hợp lệ: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         );
       }
       const definition = validateDefinition(parsed, path);
-      if (definitions.has(definition.definitionId)) {
+      const versions = definitions.get(definition.definitionId) ?? new Map();
+      if (versions.has(definition.version)) {
         throw new Error(
-          `Định nghĩa luồng "${definition.definitionId}" bị trùng trong thư mục ${dir} (tệp ${file}).`,
+          `Định nghĩa luồng "${definition.definitionId}" version "${definition.version}" bị trùng trong thư mục ${dir} (tập ${file}).`,
         );
       }
-      definitions.set(definition.definitionId, definition);
+      versions.set(definition.version, definition);
+      definitions.set(definition.definitionId, versions);
     }
     return definitions;
   }
 }
 
-// Kiểm tra hình dạng tệp định nghĩa, lỗi thì chặn khởi động để không chạy luồng sai.
+// Kiểm tra hình dạng file định nghĩa, lỗi thì chặn khởi động để không chạy luồng sai.
 function validateDefinition(
   parsed: unknown,
   path: string,
 ): WorkflowDefinition {
   const fail = (message: string): never => {
-    throw new Error(`Tệp định nghĩa luồng tại ${path} không hợp lệ: ${message}`);
+    throw new Error(`Tập định nghĩa luồng tại ${path} không hợp lệ: ${message}`);
   };
   if (typeof parsed !== 'object' || parsed === null) {
     fail('nội dung phải là 1 object JSON.');

@@ -189,6 +189,7 @@ export class WorkflowInstanceService implements OnModuleInit {
       instance.currentState,
       input.to,
       options?.skipRoleCheck ? undefined : caller.roles,
+      instance.definitionVersion,
     );
     if (!check.allowed) {
       await deny(check.reason ?? 'Chuyển trạng thái không được phép.');
@@ -198,7 +199,13 @@ export class WorkflowInstanceService implements OnModuleInit {
     const role = check.requiredRole ?? caller.roles[0] ?? '';
     instance.currentState = input.to;
     instance.updatedAt = now;
-    if (this.workflow.isTerminalState(instance.definitionId, input.to)) {
+    if (
+      this.workflow.isTerminalState(
+        instance.definitionId,
+        input.to,
+        instance.definitionVersion,
+      )
+    ) {
       instance.status = 'completed';
     }
     instance.history.push({

@@ -59,6 +59,44 @@ describe('WorkflowService', () => {
     );
   });
 
+  it('nạp nhiều version, mặc định chọn bản thấp nhất và đổi active được', () => {
+    const base = loadService().getDefinition('order-flow');
+    const v2 = {
+      ...base,
+      version: '2',
+      transitions: base.transitions.map((transition) =>
+        transition.from === 'Mới tạo' && transition.to === 'Đã kiểm tra'
+          ? { ...transition, guard: 'guard của version 2' }
+          : transition,
+      ),
+    };
+    writeDefinition('order-flow.v1.json', base);
+    writeDefinition('order-flow.v2.json', v2);
+    const service = loadService();
+    expect(service.listVersions('order-flow')).toEqual(['2', '1']);
+    expect(service.getActiveVersion('order-flow')).toBe('1');
+    expect(service.getDefinition('order-flow').version).toBe('1');
+    expect(
+      service.getTransition('order-flow', 'Mới tạo', 'Đã kiểm tra')?.guard,
+    ).toBe('không trùng đơn');
+
+    service.setActiveVersion('order-flow', '2');
+    expect(service.getActiveVersion('order-flow')).toBe('2');
+    expect(service.getDefinition('order-flow').version).toBe('2');
+    expect(
+      service.getTransition('order-flow', 'Mới tạo', 'Đã kiểm tra')?.guard,
+    ).toBe('guard của version 2');
+    expect(
+      service.canTransition(
+        'order-flow',
+        'Mới tạo',
+        'Đã kiểm tra',
+        ['Điều phối viên'],
+        '1',
+      ).allowed,
+    ).toBe(true);
+  });
+
   it('không có định nghĩa thì báo 404', () => {
     const service = loadService();
     expect(() => service.getDefinition('khong-co')).toThrow(

@@ -33,6 +33,29 @@ Một lượt chạy của 1 định nghĩa luồng, quản lý bởi `WorkflowI
   instance (WF-1001...) tiếp tục từ số lớn nhất đã có trong kho, khởi động
   lại API không quay về WF-1001.
 
+## Task inbox và SLA
+
+`GET /api/workflow/tasks` trả các instance đang active mà vai của người gọi
+được phép chuyển tiếp. Mỗi task gồm trạng thái hiện tại, các transition được
+phép, hạn xử lý (`dueAt`), `slaState` (`normal`, `due-soon`, `overdue`) và
+thời gian chờ. Tài xế chỉ thấy task thuộc đơn mình phụ trách; không có DB để
+đối chiếu thì trả rỗng thay vì lộ đơn của tài xế khác.
+
+Query hỗ trợ `definitionId`, `businessKey`, `overdue=true`, `limit`.
+
+## Version pinning và deployment
+
+- Mỗi file JSON là một version; instance lưu `definitionVersion` lúc start và
+  transition/guard dùng đúng version đó, kể cả khi version active đổi.
+- Khi chưa có quyết định deploy, version thấp nhất là active để file mới chưa
+  duyệt không tự chạy.
+- `GET /api/workflow/definitions/:definitionId/versions` xem version active.
+- `POST /api/workflow/definitions/:definitionId/versions/:version/deployment-requests`
+  tạo approval `workflow.definition.deploy`.
+- `POST /api/workflow/definitions/:definitionId/versions/:version/activate`
+  chỉ chạy khi approval đã duyệt và chưa dùng; version active lưu ở
+  `workflow_active_versions`, restart API vẫn giữ.
+
 ## Xác thực và phân quyền
 
 Mọi endpoint (trừ `GET /api/health`) cần access token Keycloak hợp lệ

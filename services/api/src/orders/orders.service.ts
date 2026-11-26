@@ -379,6 +379,10 @@ export class OrdersService implements OnModuleInit {
       {
         definitionId: 'order-flow',
         businessKey: id,
+        context: {
+          orderId: id,
+          ...(deadline !== null ? { deadline } : {}),
+        },
       },
       caller,
       { at: opts?.at },
@@ -548,19 +552,29 @@ export class OrdersService implements OnModuleInit {
         `Đơn ${id} đã ở trạng thái đóng "${order.state}", không chuyển được nữa.`,
       );
     }
+    const instance = await this.instances.findByBusinessKey('order-flow', id);
+    if (!instance) {
+      throw new NotFoundException(
+        `Không tìm thấy workflow instance của đơn ${id}.`,
+      );
+    }
     const check = this.workflow.canTransition(
       'order-flow',
       order.state,
       input.to,
       checkRole ? caller.roles : undefined,
+      instance.definitionVersion,
     );
     if (!check.allowed) {
       await deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
     // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc, địa chỉ và tồn kho.
-    const transition = this.workflow
-      .getTransitions('order-flow')
-      .find((item) => item.from === order.state && item.to === input.to);
+    const transition = this.workflow.getTransition(
+      'order-flow',
+      order.state,
+      input.to,
+      instance.definitionVersion,
+    );
     let consumeStock = false;
     // Hướng xử lý dùng cho phần còn lại của luồng: chuỗi tự gõ, hoặc
     // suy ra từ trả hàng đã duyệt khi đóng đơn bằng returnId.
@@ -657,10 +671,6 @@ export class OrdersService implements OnModuleInit {
     }
     // Rào chắn qua rồi mới cho instance chuyển; trạng thái luồng đổi ở
     // instance, đơn đồng bộ lại trạng thái và lịch sử của mình.
-    const instance = await this.instances.findByBusinessKey('order-flow', id);
-    if (!instance) {
-      throw new NotFoundException(`Không tìm thấy workflow instance của đơn ${id}.`);
-    }
     const updated = await this.instances.transition(
       instance.id,
       {
