@@ -10,4 +10,10 @@ uploads/
 .DS_Store
 .idea/
 *.tsbuildinfo
+next-env.d.ts
 target/
+AGENTS.md
+docs/agent-guides/
+.agents/
+docs/q&a/
+docs/knowlegde/

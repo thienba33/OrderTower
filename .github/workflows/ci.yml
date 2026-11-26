@@ -15,6 +15,16 @@ jobs:
           reuse lint
   compose:
     runs-on: ubuntu-latest
+    # Các giá trị env dưới đây là giá trị dummy chỉ dùng cho CI (đều có
+    # tiền tố ci-), không phải mật khẩu thật và không dùng ở đâu khác.
+    # docker compose config -q chỉ kiểm tra cú pháp nên không cần giá trị thật.
+    env:
+      POSTGRES_ADMIN_PASSWORD: ci-postgres-admin
+      ORDERTOWER_DB_PASSWORD: ci-ordertower-app
+      KEYCLOAK_DB_PASSWORD: ci-admin-db
+      KEYCLOAK_ADMIN_USERNAME: ci-admin-user
+      KEYCLOAK_ADMIN_PASSWORD: ci-admin-password
+      ORDERTOWER_DEMO_PASSWORD: ci-password-demo
     steps:
       - uses: actions/checkout@v4
       - name: Tạo .env từ mẫu
