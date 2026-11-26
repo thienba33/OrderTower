@@ -84,6 +84,7 @@ Các doanh nghiệp nhỏ và hộ kinh doanh bán hàng đa kênh (vận hành 
 | **5 rào chắn & 5 điểm duyệt** | Rào chắn backend kiểm tra trùng mã, tồn kho, độ tin cậy địa chỉ, hướng đóng đơn, phê duyệt sửa đơn đã đóng |
 | **Audit log bất biến** | Mọi thao tác quan trọng ghi vào `audit_log` nối chuỗi hash SHA-256 kèm endpoint `/api/audit/verify` kiểm chứng toàn chuỗi |
 | **Bảo mật đa lớp** | Đăng nhập PKCE S256 qua Keycloak (token trong cookie `httpOnly`), APISIX gateway và kiểm tra vai trò `@Roles` (`RolesGuard`) ở API |
+| **Tenant/RLS** | Claim `tenant_id` (fallback `default`), `tenant_id` trên bảng nghiệp vụ, trigger gán tenant và `FORCE ROW LEVEL SECURITY` trên Postgres runtime; audit giữ chuỗi hash toàn cục |
 | **Lưu trữ file kiểm dịch** | Ảnh bằng chứng giao hàng và chứng từ tải qua API lưu trên SeaweedFS S3, quét ClamAV qua giao thức `INSTREAM` |
 | **Nguồn mở chuẩn PoF** | Giấy phép Apache 2.0, kiểm tra REUSE/SPDX trong CI, đầy đủ `CHANGELOG.md`, `LICENSES.md` và SBOM CycloneDX 1.7 |
 

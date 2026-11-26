@@ -83,14 +83,19 @@ Dữ liệu mẫu: API tự seed khi kho trống gồm 40 SKU, 5 xe, 5 tài xế
 (`YC-018`..`YC-031`, từ `*.seed.json` và `scripts/generate-sample-data.mjs`).
 
 Mỗi mô-đun có interface store và bản cài đặt Postgres riêng; store
-trong bộ nhớ chỉ giữ lại cho test đơn vị. Test: 27 suite (`npm test` với
-Jest `--experimental-vm-modules`), gồm 26 suite unit/service (375 test)
+trong bộ nhớ chỉ giữ lại cho test đơn vị. Test gồm các suite unit/service
 và 1 suite kiểm thử tích hợp toàn app trên `pg-mem`
-(`persistence.integration.spec.ts`, 3 test).
-Giới hạn đã biết: lưu nhiều thực thể liên quan là nhiều bước nối tiếp,
-không phải 1 giao dịch chung; `persistence.integration.spec.ts` chạy lâu
-trên `pg-mem` (~48–57 giây/test, tổng ~165 giây cho cả suite) vì mỗi
-`app.init()` nạp lại toàn bộ 112 đơn lịch sử qua đường dịch vụ thật.
+(`persistence.integration.spec.ts`, 3 test). Suite tích hợp chạy lâu trên
+`pg-mem` vì mỗi `app.init()` nạp lại toàn bộ 112 đơn lịch sử qua đường
+dịch vụ thật; 3 test này có timeout 60 giây có sẵn.
+
+Ghi đơn/transition dùng transaction chung cho order + workflow instance +
+audit + tồn kho + outbox, kèm khóa hàng. ID `DH/LS/WF` cấp qua bảng
+`id_counters`. Tenant lấy từ claim `tenant_id` (fallback `default`),
+`DbService` set `app.tenant_id` theo request và bật `FORCE ROW LEVEL
+SECURITY` trên các bảng nghiệp vụ. `audit_log` có `tenant_id` nhưng giữ
+chuỗi hash toàn cục nên không bật RLS; `id_counters` và
+`workflow_active_versions` là cấu hình toàn cục.
 
 ### Luồng đơn và rào chắn
 

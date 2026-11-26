@@ -15,7 +15,7 @@ describe('DbService', () => {
     }
   });
 
-  it('migration 001 đến 016 áp dụng được và chạy lại là không làm gì thêm', async () => {
+  it('migration 001 đến 017 áp dụng được và chạy lại là không làm gì thêm', async () => {
     const db = await createTestDbService();
     const first = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
@@ -37,6 +37,7 @@ describe('DbService', () => {
       '014_files',
       '015_workflow_active_versions',
       '016_transactions_outbox',
+      '017_tenancy_rls',
     ]);
     for (const table of [
       'audit_log',
@@ -70,12 +71,17 @@ describe('DbService', () => {
       // Bảng tồn tại khi truy vấn được, dù chưa có hàng nào.
       await expect(db.query(`SELECT 1 FROM ${table} LIMIT 0`)).resolves.toBeDefined();
     }
+    for (const table of ['orders', 'audit_log', 'outbox_events']) {
+      await expect(
+        db.query(`SELECT tenant_id FROM ${table} LIMIT 0`),
+      ).resolves.toBeDefined();
+    }
     // Chạy lại toàn bộ migration: không lỗi, không thêm bản ghi.
     await db.onModuleInit();
     const second = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(second.rows).toHaveLength(16);
+    expect(second.rows).toHaveLength(17);
     expect((second.rows as Array<{ version: string }>).map((row) => row.version)).toEqual([
       '001_init',
       '002_shipments',
@@ -93,6 +99,7 @@ describe('DbService', () => {
       '014_files',
       '015_workflow_active_versions',
       '016_transactions_outbox',
+      '017_tenancy_rls',
     ]);
   });
 });

@@ -86,6 +86,7 @@ describe('AuthService', () => {
     issuer?: string;
     expiresIn?: string;
     signWith?: CryptoKey;
+    tenantId?: string;
   }): Promise<string> {
     return new SignJWT({
       realm_access: { roles: options.realmRoles ?? [] },
@@ -94,6 +95,9 @@ describe('AuthService', () => {
         'ordertower-portal': { roles: options.portalRoles ?? [] },
       },
       preferred_username: 'son',
+      ...(options.tenantId !== undefined
+        ? { tenant_id: options.tenantId }
+        : {}),
     })
       .setProtectedHeader({ alg: 'RS256', kid: KID })
       .setIssuer(options.issuer ?? `${baseUrl}/realms/ordertower`)
@@ -112,6 +116,22 @@ describe('AuthService', () => {
       username: 'son',
       roles: ['Điều phối viên'],
     });
+  });
+
+  it('lấy tenant_id từ claim, thiếu claim thì không gắn tenant', async () => {
+    const service = new AuthService();
+    const withTenant = await signToken({
+      clientRoles: ['dispatcher'],
+      tenantId: 'tenant-b',
+    });
+    await expect(service.verifyToken(withTenant)).resolves.toMatchObject({
+      tenantId: 'tenant-b',
+    });
+
+    const noTenant = await signToken({ clientRoles: ['dispatcher'] });
+    await expect(service.verifyToken(noTenant)).resolves.not.toHaveProperty(
+      'tenantId',
+    );
   });
 
   it('nhận cả vai realm_access', async () => {

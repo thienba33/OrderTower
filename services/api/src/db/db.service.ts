@@ -3,7 +3,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Pool } from 'pg';
+import { TenantContextService } from '../tenant/tenant-context.service';
 import type { Queryable, QueryResultLike, Transactional } from './db.types';
+import { buildTenancyRlsSql } from './tenancy-rls';
 
 // Kết nối Postgres và chạy migration có phiên bản. Pool lấy từ DATABASE_URL;
 // thiếu biến thì chặn khởi động với lỗi rõ ràng. Migration chạy 1 lần lúc
@@ -13,6 +15,9 @@ import type { Queryable, QueryResultLike, Transactional } from './db.types';
 export class DbService implements Transactional, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DbService.name);
   private readonly pool: Pool;
+  // Khi nhận pool từ ngoài (pg-mem trong test), bỏ RLS/tenant trigger vì
+  // pg-mem không hỗ trợ. Khi tự tạo pool từ DATABASE_URL (runtime), bật.
+  private readonly useTenantRls: boolean;
 
   // pool chỉ dùng cho kiểm thử: truyền pool của pg-mem để chạy trên DB ảo
   // mà không cần máy chủ Postgres. Khi không truyền, đọc DATABASE_URL.
@@ -20,7 +25,11 @@ export class DbService implements Transactional, OnModuleInit, OnModuleDestroy {
   // trong metadata và đòi 1 provider Pool trong DbModule, rồi chặn khởi
   // động với UnknownDependenciesException dù tham số này là tùy chọn.
   // Kiểm thử gọi trực tiếp new DbService(pool) nên không bị ảnh hưởng.
-  constructor(@Optional() pool?: Pool) {
+  constructor(
+    @Optional() pool?: Pool,
+    @Optional() private readonly tenantContext?: TenantContextService,
+  ) {
+    this.useTenantRls = pool === undefined;
     if (pool) {
       this.pool = pool;
       return;
@@ -34,14 +43,42 @@ export class DbService implements Transactional, OnModuleInit, OnModuleDestroy {
     this.pool = new Pool({ connectionString: url });
   }
 
+  private tenantId(): string {
+    return this.tenantContext?.getTenantId() ?? 'default';
+  }
+
   async query(text: string, params?: unknown[]): Promise<QueryResultLike> {
-    return this.pool.query(text, params);
+    if (!this.useTenantRls) {
+      return this.pool.query(text, params);
+    }
+    // Mỗi query chạy trong transaction ngắn để set_config(..., true) chỉ
+    // ảnh hưởng connection hiện tại, không rò tenant sang request sau.
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [
+        this.tenantId(),
+      ]);
+      const result = await client.query(text, params);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async withTransaction<T>(fn: (client: Queryable) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      if (this.useTenantRls) {
+        await client.query("SELECT set_config('app.tenant_id', $1, true)", [
+          this.tenantId(),
+        ]);
+      }
       const result = await fn(client);
       await client.query('COMMIT');
       return result;
@@ -55,6 +92,15 @@ export class DbService implements Transactional, OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     await this.runMigrations();
+    if (this.useTenantRls) {
+      await this.applyTenancyRls();
+    }
+  }
+
+  // Tạo trigger gán tenant_id và bật RLS. Idempotent để restart vẫn an toàn.
+  private async applyTenancyRls(): Promise<void> {
+    await this.query(buildTenancyRlsSql());
+    this.logger.log('Đã áp dụng RLS tenant cho các bảng nghiệp vụ.');
   }
 
   async onModuleDestroy(): Promise<void> {
