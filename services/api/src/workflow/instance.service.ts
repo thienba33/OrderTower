@@ -6,10 +6,13 @@ import {
   Injectable,
   NotFoundException,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
+import type { Queryable } from '../db/db.types';
 import { computeNextNumber } from '../db/id-counter';
+import { IdSequenceService } from '../db/id-sequence';
 import type {
   StartInstanceInput,
   TransitionInstanceInput,
@@ -17,6 +20,7 @@ import type {
   WorkflowInstanceStatus,
   WorkflowInstanceStore,
 } from './instance.types';
+import { WorkflowTransitionDeniedError } from './instance.types';
 import { WORKFLOW_INSTANCE_STORE } from './instance.store';
 import { WorkflowService } from './workflow.service';
 
@@ -37,6 +41,10 @@ export class WorkflowInstanceService implements OnModuleInit {
     private readonly audit: AuditService,
     @Inject(WORKFLOW_INSTANCE_STORE)
     private readonly store: WorkflowInstanceStore,
+    // Bộ đếm DB cho WF-*; optional để unit test dựng service thủ công vẫn
+    // dùng bộ đếm trong bộ nhớ.
+    @Optional()
+    private readonly idSequence?: IdSequenceService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: instance đã có WF-1001 thì instance mới là
@@ -53,8 +61,9 @@ export class WorkflowInstanceService implements OnModuleInit {
     input: StartInstanceInput,
     caller: Caller,
     // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
-    // thời gian, vắng thì lấy thời điểm hiện tại.
-    opts?: { at?: string },
+    // thời gian, vắng thì lấy thời điểm hiện tại. client dùng để tạo
+    // instance trong cùng transaction với đơn.
+    opts?: { at?: string; client?: Queryable },
   ): Promise<WorkflowInstance> {
     if (typeof input.definitionId !== 'string' || input.definitionId.trim() === '') {
       throw new BadRequestException('definitionId là bắt buộc, dạng chuỗi.');
@@ -72,7 +81,11 @@ export class WorkflowInstanceService implements OnModuleInit {
     }
     const definition = this.workflow.getDefinition(input.definitionId);
     if (
-      await this.store.findByBusinessKey(input.definitionId, input.businessKey)
+      await this.store.findByBusinessKey(
+        input.definitionId,
+        input.businessKey,
+        opts?.client,
+      )
     ) {
       throw new ConflictException(
         `Đã có instance của luồng "${input.definitionId}" cho businessKey "${input.businessKey}".`,
@@ -80,8 +93,16 @@ export class WorkflowInstanceService implements OnModuleInit {
     }
     const now = opts?.at ?? new Date().toISOString();
     const initialState = this.workflow.getInitialState(input.definitionId);
+    const nextNumber = this.idSequence
+      ? await this.idSequence.next(
+          'workflow:WF',
+          this.nextNumber,
+          opts?.client,
+        )
+      : this.nextNumber;
+    this.nextNumber = nextNumber + 1;
     const instance: WorkflowInstance = {
-      id: `WF-${String(this.nextNumber++).padStart(4, '0')}`,
+      id: `WF-${String(nextNumber).padStart(4, '0')}`,
       definitionId: definition.definitionId,
       definitionVersion: definition.version,
       businessKey: input.businessKey,
@@ -100,23 +121,30 @@ export class WorkflowInstanceService implements OnModuleInit {
       createdAt: now,
       updatedAt: now,
     };
-    await this.store.save(instance);
-    await this.audit.append({
-      actor: caller.username,
-      role: caller.roles[0] ?? '',
-      action: 'workflow.instance.started',
-      at: now,
-      // Audit log dùng chung trường orderId cho mã thực thể nghiệp vụ.
-      orderId: input.businessKey,
-      from: null,
-      to: initialState,
-      detail: `Luồng ${definition.definitionId} v${definition.version}.`,
-    });
+    await this.store.save(instance, opts?.client);
+    await this.audit.append(
+      {
+        actor: caller.username,
+        role: caller.roles[0] ?? '',
+        action: 'workflow.instance.started',
+        at: now,
+        // Audit log dùng chung trường orderId cho mã thực thể nghiệp vụ.
+        orderId: input.businessKey,
+        from: null,
+        to: initialState,
+        detail: `Luồng ${definition.definitionId} v${definition.version}.`,
+      },
+      opts?.client,
+    );
     return copyInstance(instance);
   }
 
-  async get(id: string): Promise<WorkflowInstance> {
-    const instance = await this.store.findById(id);
+  async get(
+    id: string,
+    client?: Queryable,
+    forUpdate = false,
+  ): Promise<WorkflowInstance> {
+    const instance = await this.store.findById(id, client, forUpdate);
     if (!instance) {
       throw new NotFoundException(`Không tìm thấy workflow instance ${id}.`);
     }
@@ -126,8 +154,15 @@ export class WorkflowInstanceService implements OnModuleInit {
   async findByBusinessKey(
     definitionId: string,
     businessKey: string,
+    client?: Queryable,
+    forUpdate = false,
   ): Promise<WorkflowInstance | null> {
-    return this.store.findByBusinessKey(definitionId, businessKey);
+    return this.store.findByBusinessKey(
+      definitionId,
+      businessKey,
+      client,
+      forUpdate,
+    );
   }
 
   async list(filters: {
@@ -159,24 +194,35 @@ export class WorkflowInstanceService implements OnModuleInit {
       // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
       // thời gian, vắng thì lấy thời điểm hiện tại.
       at?: string;
+      // client dùng để đọc/ghi instance + audit trong transaction của đơn.
+      client?: Queryable;
+      // deferDenialAudit: transaction ngoài sẽ rollback; service ngoài ghi
+      // audit denial sau khi rollback để không giữ khóa hàng.
+      deferDenialAudit?: boolean;
     },
   ): Promise<WorkflowInstance> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
     }
-    const instance = await this.get(id);
+    const instance = await this.get(id, options?.client, true);
     const now = options?.at ?? new Date().toISOString();
     const deny = async (reason: string): Promise<never> => {
-      await this.audit.append({
-        actor: caller.username,
-        role: caller.roles[0] ?? '',
-        action: 'workflow.instance.transition.denied',
-        at: now,
-        orderId: instance.businessKey,
-        from: instance.currentState,
-        to: input.to,
-        detail: reason,
-      });
+      if (options?.deferDenialAudit) {
+        throw new WorkflowTransitionDeniedError(reason);
+      }
+      await this.audit.append(
+        {
+          actor: caller.username,
+          role: caller.roles[0] ?? '',
+          action: 'workflow.instance.transition.denied',
+          at: now,
+          orderId: instance.businessKey,
+          from: instance.currentState,
+          to: input.to,
+          detail: reason,
+        },
+        options?.client,
+      );
       throw new ConflictException(reason);
     };
     if (instance.status !== 'active') {
@@ -224,17 +270,20 @@ export class WorkflowInstanceService implements OnModuleInit {
     if (input.reason) {
       detailParts.push(`Lý do: ${input.reason}`);
     }
-    await this.audit.append({
-      actor: caller.username,
-      role,
-      action: 'workflow.instance.transition',
-      at: now,
-      orderId: instance.businessKey,
-      from,
-      to: input.to,
-      detail: detailParts.join('; '),
-    });
-    await this.store.save(instance);
+    await this.audit.append(
+      {
+        actor: caller.username,
+        role,
+        action: 'workflow.instance.transition',
+        at: now,
+        orderId: instance.businessKey,
+        from,
+        to: input.to,
+        detail: detailParts.join('; '),
+      },
+      options?.client,
+    );
+    await this.store.save(instance, options?.client);
     return copyInstance(instance);
   }
 

@@ -185,6 +185,9 @@ export const WORKFLOW_INSTANCE_ROLES: readonly string[] = [ADMIN, MANAGER];
 // Deploy definition mới là thay đổi cấu hình luồng, chỉ quản lý/admin.
 export const WORKFLOW_DEPLOY_ROLES: readonly string[] = [ADMIN, MANAGER];
 
+// Outbox là dữ liệu vận hành nội bộ, chỉ quản lý/admin xem và relay.
+export const OUTBOX_ROLES: readonly string[] = [ADMIN, MANAGER];
+
 export function hasAnyRole(
   callerRoles: readonly string[],
   allowed: readonly string[],

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { Queryable } from '../db/db.types';
 
 export type WorkflowInstanceStatus =
   | 'active'
@@ -50,11 +51,29 @@ export interface TransitionInstanceInput {
 // interface này, service phía trên không đổi. Mọi phương thức đều bất đồng bộ
 // vì kho Postgres cần chờ truy vấn.
 export interface WorkflowInstanceStore {
-  save(instance: WorkflowInstance): Promise<void>;
-  findById(id: string): Promise<WorkflowInstance | null>;
+  // client dùng để ghi/đọc trong transaction của service; forUpdate khóa
+  // instance khi chuyển trạng thái.
+  save(instance: WorkflowInstance, client?: Queryable): Promise<void>;
+  findById(
+    id: string,
+    client?: Queryable,
+    forUpdate?: boolean,
+  ): Promise<WorkflowInstance | null>;
   findByBusinessKey(
     definitionId: string,
     businessKey: string,
+    client?: Queryable,
+    forUpdate?: boolean,
   ): Promise<WorkflowInstance | null>;
   list(): Promise<WorkflowInstance[]>;
+}
+
+// Lỗi nghiệp vụ khi transition bị từ chối trong transaction ngoài. Service
+// ngoài bắt lỗi này để ghi audit denial sau khi transaction đã rollback,
+// tránh giữ khóa hàng trong lúc chờ ghi audit.
+export class WorkflowTransitionDeniedError extends Error {
+  constructor(public readonly reason: string) {
+    super(reason);
+    this.name = 'WorkflowTransitionDeniedError';
+  }
 }

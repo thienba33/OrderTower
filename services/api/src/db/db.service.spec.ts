@@ -15,7 +15,7 @@ describe('DbService', () => {
     }
   });
 
-  it('migration 001, 002, 003, 004, 005, 006, 007, 008, 009, 010, 011, 012 và 013 áp dụng được và chạy lại là không làm gì thêm', async () => {
+  it('migration 001 đến 016 áp dụng được và chạy lại là không làm gì thêm', async () => {
     const db = await createTestDbService();
     const first = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
@@ -36,6 +36,7 @@ describe('DbService', () => {
       '013_tickets',
       '014_files',
       '015_workflow_active_versions',
+      '016_transactions_outbox',
     ]);
     for (const table of [
       'audit_log',
@@ -62,6 +63,8 @@ describe('DbService', () => {
       'tickets',
       'files',
       'workflow_active_versions',
+      'id_counters',
+      'outbox_events',
       'schema_migrations',
     ]) {
       // Bảng tồn tại khi truy vấn được, dù chưa có hàng nào.
@@ -72,7 +75,7 @@ describe('DbService', () => {
     const second = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(second.rows).toHaveLength(15);
+    expect(second.rows).toHaveLength(16);
     expect((second.rows as Array<{ version: string }>).map((row) => row.version)).toEqual([
       '001_init',
       '002_shipments',
@@ -89,6 +92,7 @@ describe('DbService', () => {
       '013_tickets',
       '014_files',
       '015_workflow_active_versions',
+      '016_transactions_outbox',
     ]);
   });
 });

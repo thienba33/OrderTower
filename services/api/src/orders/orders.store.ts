@@ -83,11 +83,15 @@ const ORDER_HISTORY_COLUMNS = `from_state, to_state, actor, role, reason,
 export class InMemoryOrderStore implements OrderStore {
   private readonly orders = new Map<string, Order>();
 
-  async save(order: Order): Promise<void> {
+  async save(order: Order, _client?: Queryable): Promise<void> {
     this.orders.set(order.id, copyOrder(order));
   }
 
-  async findById(id: string): Promise<Order | null> {
+  async findById(
+    id: string,
+    _client?: Queryable,
+    _forUpdate?: boolean,
+  ): Promise<Order | null> {
     const found = this.orders.get(id);
     return found ? copyOrder(found) : null;
   }
@@ -112,9 +116,9 @@ export class InMemoryOrderStore implements OrderStore {
 export class PostgresOrderStore implements OrderStore {
   constructor(private readonly db: Transactional) {}
 
-  async save(order: Order): Promise<void> {
-    await this.db.withTransaction(async (client) => {
-      await client.query(
+  async save(order: Order, client?: Queryable): Promise<void> {
+    const write = async (runner: Queryable): Promise<void> => {
+      await runner.query(
         `INSERT INTO orders
            (id, idempotency_key, customer, phone, items, total, deadline,
             state, address, address_trust, address_level,
@@ -158,11 +162,11 @@ export class PostgresOrderStore implements OrderStore {
           order.updatedAt,
         ],
       );
-      await client.query('DELETE FROM order_history WHERE order_id = $1', [
+      await runner.query('DELETE FROM order_history WHERE order_id = $1', [
         order.id,
       ]);
       for (const entry of order.history) {
-        await client.query(
+        await runner.query(
           `INSERT INTO order_history
              (order_id, from_state, to_state, actor, role, reason, handling,
               created_at)
@@ -179,11 +183,19 @@ export class PostgresOrderStore implements OrderStore {
           ],
         );
       }
-    });
+    };
+    if (client) {
+      return write(client);
+    }
+    await this.db.withTransaction(write);
   }
 
-  async findById(id: string): Promise<Order | null> {
-    return this.loadById(this.db, id);
+  async findById(
+    id: string,
+    client?: Queryable,
+    forUpdate = false,
+  ): Promise<Order | null> {
+    return this.loadById(client ?? this.db, id, forUpdate);
   }
 
   async findByIdempotencyKey(key: string): Promise<Order | null> {
@@ -222,9 +234,12 @@ export class PostgresOrderStore implements OrderStore {
   private async loadById(
     db: Queryable,
     id: string,
+    forUpdate = false,
   ): Promise<Order | null> {
     const found = await db.query(
-      `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = $1`,
+      `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = $1${
+        forUpdate ? ' FOR UPDATE' : ''
+      }`,
       [id],
     );
     if (found.rows.length === 0) {

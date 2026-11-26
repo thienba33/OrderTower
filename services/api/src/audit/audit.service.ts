@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { GENESIS_PREV_HASH, computeAuditHash } from './audit.hash';
+import type { Queryable } from '../db/db.types';
 import { AUDIT_STORE, InMemoryAuditStore } from './audit.store';
 import type { AuditStore } from './audit.store';
 import type {
@@ -22,8 +23,11 @@ export class AuditService {
     private readonly store: AuditStore = new InMemoryAuditStore(),
   ) {}
 
-  async append(input: NewAuditRecord): Promise<AuditRecord> {
-    return this.store.append(input);
+  async append(
+    input: NewAuditRecord,
+    client?: Queryable,
+  ): Promise<AuditRecord> {
+    return this.store.append(input, client);
   }
 
   async getAll(): Promise<AuditRecord[]> {

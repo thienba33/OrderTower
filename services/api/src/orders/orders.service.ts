@@ -25,9 +25,15 @@ import { DriversService } from '../drivers/driver.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { ApprovalService } from '../approvals/approval.service';
 import type { Approval } from '../approvals/approval.types';
+import type { Queryable } from '../db/db.types';
+import { DbService } from '../db/db.service';
 import { computeNextNumber } from '../db/id-counter';
+import { IdSequenceService } from '../db/id-sequence';
+import { OutboxService } from '../outbox/outbox.service';
 import type { Return } from '../returns/return.types';
 import { WorkflowInstanceService } from '../workflow/instance.service';
+import type { WorkflowInstance } from '../workflow/instance.types';
+import { WorkflowTransitionDeniedError } from '../workflow/instance.types';
 import { WorkflowService } from '../workflow/workflow.service';
 import { InMemoryOrderStore, ORDER_STORE } from './orders.store';
 import type { OrderStore } from './orders.types';
@@ -84,6 +90,19 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+// Lỗi từ chối chuyển trạng thái được ném ra khỏi transaction để service ghi
+// audit denial sau khi rollback, không giữ khóa order/instance.
+class OrderTransitionDeniedError extends Error {
+  constructor(
+    public readonly reason: string,
+    public readonly from: string,
+    public readonly to: string,
+  ) {
+    super(reason);
+    this.name = 'OrderTransitionDeniedError';
+  }
+}
+
 // Đơn hàng nghiệp vụ: tạo, chuyển trạng thái qua Workflow engine, sửa.
 // Trạng thái luồng sống ở workflow instance, đơn chỉ giữ mã instance và đồng
 // bộ trạng thái sau mỗi lần chuyển.
@@ -137,6 +156,15 @@ export class OrdersService implements OnModuleInit {
     // tay không phải sửa.
     @Optional()
     private readonly drivers?: DriversService,
+    // Các phụ thuộc hạ tầng đặt cuối, optional để test in-memory cũ không
+    // phải sửa. Khi chạy qua NestJS, module cấp DbService/OutboxService/
+    // IdSequenceService.
+    @Optional()
+    private readonly db?: DbService,
+    @Optional()
+    private readonly outbox?: OutboxService,
+    @Optional()
+    private readonly idSequence?: IdSequenceService,
   ) {}
 
   // Nạp 8 đơn mẫu qua đường dịch vụ thật (create rồi transition hợp lệ
@@ -369,67 +397,92 @@ export class OrdersService implements OnModuleInit {
     }
     // Tổng tiền do server tính từ giá từng SKU trong kho, client không gửi.
     const total = await this.computeTotal(input.items);
-    const id =
-      opts?.idPrefix === 'LS'
-        ? `LS-${String(this.nextHistoricalNumber++).padStart(4, '0')}`
-        : `DH-${String(this.nextNumber++).padStart(4, '0')}`;
-    // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
-    // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
-    const instance = await this.instances.start(
-      {
-        definitionId: 'order-flow',
-        businessKey: id,
-        context: {
-          orderId: id,
-          ...(deadline !== null ? { deadline } : {}),
-        },
-      },
-      caller,
-      { at: opts?.at },
-    );
-    const now = opts?.at ?? new Date().toISOString();
-    const order: Order = {
-      id,
-      idempotencyKey: input.idempotencyKey,
-      customer: input.customer,
-      phone,
-      items: input.items.map((item) => ({
-        sku: item.sku,
-        quantity: item.quantity,
-      })),
-      total,
-      deadline,
-      channelId,
-      customerId,
-      address: input.address ? { ...input.address } : undefined,
-      addressTrust: evaluation ? evaluation.trust : null,
-      addressLevel: evaluation ? evaluation.level : null,
-      workflowInstanceId: instance.id,
-      state: 'Mới tạo',
-      history: [
+    // Order, instance, audit và outbox nằm trong 1 transaction: lỗi ở bất kỳ
+    // bước nào cũng không để lại đơn/instance/audit dở dang.
+    const created = await this.withTransaction(async (client) => {
+      const id = await this.nextOrderId(
+        opts?.idPrefix === 'LS' ? 'LS' : 'DH',
+        client,
+      );
+      // Mỗi đơn mở 1 workflow instance, trạng thái luồng sống ở instance,
+      // đơn chỉ giữ mã instance và đồng bộ trạng thái sau mỗi lần chuyển.
+      const instance = await this.instances.start(
         {
+          definitionId: 'order-flow',
+          businessKey: id,
+          context: {
+            orderId: id,
+            ...(deadline !== null ? { deadline } : {}),
+          },
+        },
+        caller,
+        { at: opts?.at, client },
+      );
+      const now = opts?.at ?? new Date().toISOString();
+      const order: Order = {
+        id,
+        idempotencyKey: input.idempotencyKey,
+        customer: input.customer,
+        phone,
+        items: input.items.map((item) => ({
+          sku: item.sku,
+          quantity: item.quantity,
+        })),
+        total,
+        deadline,
+        channelId,
+        customerId,
+        address: input.address ? { ...input.address } : undefined,
+        addressTrust: evaluation ? evaluation.trust : null,
+        addressLevel: evaluation ? evaluation.level : null,
+        workflowInstanceId: instance.id,
+        state: 'Mới tạo',
+        history: [
+          {
+            from: null,
+            to: 'Mới tạo',
+            by: caller.username,
+            role: caller.roles[0] ?? '',
+            at: now,
+          },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      };
+      await this.store.save(order, client);
+      await this.audit.append(
+        {
+          actor: caller.username,
+          role: caller.roles[0] ?? '',
+          action: 'order.created',
+          at: now,
+          orderId: order.id,
           from: null,
           to: 'Mới tạo',
-          by: caller.username,
-          role: caller.roles[0] ?? '',
-          at: now,
+          detail: `Khách ${input.customer}, ${input.items.length} mặt hàng.`,
         },
-      ],
-      createdAt: now,
-      updatedAt: now,
-    };
-    await this.store.save(order);
-    await this.audit.append({
-      actor: caller.username,
-      role: caller.roles[0] ?? '',
-      action: 'order.created',
-      at: now,
-      orderId: order.id,
-      from: null,
-      to: 'Mới tạo',
-      detail: `Khách ${input.customer}, ${input.items.length} mặt hàng.`,
+        client,
+      );
+      await this.outbox?.append(
+        {
+          type: 'order.created',
+          aggregateType: 'order',
+          aggregateId: order.id,
+          payload: {
+            orderId: order.id,
+            state: order.state,
+            customer: order.customer,
+            items: order.items,
+            workflowInstanceId: order.workflowInstanceId,
+            definitionVersion: instance.definitionVersion,
+            deadline: order.deadline,
+          },
+        },
+        client,
+      );
+      return order;
     });
-    return copyOrder(order);
+    return copyOrder(created);
   }
 
   async list(
@@ -521,38 +574,70 @@ export class OrdersService implements OnModuleInit {
     input: TransitionOrderInput,
     caller: Caller,
     checkRole: boolean,
-    // Thời điểm ghi cho bản ghi: chỉ đường seed lịch sử dùng để lùi
-    // thời gian, vắng thì lấy thời điểm hiện tại.
     opts?: { at?: string },
   ): Promise<Order> {
     if (typeof input.to !== 'string' || input.to.trim() === '') {
       throw new BadRequestException('to là bắt buộc, dạng chuỗi.');
     }
-    const order = await this.store.findById(id);
+    const now = opts?.at ?? new Date().toISOString();
+    try {
+      return await this.withTransaction((client) =>
+        this.applyTransitionInTransaction(
+          id,
+          input,
+          caller,
+          checkRole,
+          now,
+          client,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof OrderTransitionDeniedError) {
+        // Transaction đã rollback; ghi audit denial ở giao dịch riêng để
+        // bằng chứng không bị mất và không giữ khóa hàng.
+        await this.audit.append({
+          actor: caller.username,
+          role: caller.roles[0] ?? '',
+          action: 'order.transition.denied',
+          at: now,
+          orderId: id,
+          from: error.from,
+          to: error.to,
+          detail: error.reason,
+        });
+        throw new ConflictException(error.reason);
+      }
+      throw error;
+    }
+  }
+
+  private async applyTransitionInTransaction(
+    id: string,
+    input: TransitionOrderInput,
+    caller: Caller,
+    checkRole: boolean,
+    now: string,
+    client?: Queryable,
+  ): Promise<Order> {
+    const order = await this.store.findById(id, client, true);
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn ${id}.`);
     }
-    const now = opts?.at ?? new Date().toISOString();
-    const deny = async (reason: string): Promise<never> => {
-      await this.audit.append({
-        actor: caller.username,
-        role: caller.roles[0] ?? '',
-        action: 'order.transition.denied',
-        at: now,
-        orderId: id,
-        from: order.state,
-        to: input.to,
-        detail: reason,
-      });
-      throw new ConflictException(reason);
+    const deny = (reason: string): never => {
+      throw new OrderTransitionDeniedError(reason, order.state, input.to);
     };
     // Rào chắn: không sửa đơn đã đóng.
     if (CLOSED_STATES.includes(order.state)) {
-      await deny(
+      deny(
         `Đơn ${id} đã ở trạng thái đóng "${order.state}", không chuyển được nữa.`,
       );
     }
-    const instance = await this.instances.findByBusinessKey('order-flow', id);
+    const instance = await this.instances.findByBusinessKey(
+      'order-flow',
+      id,
+      client,
+      true,
+    );
     if (!instance) {
       throw new NotFoundException(
         `Không tìm thấy workflow instance của đơn ${id}.`,
@@ -566,7 +651,7 @@ export class OrdersService implements OnModuleInit {
       instance.definitionVersion,
     );
     if (!check.allowed) {
-      await deny(check.reason ?? 'Chuyển trạng thái không được phép.');
+      deny(check.reason ?? 'Chuyển trạng thái không được phép.');
     }
     // Rào chắn theo guard trong tệp định nghĩa: lý do bắt buộc, địa chỉ và tồn kho.
     const transition = this.workflow.getTransition(
@@ -623,13 +708,16 @@ export class OrdersService implements OnModuleInit {
           addressDenial = `Địa chỉ của đơn ${id} chỉ đạt mức tin cậy ${addressTrust} (${order.addressLevel}), chưa đạt tối thiểu ${MIN_ADDRESS_TRUST}.`;
         }
         if (addressDenial !== null) {
-          await deny(addressDenial);
+          deny(addressDenial);
         }
       }
       if (transition.guard.includes('tồn kho')) {
-        const stock = await this.inventory.checkSufficient(order.items);
+        const stock = await this.inventory.checkSufficient(
+          order.items,
+          client,
+        );
         if (!stock.sufficient) {
-          await deny(
+          deny(
             `Tồn kho không đủ: ${stock.lacking.map((item) => item.reason).join(' ')}`,
           );
         }
@@ -647,7 +735,7 @@ export class OrdersService implements OnModuleInit {
           (item) => item.status === 'Đang giao',
         );
         if (!dispatched) {
-          await deny(
+          deny(
             `Đơn ${id} chưa điều xe: không có shipment nào đang ở trạng thái "Đang giao".`,
           );
         }
@@ -663,7 +751,7 @@ export class OrdersService implements OnModuleInit {
             item.proofPhotoKey.trim() !== '',
         );
         if (!delivered) {
-          await deny(
+          deny(
             `Đơn ${id} chưa có bằng chứng giao hàng: không có shipment nào ở trạng thái "Đã giao" kèm proofPhotoKey.`,
           );
         }
@@ -671,16 +759,29 @@ export class OrdersService implements OnModuleInit {
     }
     // Rào chắn qua rồi mới cho instance chuyển; trạng thái luồng đổi ở
     // instance, đơn đồng bộ lại trạng thái và lịch sử của mình.
-    const updated = await this.instances.transition(
-      instance.id,
-      {
-        to: input.to,
-        ...(input.reason ? { reason: input.reason } : {}),
-        ...(handling ? { handling } : {}),
-      },
-      caller,
-      { skipRoleCheck: !checkRole, at: now },
-    );
+    let updated: WorkflowInstance;
+    try {
+      updated = await this.instances.transition(
+        instance.id,
+        {
+          to: input.to,
+          ...(input.reason ? { reason: input.reason } : {}),
+          ...(handling ? { handling } : {}),
+        },
+        caller,
+        {
+          skipRoleCheck: !checkRole,
+          at: now,
+          client,
+          deferDenialAudit: true,
+        },
+      );
+    } catch (error) {
+      if (error instanceof WorkflowTransitionDeniedError) {
+        deny(error.reason);
+      }
+      throw error;
+    }
     const from = order.state;
     order.state = updated.currentState;
     order.updatedAt = updated.updatedAt;
@@ -695,11 +796,72 @@ export class OrdersService implements OnModuleInit {
     });
     // Lưu đơn trước khi giữ hàng: giống bản bộ nhớ cũ, thay đổi trạng thái
     // đã nằm trong kho thì mới chạm tới kho hàng.
-    await this.store.save(order);
+    await this.store.save(order, client);
+    await this.outbox?.append(
+      {
+        type: 'order.transitioned',
+        aggregateType: 'order',
+        aggregateId: order.id,
+        payload: {
+          orderId: order.id,
+          from,
+          to: input.to,
+          by: caller.username,
+          role: check.requiredRole ?? caller.roles[0] ?? '',
+          workflowInstanceId: order.workflowInstanceId,
+          definitionVersion: instance.definitionVersion,
+          items: order.items,
+          stockConsumed: consumeStock,
+        },
+      },
+      client,
+    );
     if (consumeStock) {
-      await this.inventory.reserve(order.items);
+      await this.inventory.reserve(order.items, client);
+      await this.outbox?.append(
+        {
+          type: 'inventory.reserved',
+          aggregateType: 'order',
+          aggregateId: order.id,
+          payload: {
+            orderId: order.id,
+            items: order.items,
+            state: order.state,
+          },
+        },
+        client,
+      );
     }
     return copyOrder(order);
+  }
+
+  // Chạy fn trong transaction Postgres khi có DbService; test in-memory
+  // không có DbService thì chạy trực tiếp, giữ nguyên hành vi cũ.
+  private async withTransaction<T>(
+    fn: (client?: Queryable) => Promise<T>,
+  ): Promise<T> {
+    if (!this.db) {
+      return fn(undefined);
+    }
+    return this.db.withTransaction(fn);
+  }
+
+  // Cấp mã DH/LS qua bộ đếm DB khi có; không có thì dùng bộ đếm bộ nhớ.
+  private async nextOrderId(
+    prefix: 'DH' | 'LS',
+    client?: Queryable,
+  ): Promise<string> {
+    const initial =
+      prefix === 'LS' ? this.nextHistoricalNumber : this.nextNumber;
+    const value = this.idSequence
+      ? await this.idSequence.next(`order:${prefix}`, initial, client)
+      : initial;
+    if (prefix === 'LS') {
+      this.nextHistoricalNumber = value + 1;
+    } else {
+      this.nextNumber = value + 1;
+    }
+    return `${prefix}-${String(value).padStart(4, '0')}`;
   }
 
   // Tổng tiền đơn do server tính: tổng (unitPrice ?? 0) * quantity trên

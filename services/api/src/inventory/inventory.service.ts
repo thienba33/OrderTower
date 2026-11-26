@@ -8,6 +8,7 @@ import type {
   StockCheck,
 } from './inventory.types';
 import type { OrderItem } from '../orders/orders.types';
+import type { Queryable } from '../db/db.types';
 import { INVENTORY_STORE, InMemoryInventoryStore } from './inventory.store';
 import type { InventoryStore } from './inventory.store';
 
@@ -71,10 +72,13 @@ export class InventoryService implements OnModuleInit {
   }
 
   // Kiểm tra đủ hàng cho các mặt hàng của 1 đơn, chưa trừ kho.
-  async checkSufficient(items: OrderItem[]): Promise<StockCheck> {
+  async checkSufficient(
+    items: OrderItem[],
+    client?: Queryable,
+  ): Promise<StockCheck> {
     const lacking: StockCheck['lacking'] = [];
     for (const item of items) {
-      const held = await this.store.get(item.sku);
+      const held = await this.store.get(item.sku, client);
       if (!held) {
         lacking.push({
           sku: item.sku,
@@ -95,9 +99,10 @@ export class InventoryService implements OnModuleInit {
   }
 
   // Giữ hàng cho 1 đơn. Chỉ gọi sau khi checkSufficient đã đạt.
-  async reserve(items: OrderItem[]): Promise<void> {
+  // client dùng để khóa hàng tồn kho và ghi cùng transaction với đơn.
+  async reserve(items: OrderItem[], client?: Queryable): Promise<void> {
     for (const item of items) {
-      const held = await this.store.get(item.sku);
+      const held = await this.store.get(item.sku, client, true);
       if (!held) {
         throw new Error(`Không giữ được hàng: SKU ${item.sku} không có trong kho.`);
       }
@@ -108,7 +113,7 @@ export class InventoryService implements OnModuleInit {
       }
       held.stock -= item.quantity;
       held.reserved += item.quantity;
-      await this.store.save(held);
+      await this.store.save(held, client);
     }
   }
 

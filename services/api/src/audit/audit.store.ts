@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { GENESIS_PREV_HASH, computeAuditHash } from './audit.hash';
 import type { AuditRecord, NewAuditRecord } from './audit.types';
-import type { Transactional } from '../db/db.types';
+import type { Queryable, Transactional } from '../db/db.types';
 
 export const AUDIT_STORE = 'AUDIT_STORE';
 
@@ -9,7 +9,9 @@ export const AUDIT_STORE = 'AUDIT_STORE';
 // định khi chạy thật. Cả hai đều phải giữ đúng ngữ nghĩa chuỗi hash: số thứ
 // tự tăng dần, prevHash nối đúng bản ghi trước.
 export interface AuditStore {
-  append(input: NewAuditRecord): Promise<AuditRecord>;
+  // client dùng để ghi cùng transaction với nghiệp vụ; không truyền thì
+  // store tự mở giao dịch riêng.
+  append(input: NewAuditRecord, client?: Queryable): Promise<AuditRecord>;
   getAll(): Promise<AuditRecord[]>;
 }
 
@@ -39,7 +41,10 @@ function buildRecord(
 export class InMemoryAuditStore implements AuditStore {
   private readonly records: AuditRecord[] = [];
 
-  async append(input: NewAuditRecord): Promise<AuditRecord> {
+  async append(
+    input: NewAuditRecord,
+    _client?: Queryable,
+  ): Promise<AuditRecord> {
     const previous = this.records[this.records.length - 1];
     const record = buildRecord(
       this.records.length + 1,
@@ -60,9 +65,12 @@ export class PostgresAuditStore implements AuditStore {
 
   // Ghi trong 1 giao dịch: khóa bản ghi cuối chuỗi, đọc prevHash, băm rồi
   // mới chèn. Hai lần ghi đồng thời không thể cùng nối vào 1 prevHash.
-  async append(input: NewAuditRecord): Promise<AuditRecord> {
-    return this.db.withTransaction(async (client) => {
-      const last = await client.query(
+  async append(
+    input: NewAuditRecord,
+    client?: Queryable,
+  ): Promise<AuditRecord> {
+    const write = async (runner: Queryable): Promise<AuditRecord> => {
+      const last = await runner.query(
         'SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1 FOR UPDATE',
       );
       // pg trả cột BIGINT về dạng chuỗi (vì số nguyên 64-bit vượt quá số
@@ -73,7 +81,7 @@ export class PostgresAuditStore implements AuditStore {
       const prevHash = lastRow ? lastRow.hash : GENESIS_PREV_HASH;
       const seq = lastRow ? Number(lastRow.seq) + 1 : 1;
       const record = buildRecord(seq, prevHash, input);
-      await client.query(
+      await runner.query(
         `INSERT INTO audit_log
           (seq, at, actor, role, action, order_id, from_state, to_state,
            detail, prev_hash, hash, created_at)
@@ -94,7 +102,11 @@ export class PostgresAuditStore implements AuditStore {
         ],
       );
       return record;
-    });
+    };
+    if (client) {
+      return write(client);
+    }
+    return this.db.withTransaction(write);
   }
 
   async getAll(): Promise<AuditRecord[]> {
