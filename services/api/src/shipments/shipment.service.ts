@@ -21,6 +21,7 @@ import { VehiclesService } from '../vehicles/vehicle.service';
 import type { Vehicle } from '../vehicles/vehicle.types';
 import { DriversService } from '../drivers/driver.service';
 import type { Driver } from '../drivers/driver.types';
+import { WorkflowInstanceService } from '../workflow/instance.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { InMemoryShipmentStore, SHIPMENT_STORE } from './shipment.store';
 import type {
@@ -108,6 +109,10 @@ export class ShipmentsService implements OnModuleInit {
     // bằng chứng thay vì chuỗi proofPhotoKey.
     @Optional()
     private readonly storage?: StorageService,
+    // Instance workflow tùy chọn: dùng để lấy đúng definition version mà
+    // đơn đã pin, không đánh giá theo version active mới.
+    @Optional()
+    private readonly instances?: WorkflowInstanceService,
   ) {}
 
   // Tiếp tục số thứ tự từ kho: đã có GH-1001 thì shipment mới là GH-1002,
@@ -262,11 +267,15 @@ export class ShipmentsService implements OnModuleInit {
     deny: (reason: string) => Promise<never>,
   ): Promise<void> {
     const order = await this.orders.findOne(orderId);
+    const instance = this.instances
+      ? await this.instances.findByBusinessKey('order-flow', orderId)
+      : null;
     const check = this.workflow.canTransition(
       'order-flow',
       order.state,
       to,
       skipRoleCheck ? undefined : caller.roles,
+      instance?.definitionVersion,
     );
     if (!check.allowed) {
       await deny(

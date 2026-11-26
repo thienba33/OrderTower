@@ -35,6 +35,7 @@ describe('DbService', () => {
       '012_bi',
       '013_tickets',
       '014_files',
+      '015_workflow_active_versions',
     ]);
     for (const table of [
       'audit_log',
@@ -60,6 +61,7 @@ describe('DbService', () => {
       'dx_score_snapshots',
       'tickets',
       'files',
+      'workflow_active_versions',
       'schema_migrations',
     ]) {
       // Bảng tồn tại khi truy vấn được, dù chưa có hàng nào.
@@ -70,7 +72,7 @@ describe('DbService', () => {
     const second = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(second.rows).toHaveLength(14);
+    expect(second.rows).toHaveLength(15);
     expect((second.rows as Array<{ version: string }>).map((row) => row.version)).toEqual([
       '001_init',
       '002_shipments',
@@ -86,6 +88,7 @@ describe('DbService', () => {
       '012_bi',
       '013_tickets',
       '014_files',
+      '015_workflow_active_versions',
     ]);
   });
 });

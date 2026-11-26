@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Caller } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { createTestDbService } from '../db/test-helpers';
@@ -207,6 +210,62 @@ describe('WorkflowInstanceService', () => {
     await expect(instances.get('WF-9999')).rejects.toThrow(
       'Không tìm thấy workflow instance',
     );
+  });
+
+  it('instance pin version lúc start, không đổi theo version active mới', async () => {
+    const originalDir = process.env.WORKFLOW_DEFINITIONS_DIR;
+    const dir = mkdtempSync(join(tmpdir(), 'workflow-pin-'));
+    try {
+      const base = JSON.parse(
+        readFileSync(
+          join(__dirname, 'definitions', 'order-flow.v1.json'),
+          'utf-8',
+        ),
+      ) as {
+        version: string;
+        transitions: Array<Record<string, string>>;
+        [key: string]: unknown;
+      };
+      const v2 = {
+        ...base,
+        version: '2',
+        transitions: base.transitions.map((transition) =>
+          transition.from === 'Mới tạo' && transition.to === 'Đã kiểm tra'
+            ? { ...transition, role: 'Quản lý' }
+            : transition,
+        ),
+      };
+      writeFileSync(join(dir, 'order-flow.v1.json'), JSON.stringify(base));
+      writeFileSync(join(dir, 'order-flow.v2.json'), JSON.stringify(v2));
+      process.env.WORKFLOW_DEFINITIONS_DIR = dir;
+
+      const workflow = new WorkflowService();
+      workflow.onModuleInit();
+      const audit = new AuditService();
+      const instances = new WorkflowInstanceService(
+        workflow,
+        audit,
+        new InMemoryWorkflowInstanceStore(),
+      );
+
+      const oldId = await startOrderFlow(instances, 'DH-1001');
+      workflow.setActiveVersion('order-flow', '2');
+      const newId = await startOrderFlow(instances, 'DH-1002');
+
+      await expect(
+        instances.transition(oldId, { to: 'Đã kiểm tra' }, COORDINATOR),
+      ).resolves.toMatchObject({ definitionVersion: '1', currentState: 'Đã kiểm tra' });
+      await expect(
+        instances.transition(newId, { to: 'Đã kiểm tra' }, COORDINATOR),
+      ).rejects.toThrow('yêu cầu vai "Quản lý"');
+    } finally {
+      if (originalDir === undefined) {
+        delete process.env.WORKFLOW_DEFINITIONS_DIR;
+      } else {
+        process.env.WORKFLOW_DEFINITIONS_DIR = originalDir;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('bản sao trả ra không làm đổi instance trong kho', async () => {
