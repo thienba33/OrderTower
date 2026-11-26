@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { ApprovalsModule } from './approvals/approval.module';
@@ -13,6 +13,8 @@ import { ChannelsModule } from './channels/channel.module';
 import { CustomersModule } from './customers/customer.module';
 import { DeliveryEventsModule } from './delivery-events/delivery-event.module';
 import { DriversModule } from './drivers/driver.module';
+import { ObservabilityModule } from './observability/observability.module';
+import { RequestLoggingMiddleware } from './observability/request-logging.middleware';
 import { OrdersModule } from './orders/orders.module';
 import { PublicTrackingModule } from './public-tracking/public-tracking.module';
 import { RestrictedFlagModule } from './restricted-flags/restricted-flag.module';
@@ -37,6 +39,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     CustomersModule,
     DeliveryEventsModule,
     DriversModule,
+    ObservabilityModule,
     OrdersModule,
     PublicTrackingModule,
     RestrictedFlagModule,
@@ -56,4 +59,8 @@ import { WorkflowModule } from './workflow/workflow.module';
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestLoggingMiddleware).forRoutes('*');
+  }
+}

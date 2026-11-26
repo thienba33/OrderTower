@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: ordertower-api
+    metrics_path: /api/metrics
+    static_configs:
+      # Service API trong namespace ứng dụng. Chỉnh lại nếu tên service khác.
+      - targets: ["ordertower-api.ordertower.svc.cluster.local:3001"]

@@ -241,3 +241,34 @@ nên chưa có luồng lưu file end-to-end của ứng dụng.
 
 Lệnh ở bước 2 khởi động PostgreSQL, Keycloak và APISIX. Các dịch vụ còn lại
 được khai báo trong Compose; bảng này không xác nhận tích hợp đã hoàn tất.
+
+## Observability và backup
+
+Compose có thêm Prometheus và Grafana:
+
+| Dịch vụ | Cổng local | Ghi chú |
+| --- | --- | --- |
+| Prometheus | <http://localhost:9090> | scrape `api:3001/api/metrics` mỗi 15s |
+| Grafana | <http://localhost:3002> | admin theo `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD`; dashboard `OrderTower API` |
+
+API trả `GET /api/metrics` (Prometheus text) và ghi JSON access log kèm
+`requestId`, `tenantId`, user, status, duration. APISIX đã bật `request-id`
+cho các route; API giữ nguyên header đó.
+
+Backup/restore database ứng dụng:
+
+```powershell
+# Windows
+pwsh -NoProfile -File scripts/backup-postgres.ps1
+$env:RESTORE_YES='1'; pwsh -NoProfile -File scripts/restore-postgres.ps1 backups/ordertower-<timestamp>.dump
+```
+
+```bash
+# Linux/WSL có Docker
+./scripts/backup-postgres.sh
+RESTORE_YES=1 ./scripts/restore-postgres.sh backups/ordertower-<timestamp>.dump
+```
+
+Script backup tạo file custom-format + SHA-256; restore dừng API trong lúc
+restore rồi bật lại. GitOps manifest cho Prometheus/Grafana nằm ở
+[`gitops/`](gitops/README.md).
