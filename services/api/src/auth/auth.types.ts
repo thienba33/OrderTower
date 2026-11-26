@@ -6,6 +6,8 @@ export interface Caller {
   userId: string;
   username: string;
   roles: string[];
+  // Tenant lấy từ claim tenant_id; thiếu claim thì service dùng 'default'.
+  tenantId?: string;
 }
 
 // Request đã qua AuthGuard (guard gán user). Controller khai báo kiểu này

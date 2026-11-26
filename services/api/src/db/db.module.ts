@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Module } from '@nestjs/common';
+import { TenantModule } from '../tenant/tenant.module';
 import { DbService } from './db.service';
 import {
   ID_SEQUENCE_STORE,
@@ -8,6 +9,7 @@ import {
 } from './id-sequence';
 
 @Module({
+  imports: [TenantModule],
   providers: [
     DbService,
     IdSequenceService,

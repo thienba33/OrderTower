@@ -54,6 +54,7 @@ export class AuthService {
       ...toStringArray(resourceAccess?.[this.clientId]?.roles),
       ...toStringArray(resourceAccess?.[this.portalClientId]?.roles),
     ];
+    const tenantId = tenantIdFromClaim(payload.tenant_id);
     return {
       userId: typeof payload.sub === 'string' ? payload.sub : '',
       username:
@@ -63,6 +64,9 @@ export class AuthService {
             ? payload.sub
             : '',
       roles: mapKeycloakRolesToDefinitionRoles(keycloakRoles),
+      // Chỉ gắn tenantId khi token có claim khác default; thiếu claim thì
+      // TenantContextService tự fallback 'default'.
+      ...(tenantId !== 'default' ? { tenantId } : {}),
     };
   }
 
@@ -103,4 +107,11 @@ function toStringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+export function tenantIdFromClaim(value: unknown): string {
+  if (typeof value === 'string' && value.trim() !== '') {
+    return value.trim();
+  }
+  return 'default';
 }
