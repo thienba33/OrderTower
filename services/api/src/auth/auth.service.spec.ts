@@ -12,6 +12,7 @@ describe('AuthService', () => {
     url: process.env.KEYCLOAK_URL,
     realm: process.env.KEYCLOAK_REALM,
     clientId: process.env.KEYCLOAK_CLIENT_ID,
+    portalClientId: process.env.KEYCLOAK_PORTAL_CLIENT_ID,
   };
   let server: Server;
   let baseUrl: string;
@@ -67,7 +68,9 @@ describe('AuthService', () => {
             ? 'KEYCLOAK_URL'
             : key === 'realm'
               ? 'KEYCLOAK_REALM'
-              : 'KEYCLOAK_CLIENT_ID';
+              : key === 'clientId'
+                ? 'KEYCLOAK_CLIENT_ID'
+                : 'KEYCLOAK_PORTAL_CLIENT_ID';
       if (value === undefined) {
         delete process.env[envKey];
       } else {
@@ -78,6 +81,7 @@ describe('AuthService', () => {
 
   async function signToken(options: {
     clientRoles?: string[];
+    portalRoles?: string[];
     realmRoles?: string[];
     issuer?: string;
     expiresIn?: string;
@@ -87,6 +91,7 @@ describe('AuthService', () => {
       realm_access: { roles: options.realmRoles ?? [] },
       resource_access: {
         'ordertower-web': { roles: options.clientRoles ?? [] },
+        'ordertower-portal': { roles: options.portalRoles ?? [] },
       },
       preferred_username: 'son',
     })
@@ -114,6 +119,16 @@ describe('AuthService', () => {
     const token = await signToken({ realmRoles: ['admin'] });
     const caller = await service.verifyToken(token);
     expect(caller.roles).toEqual(['Quản trị viên']);
+  });
+
+  it('nhận vai của client thứ hai cho ứng dụng Tầng 2', async () => {
+    const service = new AuthService();
+    const token = await signToken({ portalRoles: ['dispatcher'] });
+    await expect(service.verifyToken(token)).resolves.toEqual({
+      userId: 'user-son',
+      username: 'son',
+      roles: ['Điều phối viên'],
+    });
   });
 
   it('token không có vai nào thì roles rỗng', async () => {

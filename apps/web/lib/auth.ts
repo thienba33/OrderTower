@@ -218,6 +218,15 @@ export async function getSession(): Promise<Session | null> {
   const idToken = jar.get(ID_TOKEN_COOKIE)?.value;
   const idPayload = idToken ? decodeJwtPayload(idToken) : null;
   const accessPayload = decodeJwtPayload(accessToken);
+  // Middleware làm mới token trước khi hết hạn; nếu vẫn còn token hết hạn
+  // ở đây nghĩa là refresh thất bại, coi như chưa đăng nhập.
+  const accessExp = accessPayload?.exp;
+  if (
+    typeof accessExp === 'number' &&
+    accessExp * 1000 <= Date.now()
+  ) {
+    return null;
+  }
   const username =
     (idPayload?.preferred_username as string | undefined) ??
     (idPayload?.sub as string | undefined) ??

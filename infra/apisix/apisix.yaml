@@ -49,6 +49,16 @@ routes:
     plugins:
       request-id:
         include_in_response: true
+      response-rewrite:
+        headers:
+          set:
+            X-Content-Type-Options: nosniff
+            X-Frame-Options: DENY
+            Referrer-Policy: no-referrer
+            Permissions-Policy: "geolocation=(), camera=(), microphone=()"
+            Cross-Origin-Resource-Policy: same-origin
+            Content-Security-Policy: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+            Strict-Transport-Security: "max-age=31536000; includeSubDomains"
     upstream:
       type: roundrobin
       nodes:
@@ -66,8 +76,19 @@ routes:
         nodelay: true
         key: remote_addr
         rejected_code: 429
+        rejected_msg: "Quá nhiều yêu cầu tra cứu, thử lại sau."
       request-id:
         include_in_response: true
+      response-rewrite:
+        headers:
+          set:
+            X-Content-Type-Options: nosniff
+            X-Frame-Options: DENY
+            Referrer-Policy: no-referrer
+            Permissions-Policy: "geolocation=(), camera=(), microphone=()"
+            Cross-Origin-Resource-Policy: same-origin
+            Content-Security-Policy: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+            Strict-Transport-Security: "max-age=31536000; includeSubDomains"
     upstream:
       type: roundrobin
       nodes:
@@ -91,8 +112,27 @@ routes:
             match_with_client_id: true
         set_userinfo_header: false
         set_id_token_header: false
+      # Giới hạn theo access token để mỗi phiên có ngân sách riêng; request
+      # không có token (đã bị openid-connect chặn trước) rơi về remote_addr.
+      limit-req:
+        rate: 30
+        burst: 60
+        nodelay: true
+        key: http_authorization
+        rejected_code: 429
+        rejected_msg: "Quá nhiều yêu cầu API, thử lại sau."
       request-id:
         include_in_response: true
+      response-rewrite:
+        headers:
+          set:
+            X-Content-Type-Options: nosniff
+            X-Frame-Options: DENY
+            Referrer-Policy: no-referrer
+            Permissions-Policy: "geolocation=(), camera=(), microphone=()"
+            Cross-Origin-Resource-Policy: same-origin
+            Content-Security-Policy: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+            Strict-Transport-Security: "max-age=31536000; includeSubDomains"
     upstream:
       type: roundrobin
       nodes:

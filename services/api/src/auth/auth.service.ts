@@ -19,6 +19,7 @@ export class AuthService {
   private readonly keycloakBase: string;
   private readonly realm: string;
   private readonly clientId: string;
+  private readonly portalClientId: string;
   private jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
   private issuer = '';
 
@@ -30,6 +31,11 @@ export class AuthService {
     ).replace(/\/$/, '');
     this.realm = process.env.KEYCLOAK_REALM ?? 'ordertower';
     this.clientId = process.env.KEYCLOAK_CLIENT_ID ?? 'ordertower-web';
+    // Client thứ hai cho ứng dụng Tầng 2. Token của client này mang thêm
+    // audience ordertower-web (mapper trong realm) nên vẫn qua được APISIX
+    // và API; vai đọc từ resource_access của cả hai client.
+    this.portalClientId =
+      process.env.KEYCLOAK_PORTAL_CLIENT_ID ?? 'ordertower-portal';
   }
 
   async verifyToken(token: string): Promise<Caller> {
@@ -38,19 +44,15 @@ export class AuthService {
       issuer: this.issuer,
       audience: this.clientId,
     });
+    const resourceAccess = payload.resource_access as
+      | Record<string, Record<string, unknown> | undefined>
+      | undefined;
     const keycloakRoles: string[] = [
       ...toStringArray(
-        (
-          payload.realm_access as Record<string, unknown> | undefined
-        )?.roles,
+        (payload.realm_access as Record<string, unknown> | undefined)?.roles,
       ),
-      ...toStringArray(
-        (
-          payload.resource_access as
-            | Record<string, Record<string, unknown> | undefined>
-            | undefined
-        )?.[this.clientId]?.roles,
-      ),
+      ...toStringArray(resourceAccess?.[this.clientId]?.roles),
+      ...toStringArray(resourceAccess?.[this.portalClientId]?.roles),
     ];
     return {
       userId: typeof payload.sub === 'string' ? payload.sub : '',

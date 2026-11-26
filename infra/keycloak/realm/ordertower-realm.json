@@ -10,13 +10,50 @@
   "roles": {
     "client": {
       "ordertower-web": [
-        { "name": "admin" },
-        { "name": "dispatcher" },
-        { "name": "warehouse-staff" },
-        { "name": "customer-service" },
-        { "name": "driver" },
-        { "name": "manager" },
-        { "name": "customer" }
+        {
+          "name": "admin"
+        },
+        {
+          "name": "dispatcher"
+        },
+        {
+          "name": "warehouse-staff"
+        },
+        {
+          "name": "customer-service"
+        },
+        {
+          "name": "driver"
+        },
+        {
+          "name": "manager"
+        },
+        {
+          "name": "customer"
+        }
+      ],
+      "ordertower-portal": [
+        {
+          "name": "admin"
+        },
+        {
+          "name": "dispatcher"
+        },
+        {
+          "name": "warehouse-staff"
+        },
+        {
+          "name": "customer-service"
+        },
+        {
+          "name": "driver"
+        },
+        {
+          "name": "manager"
+        },
+        {
+          "name": "customer"
+        }
       ]
     }
   },
@@ -32,9 +69,56 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": true,
-      "redirectUris": ["http://localhost:3000/auth/callback"],
-      "webOrigins": ["http://localhost:3000"],
-      "defaultClientScopes": ["profile", "email", "roles"],
+      "redirectUris": [
+        "http://localhost:3000/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles"
+      ],
+      "protocolMappers": [
+        {
+          "name": "ordertower-web-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "ordertower-web",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/"
+      }
+    },
+    {
+      "clientId": "ordertower-portal",
+      "name": "OrderTower Portal (Tầng 2)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:3000/workspace/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles"
+      ],
       "protocolMappers": [
         {
           "name": "ordertower-web-audience",
@@ -71,7 +155,13 @@
         "ordertower-web": [
           "admin"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "admin"
+        ]
       }
     },
     {
@@ -91,7 +181,13 @@
         "ordertower-web": [
           "dispatcher"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "dispatcher"
+        ]
       }
     },
     {
@@ -111,7 +207,13 @@
         "ordertower-web": [
           "warehouse-staff"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "warehouse-staff"
+        ]
       }
     },
     {
@@ -131,7 +233,13 @@
         "ordertower-web": [
           "customer-service"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "customer-service"
+        ]
       }
     },
     {
@@ -151,7 +259,13 @@
         "ordertower-web": [
           "driver"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "driver"
+        ]
       }
     },
     {
@@ -171,7 +285,13 @@
         "ordertower-web": [
           "manager"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "manager"
+        ]
       }
     },
     {
@@ -191,7 +311,13 @@
         "ordertower-web": [
           "customer"
         ],
-        "account": ["view-profile", "manage-account"]
+        "account": [
+          "view-profile",
+          "manage-account"
+        ],
+        "ordertower-portal": [
+          "customer"
+        ]
       }
     }
   ]
