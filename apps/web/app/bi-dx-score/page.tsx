@@ -14,6 +14,10 @@ import type {
   ApiRecommendation,
   BiSectionError,
 } from "./bi-dx-score-types";
+import type {
+  ApiArchiveSummary,
+  ApiColdAnalytics,
+} from "../cold-data/cold-data-types";
 import type { ApiChannel } from "../orders/orders-types";
 
 // Lấy danh sách từ API, trả về mảng đã kiểm tra dạng.
@@ -134,6 +138,25 @@ export default async function BiDxScorePage() {
     dxError = toSectionError(error);
   }
 
+  // Cold data: nguồn lịch sử từ Parquet. Lỗi thì chỉ ẩn khối này, không
+  // làm hỏng BI/DX-Score hiện có.
+  let archiveSummary: ApiArchiveSummary | null = null;
+  let coldAnalytics: ApiColdAnalytics | null = null;
+  let coldError: BiSectionError | null = null;
+  try {
+    const [summary, analytics] = await Promise.all([
+      fetchObject<ApiArchiveSummary>("/archive/summary"),
+      fetchObject<ApiColdAnalytics>("/archive/orders/analytics?limit=10"),
+    ]);
+    if (summary === null || analytics === null) {
+      throw new ApiError(502, "API trả về dữ liệu không đúng dạng.");
+    }
+    archiveSummary = summary;
+    coldAnalytics = analytics;
+  } catch (error) {
+    coldError = toSectionError(error);
+  }
+
   return (
     <BiDxScoreClient
       forecastRows={forecastRows}
@@ -146,6 +169,9 @@ export default async function BiDxScorePage() {
       forecastError={forecastError}
       biError={biError}
       dxError={dxError}
+      archiveSummary={archiveSummary}
+      coldAnalytics={coldAnalytics}
+      coldError={coldError}
       roles={session.roles}
     />
   );
