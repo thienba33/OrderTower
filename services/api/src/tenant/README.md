@@ -11,6 +11,11 @@ Keycloak realm có protocol mapper `tenant-id` lấy từ user attribute
 `tenant_id`. User demo không có attribute nên mặc định là `default`; muốn
 tenant khác thì gán attribute cho user (hoặc đổi claim qua IdP).
 
+Keycloak 26.8 không nhận block `userProfile` trong file realm import; vì vậy
+attribute `tenant_id` cần khai báo qua Admin Console/Admin API ở realm đã tạo.
+Thiếu khai báo này thì token không có claim và API dùng tenant `default` —
+RLS vẫn hoạt động bình thường.
+
 ## Cách DB áp dụng
 
 - `DbService.query` mở transaction ngắn và `set_config('app.tenant_id', ...,
