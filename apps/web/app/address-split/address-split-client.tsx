@@ -1,26 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Search } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
 import { Table, type TableColumn } from "@/components/ui/Table";
 import {
-  ADDRESS_DISTRICTS,
-  ADDRESS_PROVINCES,
-  ADDRESS_WARDS,
-  allDistricts,
-  allWards,
-  splitConfLevels,
+  ADDRESS_PROVINCES_2025,
+  wardsForProvince,
+} from "@/data/address-gazetteer-2025";
+import {
   trustDotClass,
   trustLevel,
   trustTextClass,
   type AddressTrustLevel,
 } from "@/data/address-split";
 import type { ApiOrderDetail } from "../orders/[id]/order-detail-types";
-import type { RowSplit } from "./address-split-types";
+import type {
+  AddressProposal,
+  RowSplit,
+  SuggestResponse,
+} from "./address-split-types";
 
 type ModeTab = "pending" | "confirm";
 
@@ -30,6 +32,9 @@ const MODE_TABS: { key: ModeTab; label: string }[] = [
 ];
 
 const PAGE_SIZE = 5;
+
+// Tối đa 20 đơn mỗi lần bấm "AI gợi ý tất cả", để không spam API.
+const AI_SUGGEST_ALL_LIMIT = 20;
 
 function MiniSelect({
   id,
@@ -105,15 +110,89 @@ function FilterSelect({
   );
 }
 
-function districtsFor(province: string): string[] {
-  return province === "" ? allDistricts() : (ADDRESS_DISTRICTS[province as (typeof ADDRESS_PROVINCES)[number]] ?? []);
+// Dropdown xã/phường có ô tìm kiếm: ô nhập lọc theo chuỗi gõ (không phân
+// biệt dấu), danh sách gợi ý là datalist của trình duyệt nên không bị cắt
+// trong bảng cuộn như dropdown tự vẽ. Chỉ nhận giá trị trong danh mục;
+// gõ linh tinh rồi rời ô thì trả về giá trị cũ.
+function SearchableSelect({
+  id,
+  value,
+  onChange,
+  ariaLabel,
+  placeholder,
+  options,
+  small,
+  disabled,
+}: {
+  id?: string;
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  placeholder: string;
+  options: string[];
+  small?: boolean;
+  disabled?: boolean;
+}) {
+  const listId = useId();
+  const [text, setText] = useState(value);
+  useEffect(() => {
+    setText(value);
+  }, [value]);
+  const folded = (input: string) =>
+    input
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  const query = text.trim();
+  const shown =
+    query === ""
+      ? options
+      : options.filter(
+          (option) =>
+            folded(option).includes(folded(query)) ||
+            option.toLowerCase().includes(query.toLowerCase()),
+        );
+  return (
+    <span className="relative block w-full">
+      <input
+        id={id}
+        list={listId}
+        value={text}
+        disabled={disabled}
+        onChange={(event) => {
+          const next = event.target.value;
+          setText(next);
+          if (next === "" || options.includes(next)) {
+            onChange(next);
+          }
+        }}
+        onBlur={() => {
+          if (text !== "" && !options.includes(text)) {
+            setText(value);
+          }
+        }}
+        aria-label={ariaLabel}
+        placeholder={disabled ? "Chọn tỉnh/thành phố trước" : placeholder}
+        className={`w-full rounded-md border border-gray-300 bg-white outline-none focus:border-gray-500 disabled:cursor-not-allowed disabled:bg-gray-100 ${
+          small ? "h-8 pl-2 pr-6 text-xs" : "h-10 pl-3 pr-8 text-sm"
+        } ${value === "" ? "placeholder:text-gray-400" : "text-gray-700"}`}
+      />
+      <datalist id={listId}>
+        {shown.map((option) => (
+          <option key={option} value={option} />
+        ))}
+      </datalist>
+      <ChevronDown
+        size={small ? 12 : 16}
+        aria-hidden="true"
+        className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400"
+      />
+    </span>
+  );
 }
 
-function wardsFor(district: string): string[] {
-  return district === "" ? allWards() : (ADDRESS_WARDS[district] ?? []);
-}
-
-// Địa chỉ nối đủ cấp, thiếu thì "-".
+// Địa chỉ nối đủ cấp, thiếu thì "-". Quận/huyện cũ vẫn hiện ở dạng chỉ
+// đọc khi đơn còn lưu trường đó.
 function joinAddress(order: ApiOrderDetail): string {
   const parts = [
     order.address?.street,
@@ -130,28 +209,120 @@ function trustLabel(order: ApiOrderDetail): string {
   return `${order.addressTrust}% - ${level}`;
 }
 
-// Điền sẵn các cấp địa chỉ đơn đã có; cấp nào không nằm trong hằng số
-// địa lý (API cũng không chấm) thì để trống cho người dùng chọn.
+// Điền sẵn các cấp địa chỉ đơn đã có; cấp nào không nằm trong danh mục
+// mới (API cũng không chấm) thì để trống cho người dùng chọn.
 function prefilledSplit(order: ApiOrderDetail): RowSplit {
   const province =
-    order.address?.province !== undefined && (ADDRESS_PROVINCES as readonly string[]).includes(order.address.province)
+    order.address?.province !== undefined &&
+    (ADDRESS_PROVINCES_2025 as readonly string[]).includes(order.address.province)
       ? order.address.province
       : "";
-  const district =
-    province !== "" &&
-    order.address?.district !== undefined &&
-    (ADDRESS_DISTRICTS[province as (typeof ADDRESS_PROVINCES)[number]] ?? []).includes(order.address.district)
-      ? order.address.district
-      : "";
   const ward =
-    district !== "" && order.address?.ward !== undefined && (ADDRESS_WARDS[district] ?? []).includes(order.address.ward)
+    province !== "" &&
+    order.address?.ward !== undefined &&
+    wardsForProvince(province).includes(order.address.ward)
       ? order.address.ward
       : "";
-  return { province, district, ward, street: order.address?.street ?? "" };
+  return { province, ward, street: order.address?.street ?? "" };
 }
 
 function splitComplete(split: RowSplit): boolean {
-  return split.province !== "" && split.district !== "" && split.ward !== "";
+  return split.province !== "" && split.ward !== "";
+}
+
+// Địa chỉ đề xuất nối đủ phần để hiển thị trong dòng và modal.
+function formatSuggested(address: {
+  province?: string;
+  ward?: string;
+  street?: string;
+}): string {
+  const parts = [address.street, address.ward, address.province].filter(
+    (part) => part !== undefined && part.trim() !== "",
+  );
+  return parts.length > 0 ? parts.join(", ") : "-";
+}
+
+// Lấy message từ lỗi API ({message} là chuỗi hoặc mảng chuỗi).
+function parseApiMessage(data: unknown, fallback: string): string {
+  const message = (data as Record<string, unknown> | null)?.message;
+  if (typeof message === "string" && message.length > 0) {
+    return message;
+  }
+  if (Array.isArray(message)) {
+    const text = message.filter((item) => typeof item === "string").join("; ");
+    if (text.length > 0) {
+      return text;
+    }
+  }
+  return fallback;
+}
+
+function AiResult({
+  suggestion,
+  onReview,
+}: {
+  suggestion: SuggestResponse;
+  onReview: () => void;
+}) {
+  const afterAddress = formatSuggested(suggestion.after.address);
+  if (suggestion.applied) {
+    return (
+      <p className="rounded-md border border-green-200 bg-green-50 px-2 py-1.5 text-xs text-green-800">
+        Đã tự áp dụng, tin cậy {suggestion.before.trust}% -&gt;{" "}
+        {suggestion.after.trust}%. Xem audit.
+      </p>
+    );
+  }
+  if (suggestion.proposal) {
+    return (
+      <div className="flex flex-col gap-1 rounded-md border border-yellow-200 bg-yellow-50 px-2 py-1.5 text-xs text-gray-700">
+        <p>
+          <span className="font-semibold">Đề xuất ({suggestion.proposal.id}):</span>{" "}
+          {afterAddress}
+        </p>
+        <p>
+          Tin cậy {suggestion.before.trust}% -&gt; {suggestion.after.trust}%.
+        </p>
+        <ul className="list-disc pl-4">
+          {suggestion.after.reasons.map((reason, index) => (
+            <li key={index}>{reason}</li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          onClick={onReview}
+          className="mt-1 flex h-7 w-fit items-center rounded-md bg-red-700 px-2 text-xs font-medium text-white hover:bg-red-800"
+        >
+          Duyệt
+        </button>
+      </div>
+    );
+  }
+  if (suggestion.choices) {
+    return (
+      <div className="flex flex-col gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-gray-700">
+        <p className="font-semibold text-red-800">Mức thấp, nhập tay.</p>
+        <ul className="list-disc pl-4">
+          {suggestion.after.reasons.map((reason, index) => (
+            <li key={index}>{reason}</li>
+          ))}
+        </ul>
+        <p>
+          Phường đúng của tỉnh:{" "}
+          {suggestion.choices.wards.slice(0, 8).join(", ")}
+          {suggestion.choices.wards.length > 8
+            ? ` và ${suggestion.choices.wards.length - 8} phường khác`
+            : ""}
+          .
+        </p>
+      </div>
+    );
+  }
+  return (
+    <p className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs text-gray-700">
+      {suggestion.note ?? "Không có đề xuất."}
+    </p>
+  );
 }
 
 export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[] }) {
@@ -173,7 +344,6 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
   const [pendingSelected, setPendingSelected] = useState<Set<string>>(new Set());
   const [pendingSearch, setPendingSearch] = useState("");
   const [pendingProvince, setPendingProvince] = useState("");
-  const [pendingDistrict, setPendingDistrict] = useState("");
   const [pendingWard, setPendingWard] = useState("");
   const [pendingPage, setPendingPage] = useState(1);
   const [pendingSplits, setPendingSplits] = useState<Record<string, RowSplit>>({});
@@ -181,11 +351,29 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
   const [pendingNote, setPendingNote] = useState<string | null>(null);
   const [pendingError, setPendingError] = useState<string | null>(null);
 
+  // AI gợi ý chuẩn hóa địa chỉ (AI số 1): chuỗi khách ghi dán vào từng
+  // dòng, kết quả đề xuất giữ theo mã đơn; modal duyệt giữ đề xuất đang
+  // mở kèm địa chỉ đã hiệu chỉnh và lý do.
+  const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
+  const [suggestions, setSuggestions] = useState<Record<string, SuggestResponse>>({});
+  const [suggestErrors, setSuggestErrors] = useState<Record<string, string>>({});
+  const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({});
+  const [aiAllBusy, setAiAllBusy] = useState(false);
+  const [aiModal, setAiModal] = useState<{
+    order: ApiOrderDetail;
+    response: SuggestResponse;
+  } | null>(null);
+  const [aiEditProvince, setAiEditProvince] = useState("");
+  const [aiEditWard, setAiEditWard] = useState("");
+  const [aiEditStreet, setAiEditStreet] = useState("");
+  const [aiReason, setAiReason] = useState("");
+  const [aiModalBusy, setAiModalBusy] = useState(false);
+  const [aiModalError, setAiModalError] = useState<string | null>(null);
+
   // Xac nhan dia chi
   const [confirmSearch, setConfirmSearch] = useState("");
   const [confirmTrust, setConfirmTrust] = useState("");
   const [confirmProvince, setConfirmProvince] = useState("");
-  const [confirmDistrict, setConfirmDistrict] = useState("");
   const [confirmWard, setConfirmWard] = useState("");
   const [confirmPage, setConfirmPage] = useState(1);
   const [showConfirmAdvanced, setShowConfirmAdvanced] = useState(true);
@@ -194,7 +382,6 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
   // Dialog xac nhan dia chi
   const [dialogOrder, setDialogOrder] = useState<ApiOrderDetail | null>(null);
   const [editProvince, setEditProvince] = useState("");
-  const [editDistrict, setEditDistrict] = useState("");
   const [editWard, setEditWard] = useState("");
   const [editDetail, setEditDetail] = useState("");
   const [dialogBusy, setDialogBusy] = useState(false);
@@ -206,12 +393,11 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
     const query = pendingSearch.trim().toLowerCase();
     return pendingOrders.filter((order) => {
       if (pendingProvince !== "" && order.address?.province !== pendingProvince) return false;
-      if (pendingDistrict !== "" && order.address?.district !== pendingDistrict) return false;
       if (pendingWard !== "" && order.address?.ward !== pendingWard) return false;
       if (query === "") return true;
       return [order.id, order.customer, order.phone ?? "", joinAddress(order)].some((value) => value.toLowerCase().includes(query));
     });
-  }, [pendingOrders, pendingSearch, pendingProvince, pendingDistrict, pendingWard]);
+  }, [pendingOrders, pendingSearch, pendingProvince, pendingWard]);
 
   const pendingTotalPages = Math.max(1, Math.ceil(filteredPending.length / PAGE_SIZE));
   const pendingSafePage = Math.min(pendingPage, pendingTotalPages);
@@ -231,12 +417,11 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
         if (order.addressTrust === null || trustLevel(order.addressTrust) !== (confirmTrust as AddressTrustLevel)) return false;
       }
       if (confirmProvince !== "" && order.address?.province !== confirmProvince) return false;
-      if (confirmDistrict !== "" && order.address?.district !== confirmDistrict) return false;
       if (confirmWard !== "" && order.address?.ward !== confirmWard) return false;
       if (query === "") return true;
       return [order.id, order.customer, order.phone ?? "", joinAddress(order)].some((value) => value.toLowerCase().includes(query));
     });
-  }, [confirmOrders, confirmSearch, confirmTrust, confirmProvince, confirmDistrict, confirmWard]);
+  }, [confirmOrders, confirmSearch, confirmTrust, confirmProvince, confirmWard]);
 
   const confirmTotalPages = Math.max(1, Math.ceil(filteredConfirm.length / PAGE_SIZE));
   const confirmSafePage = Math.min(confirmPage, confirmTotalPages);
@@ -270,13 +455,9 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
   const setPendingSplit = (id: string, patch: Partial<RowSplit>) => {
     setPendingSplits((prev) => {
       const order = pendingOrders.find((item) => item.id === id);
-      const current = prev[id] ?? (order ? prefilledSplit(order) : { province: "", district: "", ward: "", street: "" });
+      const current = prev[id] ?? (order ? prefilledSplit(order) : { province: "", ward: "", street: "" });
       const next = { ...current, ...patch };
       if (patch.province !== undefined) {
-        next.district = "";
-        next.ward = "";
-      }
-      if (patch.district !== undefined) {
         next.ward = "";
       }
       return { ...prev, [id]: next };
@@ -284,7 +465,9 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
   };
 
   // Gửi toàn bộ địa chỉ đã tách lên API; API thay địa chỉ cũ và tính
-  // lại tin cậy ngay. Trả về tin cậy mới khi thành công.
+  // lại tin cậy ngay. Trả về tin cậy mới khi thành công. Địa chỉ gửi
+  // lên chỉ còn tỉnh/phường/đường theo danh mục mới; quận/huyện cũ
+  // (nếu đơn còn lưu) bị thay bằng địa chỉ mới này.
   const patchAddress = async (id: string, split: RowSplit): Promise<{ ok: true; trust: number | null } | { ok: false; message: string }> => {
     const street = split.street.trim();
     let response: Response;
@@ -295,7 +478,6 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
         body: JSON.stringify({
           address: {
             province: split.province,
-            district: split.district,
             ward: split.ward,
             ...(street === "" ? {} : { street }),
           },
@@ -311,11 +493,7 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
       // Rơi xuống thông báo mặc định ở dưới.
     }
     if (!response.ok) {
-      const message = (data as Record<string, unknown> | null)?.message;
-      if (typeof message === "string" && message.length > 0) {
-        return { ok: false, message };
-      }
-      return { ok: false, message: `API trả về ${response.status}.` };
+      return { ok: false, message: parseApiMessage(data, `API trả về ${response.status}.`) };
     }
     const trust = (data as Record<string, unknown> | null)?.addressTrust;
     return { ok: true, trust: typeof trust === "number" ? trust : null };
@@ -337,8 +515,8 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
     router.refresh();
   };
 
-  // Tách tuần tự từng đơn đã chọn mà đã đủ 3 cấp; dừng ở lỗi đầu tiên.
-  // Đơn chưa đủ 3 cấp thì bỏ qua kèm ghi chú.
+  // Tách tuần tự từng đơn đã chọn mà đã đủ tỉnh và phường; dừng ở lỗi
+  // đầu tiên. Đơn chưa đủ thì bỏ qua kèm ghi chú.
   const splitSelected = async () => {
     if (pendingBusy) return;
     const targets = pendingOrders.filter((order) => pendingSelected.has(order.id));
@@ -368,9 +546,183 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
     }
     const parts: string[] = [];
     if (done > 0) parts.push(`Đã tách ${done} đơn.`);
-    if (skipped.length > 0) parts.push(`Bỏ qua ${skipped.length} đơn chưa đủ 3 cấp: ${skipped.join(", ")}.`);
+    if (skipped.length > 0) parts.push(`Bỏ qua ${skipped.length} đơn chưa đủ tỉnh/thành phố và xã/phường: ${skipped.join(", ")}.`);
     if (parts.length > 0) setPendingNote(parts.join(" "));
     setPendingSelected(new Set());
+    router.refresh();
+  };
+
+  // Gọi AI gợi ý cho 1 đơn: ô dán chuỗi có chữ thì gửi kèm raw, ô trống
+  // thì gửi orderId để server dùng địa chỉ đã tách sẵn của đơn.
+  const callSuggest = async (
+    orderId: string,
+    raw: string,
+  ): Promise<{ ok: true; data: SuggestResponse } | { ok: false; message: string }> => {
+    let response: Response;
+    try {
+      response = await fetch("/api/address/suggest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(raw === "" ? { orderId } : { orderId, raw }),
+      });
+    } catch {
+      return { ok: false, message: "Không gọi được API." };
+    }
+    let data: unknown = null;
+    try {
+      data = await response.json();
+    } catch {
+      // Rơi xuống thông báo mặc định ở dưới.
+    }
+    if (!response.ok) {
+      return { ok: false, message: parseApiMessage(data, `API trả về ${response.status}.`) };
+    }
+    return { ok: true, data: data as SuggestResponse };
+  };
+
+  const suggestOne = async (order: ApiOrderDetail, openModalOnMedium = true) => {
+    if ((aiBusy[order.id] ?? false) || aiAllBusy) return;
+    const raw = (rawInputs[order.id] ?? "").trim();
+    setAiBusy((prev) => ({ ...prev, [order.id]: true }));
+    setSuggestErrors((prev) => {
+      const next = { ...prev };
+      delete next[order.id];
+      return next;
+    });
+    const result = await callSuggest(order.id, raw);
+    setAiBusy((prev) => ({ ...prev, [order.id]: false }));
+    if (!result.ok) {
+      setSuggestErrors((prev) => ({ ...prev, [order.id]: result.message }));
+      return;
+    }
+    const data = result.data;
+    setSuggestions((prev) => ({ ...prev, [order.id]: data }));
+    if (data.applied) {
+      setPendingNote(
+        `Đã tự áp dụng địa chỉ ${order.id}, tin cậy ${data.before.trust}% -> ${data.after.trust}%. Xem audit.`,
+      );
+      router.refresh();
+      return;
+    }
+    if (data.proposal && openModalOnMedium) {
+      openAiModal(order, data);
+    }
+  };
+
+  // Gợi ý tuần tự cho tối đa 20 đơn đang lọc: mức cao tự áp dụng, mức
+  // giữa giữ đề xuất chờ duyệt ở từng dòng, mức thấp chỉ hiện lý do.
+  const suggestAll = async () => {
+    if (aiAllBusy || pendingBusy) return;
+    const targets = filteredPending.slice(0, AI_SUGGEST_ALL_LIMIT);
+    if (targets.length === 0) return;
+    setAiAllBusy(true);
+    setPendingNote(null);
+    setPendingError(null);
+    let applied = 0;
+    let waiting = 0;
+    let low = 0;
+    let failed = 0;
+    for (const order of targets) {
+      const raw = (rawInputs[order.id] ?? "").trim();
+      const result = await callSuggest(order.id, raw);
+      if (!result.ok) {
+        failed += 1;
+        setSuggestErrors((prev) => ({ ...prev, [order.id]: result.message }));
+        continue;
+      }
+      const data = result.data;
+      setSuggestions((prev) => ({ ...prev, [order.id]: data }));
+      if (data.applied) applied += 1;
+      else if (data.proposal) waiting += 1;
+      else low += 1;
+    }
+    setAiAllBusy(false);
+    const parts: string[] = [`Đã gợi ý ${targets.length} đơn.`];
+    if (applied > 0) parts.push(`${applied} đơn đã tự áp dụng.`);
+    if (waiting > 0) parts.push(`${waiting} đơn chờ duyệt, bấm Duyệt ở từng dòng để xem.`);
+    if (low > 0) parts.push(`${low} đơn mức thấp, nhập tay.`);
+    if (failed > 0) parts.push(`${failed} đơn lỗi.`);
+    setPendingNote(parts.join(" "));
+    router.refresh();
+  };
+
+  const openAiModal = (order: ApiOrderDetail, response: SuggestResponse) => {
+    if (!response.proposal) return;
+    setAiModal({ order, response });
+    setAiEditProvince(response.proposal.after.address.province ?? "");
+    setAiEditWard(response.proposal.after.address.ward ?? "");
+    setAiEditStreet(response.proposal.after.address.street ?? "");
+    setAiReason("");
+    setAiModalError(null);
+  };
+
+  const closeAiModal = () => {
+    if (aiModalBusy) return;
+    setAiModal(null);
+  };
+
+  // Duyệt đề xuất: áp dụng thì gửi kèm địa chỉ đã hiệu chỉnh trong
+  // modal (để trống đường thì thôi, API chấm lại); từ chối bắt buộc có
+  // lý do. Đề xuất đã quyết định rồi thì API trả 409.
+  const decideAi = async (approve: boolean) => {
+    if (aiModal === null || aiModalBusy) return;
+    const { order, response } = aiModal;
+    const proposal = response.proposal;
+    if (!proposal) return;
+    if (approve && (aiEditProvince === "" || aiEditWard === "")) return;
+    if (!approve && aiReason.trim() === "") {
+      setAiModalError("Từ chối đề xuất cần ghi rõ lý do.");
+      return;
+    }
+    setAiModalBusy(true);
+    setAiModalError(null);
+    let res: Response;
+    try {
+      res = await fetch(`/api/address/proposals/${encodeURIComponent(proposal.id)}/decision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          approve
+            ? {
+                decision: "approved",
+                ...(aiReason.trim() === "" ? {} : { reason: aiReason.trim() }),
+                address: {
+                  province: aiEditProvince,
+                  ward: aiEditWard,
+                  ...(aiEditStreet.trim() === "" ? {} : { street: aiEditStreet.trim() }),
+                },
+              }
+            : { decision: "rejected", reason: aiReason.trim() },
+        ),
+      });
+    } catch {
+      setAiModalBusy(false);
+      setAiModalError("Không gọi được API.");
+      return;
+    }
+    let data: unknown = null;
+    try {
+      data = await res.json();
+    } catch {
+      // Rơi xuống thông báo mặc định ở dưới.
+    }
+    setAiModalBusy(false);
+    if (!res.ok) {
+      setAiModalError(parseApiMessage(data, `API trả về ${res.status}.`));
+      return;
+    }
+    const decided = data as AddressProposal;
+    setAiModal(null);
+    setSuggestions((prev) => {
+      const next = { ...prev };
+      delete next[order.id];
+      return next;
+    });
+    setPendingNote(
+      approve
+        ? `Đã áp dụng đề xuất ${decided.id} cho ${order.id}, tin cậy mới ${decided.after.trust}%.`
+        : `Đã từ chối đề xuất ${decided.id} cho ${order.id}.`,
+    );
     router.refresh();
   };
 
@@ -379,13 +731,9 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
   const setConfirmDraft = (id: string, patch: Partial<RowSplit>) => {
     setConfirmDrafts((prev) => {
       const order = confirmOrders.find((item) => item.id === id);
-      const current = prev[id] ?? (order ? prefilledSplit(order) : { province: "", district: "", ward: "", street: "" });
+      const current = prev[id] ?? (order ? prefilledSplit(order) : { province: "", ward: "", street: "" });
       const next = { ...current, ...patch };
       if (patch.province !== undefined) {
-        next.district = "";
-        next.ward = "";
-      }
-      if (patch.district !== undefined) {
         next.ward = "";
       }
       return { ...prev, [id]: next };
@@ -396,7 +744,6 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
     const draft = draftFor(order);
     setDialogOrder(order);
     setEditProvince(draft.province);
-    setEditDistrict(draft.district);
     setEditWard(draft.ward);
     setEditDetail(draft.street);
     setDialogError(null);
@@ -404,7 +751,7 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
 
   const confirmDialog = async () => {
     if (dialogOrder === null || dialogBusy) return;
-    const split: RowSplit = { province: editProvince, district: editDistrict, ward: editWard, street: editDetail };
+    const split: RowSplit = { province: editProvince, ward: editWard, street: editDetail };
     if (!splitComplete(split) || editDetail.trim() === "") return;
     setDialogBusy(true);
     setDialogError(null);
@@ -418,8 +765,7 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
     router.refresh();
   };
 
-  const dialogComplete = editProvince !== "" && editDistrict !== "" && editWard !== "" && editDetail.trim() !== "";
-  const dialogLevels = dialogOrder !== null && dialogOrder.addressTrust !== null ? splitConfLevels(dialogOrder.addressTrust) : null;
+  const dialogComplete = editProvince !== "" && editWard !== "" && editDetail.trim() !== "";
 
   const pendingColumns: TableColumn<ApiOrderDetail>[] = [
     {
@@ -484,13 +830,12 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             value={pendingProvince}
             onChange={(value) => {
               setPendingProvince(value);
-              setPendingDistrict("");
               setPendingWard("");
               setPendingPage(1);
             }}
             ariaLabel="Lọc theo tỉnh/thành phố"
             placeholder="Chọn Tỉnh/TP"
-            options={[...ADDRESS_PROVINCES]}
+            options={[...ADDRESS_PROVINCES_2025]}
           />
         </span>
       ),
@@ -502,39 +847,7 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             onChange={(value) => setPendingSplit(order.id, { province: value })}
             ariaLabel={`Chọn tỉnh/thành phố cho ${order.id}`}
             placeholder="Chọn Tỉnh/TP"
-            options={[...ADDRESS_PROVINCES]}
-          />
-        );
-      },
-      headerClassName: "h-16 w-[139px]",
-    },
-    {
-      key: "district",
-      header: (
-        <span className="flex flex-col items-start gap-1">
-          <span>Quận/Huyện</span>
-          <MiniSelect
-            value={pendingDistrict}
-            onChange={(value) => {
-              setPendingDistrict(value);
-              setPendingWard("");
-              setPendingPage(1);
-            }}
-            ariaLabel="Lọc theo quận/huyện"
-            placeholder="Chọn Quận/Huyện"
-            options={districtsFor(pendingProvince)}
-          />
-        </span>
-      ),
-      render: (order) => {
-        const split = splitFor(order);
-        return (
-          <MiniSelect
-            value={split.district}
-            onChange={(value) => setPendingSplit(order.id, { district: value })}
-            ariaLabel={`Chọn quận/huyện cho ${order.id}`}
-            placeholder="Chọn Quận/Huyện"
-            options={districtsFor(split.province)}
+            options={[...ADDRESS_PROVINCES_2025]}
           />
         );
       },
@@ -545,27 +858,31 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
       header: (
         <span className="flex flex-col items-start gap-1">
           <span>Xã/Phường</span>
-          <MiniSelect
+          <SearchableSelect
+            small
+            disabled={pendingProvince === ""}
             value={pendingWard}
             onChange={(value) => {
               setPendingWard(value);
               setPendingPage(1);
             }}
             ariaLabel="Lọc theo xã/phường"
-            placeholder="Chọn Xã/Phường"
-            options={wardsFor(pendingDistrict)}
+            placeholder="Tìm Xã/Phường"
+            options={wardsForProvince(pendingProvince)}
           />
         </span>
       ),
       render: (order) => {
         const split = splitFor(order);
         return (
-          <MiniSelect
+          <SearchableSelect
+            small
+            disabled={split.province === ""}
             value={split.ward}
             onChange={(value) => setPendingSplit(order.id, { ward: value })}
             ariaLabel={`Chọn xã/phường cho ${order.id}`}
-            placeholder="Chọn Xã/Phường"
-            options={wardsFor(split.district)}
+            placeholder="Tìm Xã/Phường"
+            options={wardsForProvince(split.province)}
           />
         );
       },
@@ -589,6 +906,63 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
       },
       cellClassName: "text-xs text-gray-700 !whitespace-normal",
       headerClassName: "w-[139px]",
+    },
+    {
+      key: "ai",
+      header: "AI gợi ý",
+      render: (order) => {
+        const raw = rawInputs[order.id] ?? "";
+        const busy = aiBusy[order.id] ?? false;
+        const suggestion = suggestions[order.id];
+        const error = suggestErrors[order.id];
+        return (
+          <div className="flex w-[230px] flex-col gap-1.5">
+            <input
+              type="text"
+              value={raw}
+              onChange={(event) =>
+                setRawInputs((prev) => ({ ...prev, [order.id]: event.target.value }))
+              }
+              aria-label={`Địa chỉ khách ghi cho ${order.id}`}
+              placeholder="Địa chỉ khách ghi (dán chuỗi)"
+              className="h-8 w-full rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-gray-500"
+            />
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                disabled={busy || aiAllBusy}
+                onClick={() => suggestOne(order)}
+                title="Gợi ý chuẩn hóa địa chỉ cho đơn này"
+                className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                AI gợi ý
+              </button>
+              {suggestion && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSuggestions((prev) => {
+                      const next = { ...prev };
+                      delete next[order.id];
+                      return next;
+                    })
+                  }
+                  className="flex h-8 items-center rounded-md border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                >
+                  Ẩn
+                </button>
+              )}
+            </div>
+            {busy && <p className="text-xs text-gray-500">Đang gợi ý...</p>}
+            {error && <p className="text-xs text-red-700">{error}</p>}
+            {suggestion && (
+              <AiResult suggestion={suggestion} onReview={() => openAiModal(order, suggestion)} />
+            )}
+          </div>
+        );
+      },
+      cellClassName: "!whitespace-normal",
+      headerClassName: "w-[230px]",
     },
     {
       key: "trust",
@@ -621,7 +995,7 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             type="button"
             disabled={!complete || pendingBusy}
             onClick={() => splitOne(order)}
-            title={complete ? "Tách địa chỉ đơn này" : "Chọn đủ tỉnh/thành phố, quận/huyện và xã/phường trước"}
+            title={complete ? "Tách địa chỉ đơn này" : "Chọn đủ tỉnh/thành phố và xã/phường trước"}
             className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Tách
@@ -667,13 +1041,12 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             value={confirmProvince}
             onChange={(value) => {
               setConfirmProvince(value);
-              setConfirmDistrict("");
               setConfirmWard("");
               setConfirmPage(1);
             }}
             ariaLabel="Lọc theo tỉnh/thành phố"
             placeholder="Chọn Tỉnh/TP"
-            options={[...ADDRESS_PROVINCES]}
+            options={[...ADDRESS_PROVINCES_2025]}
           />
         </span>
       ),
@@ -685,39 +1058,7 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             onChange={(value) => setConfirmDraft(order.id, { province: value })}
             ariaLabel={`Chọn tỉnh/thành phố cho ${order.id}`}
             placeholder="Chọn Tỉnh/TP"
-            options={[...ADDRESS_PROVINCES]}
-          />
-        );
-      },
-      headerClassName: "h-16 w-[129px]",
-    },
-    {
-      key: "district",
-      header: (
-        <span className="flex flex-col items-start gap-1">
-          <span>Quận/Huyện</span>
-          <MiniSelect
-            value={confirmDistrict}
-            onChange={(value) => {
-              setConfirmDistrict(value);
-              setConfirmWard("");
-              setConfirmPage(1);
-            }}
-            ariaLabel="Lọc theo quận/huyện"
-            placeholder="Chọn Quận/Huyện"
-            options={districtsFor(confirmProvince)}
-          />
-        </span>
-      ),
-      render: (order) => {
-        const draft = draftFor(order);
-        return (
-          <MiniSelect
-            value={draft.district}
-            onChange={(value) => setConfirmDraft(order.id, { district: value })}
-            ariaLabel={`Chọn quận/huyện cho ${order.id}`}
-            placeholder="Chọn Quận/Huyện"
-            options={districtsFor(draft.province)}
+            options={[...ADDRESS_PROVINCES_2025]}
           />
         );
       },
@@ -728,27 +1069,31 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
       header: (
         <span className="flex flex-col items-start gap-1">
           <span>Xã/Phường</span>
-          <MiniSelect
+          <SearchableSelect
+            small
+            disabled={confirmProvince === ""}
             value={confirmWard}
             onChange={(value) => {
               setConfirmWard(value);
               setConfirmPage(1);
             }}
             ariaLabel="Lọc theo xã/phường"
-            placeholder="Chọn Xã/Phường"
-            options={wardsFor(confirmDistrict)}
+            placeholder="Tìm Xã/Phường"
+            options={wardsForProvince(confirmProvince)}
           />
         </span>
       ),
       render: (order) => {
         const draft = draftFor(order);
         return (
-          <MiniSelect
+          <SearchableSelect
+            small
+            disabled={draft.province === ""}
             value={draft.ward}
             onChange={(value) => setConfirmDraft(order.id, { ward: value })}
             ariaLabel={`Chọn xã/phường cho ${order.id}`}
-            placeholder="Chọn Xã/Phường"
-            options={wardsFor(draft.district)}
+            placeholder="Tìm Xã/Phường"
+            options={wardsForProvince(draft.province)}
           />
         );
       },
@@ -790,6 +1135,8 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
       headerClassName: "w-[74px]",
     },
   ];
+
+  const aiEditComplete = aiEditProvince !== "" && aiEditWard !== "";
 
   return (
     <div className="flex flex-col gap-4">
@@ -840,7 +1187,18 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             >
               Tách tất cả
             </button>
-            <p className="text-[13px] text-gray-500">Tách địa chỉ cho các đơn đã chọn, tin cậy mới do API tính lại.</p>
+            <button
+              type="button"
+              onClick={suggestAll}
+              disabled={filteredPending.length === 0 || aiAllBusy || pendingBusy}
+              title="Gợi ý chuẩn hóa cho tối đa 20 đơn đang lọc"
+              className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              AI gợi ý tất cả
+            </button>
+            <p className="text-[13px] text-gray-500">
+              Tách địa chỉ cho các đơn đã chọn, tin cậy mới do API tính lại. AI gợi ý tối đa 20 đơn đang lọc mỗi lần; mức cao tự áp dụng, mức giữa chờ duyệt.
+            </p>
           </div>
           {pendingNote !== null && (
             <p className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{pendingNote}</p>
@@ -931,13 +1289,12 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
                     value={confirmProvince}
                     onChange={(value) => {
                       setConfirmProvince(value);
-                      setConfirmDistrict("");
                       setConfirmWard("");
                       setConfirmPage(1);
                     }}
                     ariaLabel="Lọc theo tỉnh/thành phố"
                     placeholder="Tất cả tỉnh/thành phố"
-                    options={[...ADDRESS_PROVINCES]}
+                    options={[...ADDRESS_PROVINCES_2025]}
                   />
                 </div>
               </div>
@@ -985,23 +1342,12 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             <div className="flex flex-col gap-2">
               <p className="text-sm font-semibold text-gray-500">Địa chỉ hiện tại</p>
               <div className="rounded-lg border border-gray-300 bg-gray-100 p-2 text-sm text-gray-800">{joinAddress(dialogOrder)}</div>
-            </div>
-            <div className="flex items-start gap-2">
-              {(
-                [
-                  { label: "Tỉnh / TP", value: dialogLevels?.province ?? null },
-                  { label: "Quận / Huyện", value: dialogLevels?.district ?? null },
-                  { label: "Xã / Phường", value: dialogLevels?.ward ?? null },
-                ] as { label: string; value: number | null }[]
-              ).map((item) => (
-                <div key={item.label} className="flex flex-1 flex-col items-center gap-1 rounded-md border border-gray-100 bg-gray-100 px-2 py-3">
-                  <p className="text-xs text-gray-700">{item.label}</p>
-                  <p className={`text-sm font-semibold ${item.value === null ? "text-gray-400" : trustTextClass(item.value)}`}>
-                    {item.value === null ? "-" : `${item.value}%`}
-                  </p>
-                  <p className="text-xs text-gray-700">{item.value === null ? "-" : trustLevel(item.value)}</p>
-                </div>
-              ))}
+              {dialogOrder.addressTrust !== null && (
+                <p className="text-sm text-gray-700">
+                  Tin cậy hiện tại:{" "}
+                  <span className={`font-semibold ${trustTextClass(dialogOrder.addressTrust)}`}>{trustLabel(dialogOrder)}</span>
+                </p>
+              )}
             </div>
             <div className="flex flex-col gap-3">
               <p className="text-sm font-semibold text-gray-900">Hiệu chỉnh</p>
@@ -1014,41 +1360,26 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
                   value={editProvince}
                   onChange={(value) => {
                     setEditProvince(value);
-                    setEditDistrict("");
                     setEditWard("");
                   }}
                   ariaLabel="Hiệu chỉnh tỉnh/thành phố"
                   placeholder="Chọn Tỉnh/TP"
-                  options={[...ADDRESS_PROVINCES]}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label htmlFor="dialog-district" className="text-sm font-medium text-gray-600">
-                  Quận/Huyện
-                </label>
-                <MiniSelect
-                  id="dialog-district"
-                  value={editDistrict}
-                  onChange={(value) => {
-                    setEditDistrict(value);
-                    setEditWard("");
-                  }}
-                  ariaLabel="Hiệu chỉnh quận/huyện"
-                  placeholder="Chọn Quận/Huyện"
-                  options={districtsFor(editProvince)}
+                  options={[...ADDRESS_PROVINCES_2025]}
                 />
               </div>
               <div className="flex flex-col gap-1">
                 <label htmlFor="dialog-ward" className="text-sm font-medium text-gray-600">
                   Xã/Phường
                 </label>
-                <MiniSelect
+                <SearchableSelect
+                  small
+                  disabled={editProvince === ""}
                   id="dialog-ward"
                   value={editWard}
                   onChange={setEditWard}
                   ariaLabel="Hiệu chỉnh xã/phường"
-                  placeholder="Chọn Xã/Phường"
-                  options={wardsFor(editDistrict)}
+                  placeholder="Tìm Xã/Phường"
+                  options={wardsForProvince(editProvince)}
                 />
               </div>
             </div>
@@ -1068,6 +1399,138 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
             <p className="text-xs text-gray-500">Lưu địa chỉ đã hiệu chỉnh, API tính lại tin cậy ngay. Không có trạng thái xác nhận riêng ở API.</p>
             {dialogError !== null && (
               <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{dialogError}</p>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={aiModal !== null}
+        onClose={closeAiModal}
+        title="Duyệt đề xuất chuẩn hóa địa chỉ"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={closeAiModal}
+              className="flex h-9 items-center rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-100"
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              disabled={aiReason.trim() === "" || aiModalBusy}
+              onClick={() => decideAi(false)}
+              title={aiReason.trim() === "" ? "Từ chối cần ghi rõ lý do" : "Từ chối đề xuất này"}
+              className="flex h-9 items-center rounded-md border border-red-700 bg-white px-3 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Từ chối
+            </button>
+            <button
+              type="button"
+              disabled={!aiEditComplete || aiModalBusy}
+              onClick={() => decideAi(true)}
+              className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Áp dụng
+            </button>
+          </>
+        }
+      >
+        {aiModal !== null && aiModal.response.proposal !== null && (
+          <div className="flex flex-col gap-4">
+            <p className="text-xs text-gray-500">
+              Đơn {aiModal.order.id} - Khách hàng: {aiModal.order.customer} - SĐT: {aiModal.order.phone ?? "-"} - Đề xuất{" "}
+              {aiModal.response.proposal.id}
+            </p>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-semibold text-gray-500">Địa chỉ hiện tại</p>
+              <div className="rounded-lg border border-gray-300 bg-gray-100 p-2 text-sm text-gray-800">{joinAddress(aiModal.order)}</div>
+              <p className="text-sm text-gray-700">
+                Tin cậy hiện tại:{" "}
+                <span className={`font-semibold ${trustTextClass(aiModal.response.before.trust)}`}>
+                  {aiModal.response.before.trust}% - {aiModal.response.before.level}
+                </span>
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-semibold text-gray-500">Địa chỉ đề xuất</p>
+              <div className="rounded-lg border border-green-200 bg-green-50 p-2 text-sm text-gray-800">
+                {formatSuggested(aiModal.response.proposal.after.address)}
+              </div>
+              <p className="text-sm text-gray-700">
+                Tin cậy sau đề xuất:{" "}
+                <span className={`font-semibold ${trustTextClass(aiModal.response.after.trust)}`}>
+                  {aiModal.response.after.trust}% - {aiModal.response.after.level}
+                </span>
+              </p>
+              <ul className="list-disc pl-5 text-sm text-gray-700">
+                {aiModal.response.after.reasons.map((reason, index) => (
+                  <li key={index}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex flex-col gap-3">
+              <p className="text-sm font-semibold text-gray-900">Hiệu chỉnh trước khi áp dụng</p>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="ai-province" className="text-sm font-medium text-gray-600">
+                  Tỉnh/TP
+                </label>
+                <FilterSelect
+                  id="ai-province"
+                  value={aiEditProvince}
+                  onChange={(value) => {
+                    setAiEditProvince(value);
+                    setAiEditWard("");
+                  }}
+                  ariaLabel="Hiệu chỉnh tỉnh/thành phố"
+                  placeholder="Chọn Tỉnh/TP"
+                  options={[...ADDRESS_PROVINCES_2025]}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="ai-ward" className="text-sm font-medium text-gray-600">
+                  Xã/Phường
+                </label>
+                <SearchableSelect
+                  disabled={aiEditProvince === ""}
+                  id="ai-ward"
+                  value={aiEditWard}
+                  onChange={setAiEditWard}
+                  ariaLabel="Hiệu chỉnh xã/phường"
+                  placeholder="Tìm Xã/Phường"
+                  options={wardsForProvince(aiEditProvince)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="ai-street" className="text-sm font-medium text-gray-600">
+                  Địa chỉ chi tiết
+                </label>
+                <input
+                  id="ai-street"
+                  type="text"
+                  value={aiEditStreet}
+                  onChange={(event) => setAiEditStreet(event.target.value)}
+                  placeholder="Số nhà, ngõ, đường..."
+                  className="h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="ai-reason" className="text-sm font-medium text-gray-600">
+                Lý do (bắt buộc khi từ chối)
+              </label>
+              <input
+                id="ai-reason"
+                type="text"
+                value={aiReason}
+                onChange={(event) => setAiReason(event.target.value)}
+                placeholder="Ví dụ: phường này đã tách, cần xác minh thêm"
+                className="h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500"
+              />
+            </div>
+            {aiModalError !== null && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{aiModalError}</p>
             )}
           </div>
         )}
