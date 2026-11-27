@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: Apache-2.0
--- Migration 019: lakehouse-lite cho don da dong.
+-- Migration 021: lakehouse-lite cho don da dong.
 -- archive_runs la manifest cua tung lan export Parquet; order_archive_manifest
 -- danh dau don da duoc archive de khong export trung. Don goc van nam trong
 -- OLTP de khong pha vo workflow/audit; phan tich lich su doc tu Parquet.

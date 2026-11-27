@@ -115,8 +115,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
         customerId: 'KH-1001',
         address: {
           province: 'Hà Nội',
-          district: 'Hai Bà Trưng',
-          ward: 'Phường Phạm Đình Hổ',
+          ward: 'Phường Hai Bà Trưng',
           street: 'Số 8 phố Hàng Bè',
         },
         deadline: '2026-11-20T10:00:00.000Z',
@@ -322,8 +321,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
         items: [{ sku: 'NM-40', quantity: 1 }],
         address: {
           province: 'Hà Nội',
-          district: 'Hai Bà Trưng',
-          ward: 'Phường Phạm Đình Hổ',
+          ward: 'Phường Hai Bà Trưng',
           street: 'Số 8 phố Hàng Bè',
         },
       },
@@ -397,8 +395,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
         items: [{ sku: 'NM-40', quantity: 2 }],
         address: {
           province: 'Hà Nội',
-          district: 'Hai Bà Trưng',
-          ward: 'Phường Phạm Đình Hổ',
+          ward: 'Phường Hai Bà Trưng',
           street: 'Số 8 phố Hàng Bè',
         },
       },
@@ -556,8 +553,7 @@ describe('Postgres persistence (toàn app trên pg-mem)', () => {
         items: [{ sku: 'NM-40', quantity: 1 }],
         address: {
           province: 'Hà Nội',
-          district: 'Hai Bà Trưng',
-          ward: 'Phường Phạm Đình Hổ',
+          ward: 'Phường Hai Bà Trưng',
           street: 'Số 8 phố Hàng Bè',
         },
       },

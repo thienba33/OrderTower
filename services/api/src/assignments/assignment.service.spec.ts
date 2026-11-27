@@ -85,8 +85,7 @@ const MANAGER: Caller = {
 
 const ORDER_ADDRESS = {
   province: 'Hà Nội',
-  district: 'Hai Bà Trưng',
-  ward: 'Phường Phạm Đình Hổ',
+  ward: 'Phường Hai Bà Trưng',
   street: 'Số 8 phố Hàng Bè',
 };
 
