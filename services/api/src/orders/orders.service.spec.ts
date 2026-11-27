@@ -627,6 +627,33 @@ describe('OrdersService', () => {
     ).rejects.toThrow('chưa có địa chỉ');
   });
 
+  it('tạo đơn bằng chuỗi thô thì tách bằng dữ liệu hành chính rồi lưu phần đã tách', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create({
+      ...createInput('key-1'),
+      address: {
+        raw: 'Số 12 ngõ 34 phố Hàng Bè, p. trần hưng đạo, q. hoàn kiếm, hà nội',
+      },
+    }, COORDINATOR);
+    expect(order.address).toEqual({
+      province: 'Hà Nội',
+      ward: 'Phường Cửa Nam',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    });
+    expect(order.addressTrust).toBe(100);
+    expect(order.addressLevel).toBe('Tin cậy cao');
+  });
+
+  it('chuỗi thô không xác định được thì lưu phần tách được, tin cậy thấp', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create({
+      ...createInput('key-1'),
+      address: { raw: 'Phường Không Có, Hà Nội' },
+    }, COORDINATOR);
+    expect(order.address).toEqual({ province: 'Hà Nội' });
+    expect(order.addressTrust).toBe(40);
+  });
+
   it('đóng đơn thiếu hướng xử lý thì báo 400, có thì ghi vào lịch sử', async () => {
     const { orders, audit, shipments, vehicles, drivers } =
       await buildServices();

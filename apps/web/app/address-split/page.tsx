@@ -7,6 +7,7 @@ import { canAccessScreen } from "@/lib/roles";
 import { AccessDenied } from "@/components/layout/AccessDenied";
 import AddressSplitClient from "./address-split-client";
 import type { ApiOrderDetail } from "../orders/[id]/order-detail-types";
+import type { ApiWorkflowTransition } from "../orders/[id]/order-detail-types";
 
 // Lấy danh sách đơn từ API. Lỗi HTTP hoặc dữ liệu không phải mảng thì
 // ném ApiError để trang quyết định hiện nhắc đăng nhập hay báo lỗi.
@@ -20,6 +21,31 @@ async function fetchOrders(): Promise<ApiOrderDetail[]> {
     throw new ApiError(response.status, "API trả về dữ liệu không đúng dạng.");
   }
   return data as ApiOrderDetail[];
+}
+
+// Lấy định nghĩa luồng để biết bước tiếp theo của mỗi đơn (xác nhận hàng
+// loạt ở tab Xác nhận). Lỗi thì trả [] để trang vẫn hiện, chỉ ẩn chức
+// năng xác nhận hàng loạt.
+async function fetchTransitions(): Promise<ApiWorkflowTransition[]> {
+  try {
+    const response = await apiFetch(
+      "/workflow/definition?definitionId=order-flow",
+    );
+    if (!response.ok) {
+      return [];
+    }
+    const data: unknown = await response.json();
+    if (
+      data === null ||
+      typeof data !== "object" ||
+      !Array.isArray((data as { transitions?: unknown }).transitions)
+    ) {
+      return [];
+    }
+    return (data as { transitions: ApiWorkflowTransition[] }).transitions;
+  } catch {
+    return [];
+  }
 }
 
 export default async function AddressSplitPage() {
@@ -61,5 +87,8 @@ export default async function AddressSplitPage() {
     );
   }
 
-  return <AddressSplitClient orders={orders} />;
+  const transitions = await fetchTransitions();
+  return (
+    <AddressSplitClient orders={orders} transitions={transitions} roles={session.roles} />
+  );
 }

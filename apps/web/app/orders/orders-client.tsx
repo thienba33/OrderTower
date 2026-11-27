@@ -8,13 +8,7 @@ import { ChevronDown, Search } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
 import { Table, type TableColumn } from "@/components/ui/Table";
-import {
-  ADDRESS_DISTRICTS,
-  ADDRESS_PROVINCES,
-  ADDRESS_WARDS,
-  trustLevel,
-  type AddressProvince,
-} from "@/data/address-split";
+import { trustLevel } from "@/data/address-split";
 import {
   ORDER_STATUSES,
   ORDER_STATUS_PILL,
@@ -152,10 +146,7 @@ export default function OrdersClient({
     customer: "",
     phone: "",
     channel: "",
-    province: "",
-    district: "",
-    ward: "",
-    street: "",
+    rawAddress: "",
     product: defaultProduct,
     quantity: 2,
     deadline: "",
@@ -181,12 +172,6 @@ export default function OrdersClient({
     }
     return trustLevel(order.addressTrust);
   };
-
-  const districts =
-    form.province === ""
-      ? []
-      : (ADDRESS_DISTRICTS[form.province as AddressProvince] ?? []);
-  const wards = form.district === "" ? [] : (ADDRESS_WARDS[form.district] ?? []);
 
   const kpis = useMemo(() => {
     const count = (status: OrderStatus) => orders.filter((order) => order.state === status).length;
@@ -240,14 +225,13 @@ export default function OrdersClient({
     setPage(1);
   };
 
-  // Địa chỉ phải đủ tỉnh/quận/phường thì API mới chấm được tin cậy; số
-  // nhà/đường và mốc giao hẹn không bắt buộc.
+  // Địa chỉ khách ghi nguyên văn (Zalo/Facebook/landing page...): API tách
+  // bằng dữ liệu hành chính mới rồi chấm tin cậy. Số nhà/đường và mốc
+  // giao hẹn không bắt buộc.
   const canCreate =
     form.customer.trim() !== "" &&
     form.phone.trim() !== "" &&
-    form.province !== "" &&
-    form.district !== "" &&
-    form.ward !== "" &&
+    form.rawAddress.trim() !== "" &&
     form.product !== "";
 
   const resetForm = () => {
@@ -255,10 +239,7 @@ export default function OrdersClient({
       customer: "",
       phone: "",
       channel: "",
-      province: "",
-      district: "",
-      ward: "",
-      street: "",
+      rawAddress: "",
       product: defaultProduct,
       quantity: 2,
       deadline: "",
@@ -282,10 +263,7 @@ export default function OrdersClient({
           phone: form.phone.trim(),
           items: [{ sku: form.product, quantity: form.quantity }],
           address: {
-            province: form.province,
-            district: form.district,
-            ward: form.ward,
-            ...(form.street.trim() !== "" ? { street: form.street.trim() } : {}),
+            raw: form.rawAddress.trim(),
           },
           ...(form.channel !== "" ? { channelId: form.channel } : {}),
           ...(form.deadline !== ""
@@ -597,63 +575,18 @@ export default function OrdersClient({
               </SelectWithChevron>
             </Field>
           </div>
-          <Field label="Tỉnh/Thành phố">
-            <SelectWithChevron
-              value={form.province}
-              onChange={(value) =>
-                setForm({ ...form, province: value, district: "", ward: "" })
-              }
-              ariaLabel="Chọn tỉnh/thành phố"
-              className="w-full"
-            >
-              <option value="">Chọn tỉnh/thành phố</option>
-              {ADDRESS_PROVINCES.map((province) => (
-                <option key={province} value={province}>
-                  {province}
-                </option>
-              ))}
-            </SelectWithChevron>
-          </Field>
-          <div className="flex gap-3">
-            <Field label="Quận/Huyện" className="flex-1">
-              <SelectWithChevron
-                value={form.district}
-                onChange={(value) => setForm({ ...form, district: value, ward: "" })}
-                ariaLabel="Chọn quận/huyện"
-                className="w-full"
-              >
-                <option value="">Chọn quận/huyện</option>
-                {districts.map((district) => (
-                  <option key={district} value={district}>
-                    {district}
-                  </option>
-                ))}
-              </SelectWithChevron>
-            </Field>
-            <Field label="Phường/Xã" className="flex-1">
-              <SelectWithChevron
-                value={form.ward}
-                onChange={(value) => setForm({ ...form, ward: value })}
-                ariaLabel="Chọn phường/xã"
-                className="w-full"
-              >
-                <option value="">Chọn phường/xã</option>
-                {wards.map((ward) => (
-                  <option key={ward} value={ward}>
-                    {ward}
-                  </option>
-                ))}
-              </SelectWithChevron>
-            </Field>
-          </div>
-          <Field label="Số nhà, ngõ, phố">
-            <input
-              type="text"
-              value={form.street}
-              onChange={(event) => setForm({ ...form, street: event.target.value })}
-              placeholder="Số nhà, ngõ, phố (không bắt buộc)"
-              className={INPUT_CLASS}
+          <Field label="Địa chỉ khách ghi">
+            <textarea
+              value={form.rawAddress}
+              onChange={(event) => setForm({ ...form, rawAddress: event.target.value })}
+              placeholder="Dán nguyên văn địa chỉ khách ghi (Zalo, Facebook, landing page...), ví dụ: Số 12 ngõ 34 phố Hàng Bè, p. Trần Hưng Đạo, q. Hoàn Kiếm, Hà Nội"
+              aria-label="Địa chỉ khách ghi"
+              rows={3}
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none placeholder:text-gray-400 focus:border-gray-500"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              Hệ thống tách địa chỉ bằng dữ liệu hành chính mới rồi chấm tin cậy; đơn chưa tách được sẽ vào tab Chờ tách để xử lý.
+            </p>
           </Field>
           <div className="flex gap-3">
             <Field label="Sản phẩm" className="flex-1">
