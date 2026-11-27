@@ -45,7 +45,7 @@ const CONFIRM_SORT_OPTIONS: string[] = [
 
 const PAGE_SIZE = 5;
 
-// Tối đa 20 đơn mỗi lần bấm "AI gợi ý tất cả", để không spam API.
+// Tối đa 20 đơn mỗi lần bấm "AI phân tách", để không spam API.
 const AI_SUGGEST_ALL_LIMIT = 20;
 
 function MiniSelect({
@@ -203,8 +203,10 @@ function SearchableSelect({
   );
 }
 
-// Địa chỉ nối đủ cấp, thiếu thì "-". Quận/huyện cũ vẫn hiện ở dạng chỉ
-// đọc khi đơn còn lưu trường đó.
+// Địa chỉ nối đủ cấp, thiếu thì "-". Ưu tiên phần đã tách (địa chỉ hiện
+// tại sau khi tách); đơn chưa tách chỉ lưu chuỗi thô khách ghi thì hiện
+// đúng chuỗi đó. Quận/huyện cũ vẫn hiện ở dạng chỉ đọc khi đơn còn lưu
+// trường đó.
 function joinAddress(order: ApiOrderDetail): string {
   const parts = [
     order.address?.street,
@@ -212,7 +214,11 @@ function joinAddress(order: ApiOrderDetail): string {
     order.address?.district,
     order.address?.province,
   ].filter((part) => part !== undefined && part.trim() !== "");
-  return parts.length > 0 ? parts.join(", ") : "-";
+  if (parts.length > 0) return parts.join(", ");
+  if (order.address?.raw !== undefined && order.address.raw.trim() !== "") {
+    return order.address.raw;
+  }
+  return "-";
 }
 
 function trustLabel(order: ApiOrderDetail): string {
@@ -320,7 +326,7 @@ function AiResult({
             <li key={index}>{reason}</li>
           ))}
         </ul>
-        <p>Sửa tay ở dòng này hoặc ở tab Lỗi phân tách.</p>
+        <p>Sửa tay ở tab Lỗi phân tách.</p>
       </div>
     );
   }
@@ -378,14 +384,33 @@ export default function AddressSplitClient({
         transition.to !== "Hủy",
     );
 
-  // Đơn chờ tách: tin cậy dưới 70, hoặc chưa có địa chỉ để chấm. Đơn
-  // đã tách xong (tin cậy từ 70) sang tab xác nhận.
+  // Đơn chờ tách: chưa tách, chưa chấm điểm (tin cậy null, không có lỗi
+  // phân tách). Đơn đổ về chưa làm gì hết thì nằm ở đây với đúng địa chỉ
+  // thô khách ghi. Đơn đã tách xong (tin cậy từ 70) sang tab xác nhận;
+  // đơn tách lỗi hoặc tin cậy thấp sang tab lỗi phân tách.
   const pendingOrders = useMemo(
-    () => orders.filter((order) => order.addressTrust === null || order.addressTrust < 70),
+    () =>
+      orders.filter(
+        (order) =>
+          order.addressTrust === null &&
+          (order.address?.splitError === undefined || order.address.splitError === null),
+      ),
     [orders],
   );
   const confirmOrders = useMemo(
     () => orders.filter((order) => order.addressTrust !== null && order.addressTrust >= 70),
+    [orders],
+  );
+  // Đơn lỗi phân tách: đã tách mà lỗi (có splitError đã lưu) hoặc tin
+  // cậy thấp (< 70). Người dùng sửa tay ở tab này rồi bấm Tách; đơn đã
+  // tách xong sẽ rời khỏi tab lỗi sau khi tải lại.
+  const splitErrorOrders = useMemo(
+    () =>
+      orders.filter(
+        (order) =>
+          (order.address?.splitError !== undefined && order.address.splitError !== null) ||
+          (order.addressTrust !== null && order.addressTrust < 70),
+      ),
     [orders],
   );
 
@@ -400,10 +425,9 @@ export default function AddressSplitClient({
   const [pendingNote, setPendingNote] = useState<string | null>(null);
   const [pendingError, setPendingError] = useState<string | null>(null);
 
-  // AI gợi ý chuẩn hóa địa chỉ (AI số 1): chuỗi khách ghi dán vào từng
-  // dòng, kết quả đề xuất giữ theo mã đơn; modal duyệt giữ đề xuất đang
-  // mở kèm địa chỉ đã hiệu chỉnh và lý do.
-  const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
+  // AI phân tách địa chỉ (AI số 1): dùng chuỗi thô đã lưu trên đơn,
+  // kết quả đề xuất giữ theo mã đơn; modal duyệt giữ đề xuất đang mở
+  // kèm địa chỉ đã hiệu chỉnh và lý do.
   const [suggestions, setSuggestions] = useState<Record<string, SuggestResponse>>({});
   const [suggestErrors, setSuggestErrors] = useState<Record<string, string>>({});
   const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({});
@@ -641,7 +665,7 @@ export default function AddressSplitClient({
   // lại tin cậy ngay. Trả về tin cậy mới khi thành công. Địa chỉ gửi
   // lên chỉ còn tỉnh/phường/đường theo danh mục mới; quận/huyện cũ
   // (nếu đơn còn lưu) bị thay bằng địa chỉ mới này.
-  const patchAddress = async (id: string, split: RowSplit): Promise<{ ok: true; trust: number | null } | { ok: false; message: string }> => {
+  const patchAddress = async (id: string, split: RowSplit, raw?: string): Promise<{ ok: true; trust: number | null } | { ok: false; message: string }> => {
     const street = split.street.trim();
     let response: Response;
     try {
@@ -650,6 +674,7 @@ export default function AddressSplitClient({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           address: {
+            ...(raw !== undefined && raw.trim() !== "" ? { raw: raw.trim() } : {}),
             province: split.province,
             ward: split.ward,
             ...(street === "" ? {} : { street }),
@@ -678,7 +703,7 @@ export default function AddressSplitClient({
     setPendingBusy(true);
     setPendingNote(null);
     setPendingError(null);
-    const result = await patchAddress(order.id, split);
+    const result = await patchAddress(order.id, split, order.address?.raw);
     setPendingBusy(false);
     if (!result.ok) {
       setPendingError(`Đơn ${order.id}: ${result.message}`);
@@ -706,7 +731,7 @@ export default function AddressSplitClient({
         skipped.push(order.id);
         continue;
       }
-      const result = await patchAddress(order.id, split);
+      const result = await patchAddress(order.id, split, order.address?.raw);
       if (!result.ok) {
         stoppedAt = `Đơn ${order.id}: ${result.message}`;
         break;
@@ -725,18 +750,45 @@ export default function AddressSplitClient({
     router.refresh();
   };
 
-  // Gọi AI gợi ý cho 1 đơn: ô dán chuỗi có chữ thì gửi kèm raw, ô trống
-  // thì gửi orderId để server dùng địa chỉ đã tách sẵn của đơn.
+  // Ghi/xóa lỗi phân tách đã lưu trên đơn (để đơn sang tab Lỗi hoặc về
+  // tab Chờ): chỉ thêm/xóa splitError, giữ nguyên địa chỉ + điểm tin cậy.
+  const patchSplitError = async (
+    id: string,
+    splitError: { code: string; message: string } | null,
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    let response: Response;
+    try {
+      response = await fetch(`/api/orders/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address: { splitError } }),
+      });
+    } catch {
+      return { ok: false, message: "Không gọi được API." };
+    }
+    let data: unknown = null;
+    try {
+      data = await response.json();
+    } catch {
+      // Rơi xuống thông báo mặc định ở dưới.
+    }
+    if (!response.ok) {
+      return { ok: false, message: parseApiMessage(data, `API trả về ${response.status}.`) };
+    }
+    return { ok: true };
+  };
+
+  // Gọi AI phân tách cho 1 đơn: dùng chuỗi thô đã lưu trên đơn (server
+  // tách chuỗi đó), không còn ô dán chuỗi ở từng dòng.
   const callSuggest = async (
     orderId: string,
-    raw: string,
   ): Promise<{ ok: true; data: SuggestResponse } | { ok: false; message: string }> => {
     let response: Response;
     try {
       response = await fetch("/api/address/suggest", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(raw === "" ? { orderId } : { orderId, raw }),
+        body: JSON.stringify({ orderId }),
       });
     } catch {
       return { ok: false, message: "Không gọi được API." };
@@ -755,14 +807,13 @@ export default function AddressSplitClient({
 
   const suggestOne = async (order: ApiOrderDetail, openModalOnMedium = true) => {
     if ((aiBusy[order.id] ?? false) || aiAllBusy) return;
-    const raw = (rawInputs[order.id] ?? "").trim();
     setAiBusy((prev) => ({ ...prev, [order.id]: true }));
     setSuggestErrors((prev) => {
       const next = { ...prev };
       delete next[order.id];
       return next;
     });
-    const result = await callSuggest(order.id, raw);
+    const result = await callSuggest(order.id);
     setAiBusy((prev) => ({ ...prev, [order.id]: false }));
     if (!result.ok) {
       setSuggestErrors((prev) => ({ ...prev, [order.id]: result.message }));
@@ -779,11 +830,45 @@ export default function AddressSplitClient({
     }
     if (data.proposal && openModalOnMedium) {
       openAiModal(order, data);
+      return;
+    }
+    if (data.splitError) {
+      // Tách lỗi: lưu lỗi lên đơn để đơn sang tab Lỗi phân tách.
+      const saved = await patchSplitError(order.id, data.splitError);
+      if (!saved.ok) {
+        setPendingError(`Đơn ${order.id}: ${saved.message}`);
+        return;
+      }
+      setPendingNote(`Đơn ${order.id} lỗi phân tách, đã chuyển sang tab Lỗi phân tách để sửa tay.`);
+      router.refresh();
+      return;
+    }
+    if (data.after.trust < 70) {
+      // Tin cậy thấp (không có đề xuất áp dụng được): lưu phần tách được
+      // kèm chuỗi thô để đơn sang tab Lỗi phân tách, sửa tay ở đó.
+      const after = data.after.address;
+      const saved = await patchAddress(
+        order.id,
+        {
+          province: after.province ?? "",
+          ward: after.ward ?? "",
+          street: after.street ?? "",
+        },
+        order.address?.raw,
+      );
+      if (!saved.ok) {
+        setPendingError(`Đơn ${order.id}: ${saved.message}`);
+        return;
+      }
+      setPendingNote(`Đơn ${order.id} tin cậy thấp (${data.after.trust}%), đã chuyển sang tab Lỗi phân tách để sửa tay.`);
+      router.refresh();
+      return;
     }
   };
 
-  // Gợi ý tuần tự cho tối đa 20 đơn đang lọc: mức cao tự áp dụng, mức
-  // giữa giữ đề xuất chờ duyệt ở từng dòng, mức thấp chỉ hiện lý do.
+  // AI phân tách tuần tự cho tối đa 20 đơn đang lọc: mức cao tự áp dụng,
+  // mức giữa giữ đề xuất chờ duyệt ở từng dòng, mức thấp và lỗi phân tách
+  // thì lưu lên đơn để đơn sang tab Lỗi phân tách.
   const suggestAll = async () => {
     if (aiAllBusy || pendingBusy) return;
     const targets = filteredPending.slice(0, AI_SUGGEST_ALL_LIMIT);
@@ -797,8 +882,7 @@ export default function AddressSplitClient({
     let splitErrors = 0;
     let failed = 0;
     for (const order of targets) {
-      const raw = (rawInputs[order.id] ?? "").trim();
-      const result = await callSuggest(order.id, raw);
+      const result = await callSuggest(order.id);
       if (!result.ok) {
         failed += 1;
         setSuggestErrors((prev) => ({ ...prev, [order.id]: result.message }));
@@ -808,16 +892,28 @@ export default function AddressSplitClient({
       setSuggestions((prev) => ({ ...prev, [order.id]: data }));
       if (data.applied) applied += 1;
       else if (data.proposal) waiting += 1;
-      else {
+      else if (data.splitError) {
+        splitErrors += 1;
+        await patchSplitError(order.id, data.splitError);
+      } else {
         low += 1;
-        if (data.splitError) splitErrors += 1;
+        const after = data.after.address;
+        await patchAddress(
+          order.id,
+          {
+            province: after.province ?? "",
+            ward: after.ward ?? "",
+            street: after.street ?? "",
+          },
+          order.address?.raw,
+        );
       }
     }
     setAiAllBusy(false);
-    const parts: string[] = [`Đã gợi ý ${targets.length} đơn.`];
+    const parts: string[] = [`Đã phân tách ${targets.length} đơn.`];
     if (applied > 0) parts.push(`${applied} đơn đã tự áp dụng.`);
     if (waiting > 0) parts.push(`${waiting} đơn chờ duyệt, bấm Duyệt ở từng dòng để xem.`);
-    if (low > 0) parts.push(`${low} đơn mức thấp, nhập tay.`);
+    if (low > 0) parts.push(`${low} đơn mức thấp, xem tab Lỗi phân tách để sửa tay.`);
     if (splitErrors > 0) parts.push(`${splitErrors} đơn lỗi phân tách, xem tab Lỗi phân tách để sửa tay.`);
     if (failed > 0) parts.push(`${failed} đơn lỗi.`);
     setPendingNote(parts.join(" "));
@@ -1086,63 +1182,6 @@ export default function AddressSplitClient({
       headerClassName: "w-[139px]",
     },
     {
-      key: "ai",
-      header: "AI gợi ý",
-      render: (order) => {
-        const raw = rawInputs[order.id] ?? "";
-        const busy = aiBusy[order.id] ?? false;
-        const suggestion = suggestions[order.id];
-        const error = suggestErrors[order.id];
-        return (
-          <div className="flex w-[230px] flex-col gap-1.5">
-            <input
-              type="text"
-              value={raw}
-              onChange={(event) =>
-                setRawInputs((prev) => ({ ...prev, [order.id]: event.target.value }))
-              }
-              aria-label={`Địa chỉ khách ghi cho ${order.id}`}
-              placeholder="Địa chỉ khách ghi (dán chuỗi)"
-              className="h-8 w-full rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-gray-500"
-            />
-            <div className="flex gap-1.5">
-              <button
-                type="button"
-                disabled={busy || aiAllBusy}
-                onClick={() => suggestOne(order)}
-                title="Gợi ý chuẩn hóa địa chỉ cho đơn này"
-                className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                AI gợi ý
-              </button>
-              {suggestion && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSuggestions((prev) => {
-                      const next = { ...prev };
-                      delete next[order.id];
-                      return next;
-                    })
-                  }
-                  className="flex h-8 items-center rounded-md border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
-                >
-                  Ẩn
-                </button>
-              )}
-            </div>
-            {busy && <p className="text-xs text-gray-500">Đang gợi ý...</p>}
-            {error && <p className="text-xs text-red-700">{error}</p>}
-            {suggestion && (
-              <AiResult suggestion={suggestion} onReview={() => openAiModal(order, suggestion)} />
-            )}
-          </div>
-        );
-      },
-      cellClassName: "!whitespace-normal",
-      headerClassName: "w-[230px]",
-    },
-    {
       key: "trust",
       header: "Độ tin cậy",
       render: (order) =>
@@ -1168,19 +1207,41 @@ export default function AddressSplitClient({
       header: "Hành động",
       render: (order) => {
         const complete = splitComplete(splitFor(order));
+        const busy = aiBusy[order.id] ?? false;
+        const suggestion = suggestions[order.id];
+        const error = suggestErrors[order.id];
         return (
-          <button
-            type="button"
-            disabled={!complete || pendingBusy}
-            onClick={() => splitOne(order)}
-            title={complete ? "Tách địa chỉ đơn này" : "Chọn đủ tỉnh/thành phố và xã/phường trước"}
-            className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Tách
-          </button>
+          <div className="flex w-[190px] flex-col gap-1.5">
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                disabled={!complete || pendingBusy}
+                onClick={() => splitOne(order)}
+                title={complete ? "Tách địa chỉ đơn này" : "Chọn đủ tỉnh/thành phố và xã/phường trước"}
+                className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Tách
+              </button>
+              <button
+                type="button"
+                disabled={busy || aiAllBusy || pendingBusy}
+                onClick={() => suggestOne(order)}
+                title="AI phân tách chuỗi địa chỉ khách ghi cho đơn này"
+                className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Tách bằng AI
+              </button>
+            </div>
+            {busy && <p className="text-xs text-gray-500">Đang phân tách...</p>}
+            {error && <p className="text-xs text-red-700">{error}</p>}
+            {suggestion && !suggestion.splitError && (
+              <AiResult suggestion={suggestion} onReview={() => openAiModal(order, suggestion)} />
+            )}
+          </div>
         );
       },
-      headerClassName: "w-[79px]",
+      cellClassName: "!whitespace-normal",
+      headerClassName: "w-[190px]",
     },
   ];
 
@@ -1359,13 +1420,6 @@ export default function AddressSplitClient({
 
   const aiEditComplete = aiEditProvince !== "" && aiEditWard !== "";
 
-  // Đơn lỗi phân tách: lần gợi ý gần nhất trả splitError. Người dùng sửa
-  // tay ở phần này (chung ô nhập với bảng chờ tách) rồi bấm Tách; đơn đã
-  // tách xong sẽ rời khỏi tab chờ tách sau khi tải lại.
-  const splitErrorOrders = pendingOrders.filter(
-    (order) => suggestions[order.id]?.splitError !== undefined,
-  );
-
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-lg font-bold text-gray-900">Phân tách địa chỉ</h1>
@@ -1420,13 +1474,13 @@ export default function AddressSplitClient({
               type="button"
               onClick={suggestAll}
               disabled={filteredPending.length === 0 || aiAllBusy || pendingBusy}
-              title="Gợi ý chuẩn hóa cho tối đa 20 đơn đang lọc"
+              title="AI phân tách cho tối đa 20 đơn đang lọc"
               className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              AI gợi ý tất cả
+              AI phân tách
             </button>
             <p className="text-[13px] text-gray-500">
-              Tách địa chỉ cho các đơn đã chọn, tin cậy mới do API tính lại. AI gợi ý tối đa 20 đơn đang lọc mỗi lần; mức cao tự áp dụng, mức giữa chờ duyệt.
+              Tách địa chỉ cho các đơn đã chọn, tin cậy mới do API tính lại. AI phân tách tối đa 20 đơn đang lọc mỗi lần; mức cao tự áp dụng, mức giữa chờ duyệt, lỗi và mức thấp sang tab Lỗi phân tách.
             </p>
           </div>
           {pendingNote !== null && (
@@ -1608,17 +1662,41 @@ export default function AddressSplitClient({
               </div>
               <ul className="flex flex-col divide-y divide-gray-200">
                 {splitErrorOrders.map((order) => {
-                  const splitError = suggestions[order.id]!.splitError!;
+                  const splitError = order.address?.splitError ?? null;
                   const split = splitFor(order);
                   const complete = splitComplete(split);
+                  const suggestion = suggestions[order.id];
                   return (
                     <li key={order.id} className="flex flex-col gap-2 px-5 py-3">
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-medium text-gray-900">{order.id}</span>
                         <span className="text-gray-500">{order.customer}</span>
                         <span className="text-gray-700">{joinAddress(order)}</span>
+                        {order.addressTrust !== null && (
+                          <span className={`font-bold ${trustTextClass(order.addressTrust)}`}>
+                            {trustLabel(order)}
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs font-medium text-red-800">{splitError.message}</p>
+                      {splitError !== null ? (
+                        <div className="flex flex-col gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-gray-700">
+                          <p className="font-semibold text-red-800">Lỗi phân tách.</p>
+                          <p>{splitError.message}</p>
+                          {suggestion?.after.reasons !== undefined && suggestion.after.reasons.length > 0 && (
+                            <ul className="list-disc pl-4">
+                              {suggestion.after.reasons.map((reason, index) => (
+                                <li key={index}>{reason}</li>
+                              ))}
+                            </ul>
+                          )}
+                          <p>Sửa tay ở dòng này rồi bấm Tách.</p>
+                        </div>
+                      ) : (
+                        <p className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-gray-700">
+                          <span className="font-semibold text-red-800">Mức thấp, nhập tay.</span>{" "}
+                          Tin cậy chỉ {order.addressTrust ?? "-"}%, chưa đủ để xác nhận. Sửa tay tỉnh/thành phố, xã/phường và địa chỉ chi tiết rồi bấm Tách.
+                        </p>
+                      )}
                       <div className="flex flex-wrap items-end gap-2">
                         <div className="w-[160px] max-w-full">
                           <MiniSelect
@@ -1659,19 +1737,24 @@ export default function AddressSplitClient({
                         >
                           Tách
                         </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSuggestions((prev) => {
-                              const next = { ...prev };
-                              delete next[order.id];
-                              return next;
-                            })
-                          }
-                          className="flex h-8 items-center rounded-md border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
-                        >
-                          Ẩn
-                        </button>
+                        {splitError !== null && (
+                          <button
+                            type="button"
+                            disabled={pendingBusy}
+                            onClick={async () => {
+                              const saved = await patchSplitError(order.id, null);
+                              if (!saved.ok) {
+                                setPendingError(`Đơn ${order.id}: ${saved.message}`);
+                                return;
+                              }
+                              setPendingNote(`Đã ẩn lỗi phân tách của đơn ${order.id}, đơn về lại tab Chờ tách.`);
+                              router.refresh();
+                            }}
+                            className="flex h-8 items-center rounded-md border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                          >
+                            Ẩn
+                          </button>
+                        )}
                       </div>
                     </li>
                   );
@@ -1680,7 +1763,7 @@ export default function AddressSplitClient({
             </section>
           ) : (
             <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
-              Không có đơn lỗi phân tách. Đơn nào AI gợi ý mà không xác định được địa chỉ sẽ hiện ở đây để sửa tay.
+              Không có đơn lỗi phân tách. Đơn nào AI phân tách mà không xác định được địa chỉ sẽ hiện ở đây để sửa tay.
             </p>
           )}
         </>

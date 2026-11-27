@@ -68,6 +68,17 @@ function buildOrders(): {
         },
       },
     ],
+    [
+      'DH-1004',
+      {
+        id: 'DH-1004',
+        state: 'Mới tạo',
+        // Đơn chưa tách: chỉ lưu chuỗi thô khách ghi, chưa có điểm tin cậy.
+        address: {
+          raw: 'Số 12 ngõ 34 phố Hàng Bè, p. trần hưng đạo, q. hoàn kiếm, hà nội',
+        },
+      },
+    ],
   ]);
   const findOne = jest.fn(async (id: string) => {
     const order = orders.get(id);
@@ -183,6 +194,19 @@ describe('AddressProposalService.suggest', () => {
     expect(response.proposal).toBeNull();
     expect(response.applied).toBe(false);
     expect(response.note).toContain('đã đạt độ tin cậy cao');
+  });
+
+  it('chỉ gửi orderId thì tách chuỗi thô đã lưu trên đơn (đơn chưa tách)', async () => {
+    const { service, orders } = await buildService();
+    const response = await service.suggest(CALLER, { orderId: 'DH-1004' });
+    expect(response.applied).toBe(true);
+    expect(response.after.address).toEqual({
+      province: 'Hà Nội',
+      ward: 'Phường Cửa Nam',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    });
+    expect(response.after.trust).toBe(100);
+    expect(orders.get('DH-1004')!.address.ward).toBe('Phường Cửa Nam');
   });
 
   it('đơn đã đóng: không tự áp dụng, không lưu đề xuất', async () => {

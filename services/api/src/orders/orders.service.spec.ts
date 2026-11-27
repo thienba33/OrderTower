@@ -627,7 +627,7 @@ describe('OrdersService', () => {
     ).rejects.toThrow('chưa có địa chỉ');
   });
 
-  it('tạo đơn bằng chuỗi thô thì tách bằng dữ liệu hành chính rồi lưu phần đã tách', async () => {
+  it('tạo đơn bằng chuỗi thô thì chỉ lưu nguyên văn, chưa tách, chưa chấm điểm', async () => {
     const { orders } = await buildServices();
     const order = await orders.create({
       ...createInput('key-1'),
@@ -636,22 +636,54 @@ describe('OrdersService', () => {
       },
     }, COORDINATOR);
     expect(order.address).toEqual({
-      province: 'Hà Nội',
-      ward: 'Phường Cửa Nam',
-      street: 'Số 12 ngõ 34 phố Hàng Bè',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, p. trần hưng đạo, q. hoàn kiếm, hà nội',
     });
-    expect(order.addressTrust).toBe(100);
-    expect(order.addressLevel).toBe('Tin cậy cao');
+    expect(order.addressTrust).toBeNull();
+    expect(order.addressLevel).toBeNull();
   });
 
-  it('chuỗi thô không xác định được thì lưu phần tách được, tin cậy thấp', async () => {
+  it('chuỗi thô không xác định được thì vẫn chỉ lưu nguyên văn, chưa chấm điểm', async () => {
     const { orders } = await buildServices();
     const order = await orders.create({
       ...createInput('key-1'),
       address: { raw: 'Phường Không Có, Hà Nội' },
     }, COORDINATOR);
-    expect(order.address).toEqual({ province: 'Hà Nội' });
-    expect(order.addressTrust).toBe(40);
+    expect(order.address).toEqual({ raw: 'Phường Không Có, Hà Nội' });
+    expect(order.addressTrust).toBeNull();
+  });
+
+  it('ghi lỗi phân tách thì giữ nguyên địa chỉ + điểm tin cậy, chỉ thêm lỗi', async () => {
+    const { orders } = await buildServices();
+    const order = await orders.create({
+      ...createInput('key-1'),
+      address: { raw: 'Phường Không Có, Hà Nội' },
+    }, COORDINATOR);
+    const splitError = {
+      code: 'ward-not-in-province' as const,
+      message: "Phường 'Phường Không Có' không có trong tỉnh 'Hà Nội'.",
+    };
+    const updated = await orders.update(
+      order.id,
+      { address: { splitError } },
+      COORDINATOR,
+    );
+    expect(updated.address).toEqual({
+      raw: 'Phường Không Có, Hà Nội',
+      splitError,
+    });
+    expect(updated.addressTrust).toBeNull();
+    // Sửa lại địa chỉ bằng phần đã tách thì xóa lỗi và chấm điểm lại.
+    const fixed = await orders.update(
+      order.id,
+      { address: { province: 'Hà Nội', ward: 'Phường Cửa Nam', street: 'Số 12 ngõ 34 phố Hàng Bè' } },
+      COORDINATOR,
+    );
+    expect(fixed.address).toEqual({
+      province: 'Hà Nội',
+      ward: 'Phường Cửa Nam',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    });
+    expect(fixed.addressTrust).toBe(100);
   });
 
   it('đóng đơn thiếu hướng xử lý thì báo 400, có thì ghi vào lịch sử', async () => {
