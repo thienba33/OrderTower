@@ -1464,6 +1464,11 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
                   {aiModal.response.after.trust}% - {aiModal.response.after.level}
                 </span>
               </p>
+              <p className="text-xs text-gray-500">
+                {aiModal.response.source === "llm"
+                  ? "Gợi ý từ LLM (đã kiểm lại phường với danh mục)."
+                  : "Gợi ý từ luật."}
+              </p>
               <ul className="list-disc pl-5 text-sm text-gray-700">
                 {aiModal.response.after.reasons.map((reason, index) => (
                   <li key={index}>{reason}</li>

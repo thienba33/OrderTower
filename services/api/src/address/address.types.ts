@@ -94,6 +94,20 @@ export type AddressProposalStatus =
   | 'Đã từ chối'
   | 'Tự áp dụng';
 
+// Nguồn của đề xuất chuẩn hóa: luật xác định, hay LLM (Workers AI) phân
+// tích rồi luật kiểm lại phường với danh mục.
+export type SuggestionSource = 'rules' | 'llm';
+
+// Kết quả LLM phân tích chuỗi địa chỉ thô (Workers AI). Các trường là chữ
+// gốc LLM trả về, chưa kiểm lại với danh mục; service gọi phải kiểm lại
+// tỉnh/phường với danh mục (cùng luật suggest) trước khi dùng, phường
+// không có trong danh mục thì bỏ.
+export interface LlmParsedAddress {
+  province?: string;
+  ward?: string;
+  street?: string;
+}
+
 // 1 ảnh chụp địa chỉ kèm điểm tin cậy và lý do, lưu trong before_json /
 // after_json của đề xuất (dạng JSONB, xem migration 018).
 export interface AddressSnapshot {
@@ -107,6 +121,7 @@ export interface AddressProposal {
   id: string;
   orderId: string;
   status: AddressProposalStatus;
+  source: SuggestionSource;
   before: AddressSnapshot;
   after: AddressSnapshot;
   requestedBy: string;
@@ -133,6 +148,9 @@ export interface SuggestResponse {
   before: AddressSnapshot;
   after: AddressSnapshot;
   choices?: { wards: string[] };
+  // Nguồn của đề xuất (luật hay LLM); khi địa chỉ đã đạt mức cao thì
+  // không có đề xuất nên nguồn là 'rules' (điểm đã chấm bằng luật).
+  source: SuggestionSource;
   // true chỉ khi mức cao và đã tự áp dụng vào đơn.
   applied: boolean;
   // Ghi chú thêm, ví dụ đơn đã đóng nên không tự áp dụng được.

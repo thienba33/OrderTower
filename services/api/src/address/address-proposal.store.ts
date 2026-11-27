@@ -62,14 +62,15 @@ export class PostgresAddressProposalStore implements AddressProposalStore {
     // services/api/src/orders/orders.store.ts).
     await this.db.query(
       `INSERT INTO address_proposals
-         (id, order_id, status, before_json, after_json,
+         (id, order_id, status, source, before_json, after_json,
           requested_by, requested_at, decided_by, decided_at,
           decision_reason, applied_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         proposal.id,
         proposal.orderId,
         proposal.status,
+        proposal.source,
         JSON.stringify(proposal.before),
         JSON.stringify(proposal.after),
         proposal.requestedBy,
@@ -132,6 +133,7 @@ function toProposal(row: Record<string, unknown>): AddressProposal {
     id: row.id as string,
     orderId: row.order_id as string,
     status: row.status as AddressProposal['status'],
+    source: (row.source as AddressProposal['source']) ?? 'rules',
     before: parseSnapshot(row.before_json),
     after: parseSnapshot(row.after_json),
     requestedBy: row.requested_by as string,

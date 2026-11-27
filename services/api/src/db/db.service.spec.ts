@@ -15,7 +15,7 @@ describe('DbService', () => {
     }
   });
 
-  it('migration 001 đến 018 áp dụng được và chạy lại là không làm gì thêm', async () => {
+  it('migration 001 đến 019 áp dụng được và chạy lại là không làm gì thêm', async () => {
     const db = await createTestDbService();
     const first = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
@@ -39,6 +39,7 @@ describe('DbService', () => {
       '016_transactions_outbox',
       '017_tenancy_rls',
       '018_address_proposals',
+      '019_address_proposals_source',
     ]);
     for (const table of [
       'audit_log',
@@ -83,7 +84,7 @@ describe('DbService', () => {
     const second = await db.query(
       'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(second.rows).toHaveLength(18);
+    expect(second.rows).toHaveLength(19);
     expect((second.rows as Array<{ version: string }>).map((row) => row.version)).toEqual([
       '001_init',
       '002_shipments',
@@ -103,6 +104,7 @@ describe('DbService', () => {
       '016_transactions_outbox',
       '017_tenancy_rls',
       '018_address_proposals',
+      '019_address_proposals_source',
     ]);
   });
 });

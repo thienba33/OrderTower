@@ -8,6 +8,7 @@ function makeProposal(overrides: Partial<AddressProposal> = {}): AddressProposal
     id: 'AC-1001',
     orderId: 'DH-1001',
     status: 'Chờ duyệt',
+    source: 'rules',
     before: {
       address: {
         province: 'Hà Nội',

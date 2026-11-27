@@ -41,6 +41,7 @@ export interface AddressProposal {
   id: string;
   orderId: string;
   status: AddressProposalStatus;
+  source: "rules" | "llm";
   before: AddressSnapshot;
   after: AddressSnapshot;
   requestedBy: string;
@@ -55,12 +56,14 @@ export interface AddressProposal {
 
 // Kết quả POST /api/address/suggest. proposal null khi mức thấp (không
 // có đề xuất áp dụng được), khi địa chỉ đã đạt mức cao, hoặc khi đơn đã
-// đóng; applied true chỉ khi mức cao và đã tự áp dụng vào đơn.
+// đóng; applied true chỉ khi mức cao và đã tự áp dụng vào đơn. source ghi
+// đề xuất đến từ luật hay từ LLM (đã kiểm lại phường với danh mục).
 export interface SuggestResponse {
   proposal: AddressProposal | null;
   before: AddressSnapshot;
   after: AddressSnapshot;
   choices?: { wards: string[] };
+  source: "rules" | "llm";
   applied: boolean;
   note?: string;
 }

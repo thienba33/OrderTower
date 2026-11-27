@@ -84,11 +84,27 @@ function buildOrders(): {
   return { orders, findOne, update };
 }
 
-async function buildService(): Promise<{
+type LlmStub = {
+  enabled: boolean;
+  parseAddress: jest.Mock;
+};
+
+function buildLlmStub(
+  parse: (raw: string) => unknown,
+  enabled = true,
+): LlmStub {
+  return {
+    enabled,
+    parseAddress: jest.fn(async (raw: string) => parse(raw)),
+  };
+}
+
+async function buildService(llm?: LlmStub): Promise<{
   service: AddressProposalService;
   store: InMemoryAddressProposalStore;
   orders: Map<string, StubOrder>;
   auditAppend: jest.Mock;
+  llm?: LlmStub;
 }> {
   const addressService = new AddressService();
   await addressService.onModuleInit();
@@ -100,9 +116,10 @@ async function buildService(): Promise<{
     addressService,
     { findOne, update } as never,
     { append: auditAppend } as never,
+    llm as never,
   );
   await service.onModuleInit();
-  return { service, store, orders, auditAppend };
+  return { service, store, orders, auditAppend, llm };
 }
 
 describe('AddressProposalService.suggest', () => {
@@ -343,5 +360,172 @@ describe('AddressProposalService.decide / getProposal', () => {
     await expect(
       service.decide(CALLER, 'AC-9999', { decision: 'approved' }),
     ).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('AddressProposalService.suggest (LLM lai)', () => {
+  it('LLM sửa được phường viết tắt mà luật không khớp, tự áp dụng, ghi audit llm-suggested', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Hoàn Kiếm',
+      street: 'Số 1 phố Hàng Bè',
+    }));
+    const { service, store, auditAppend } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 1 phố Hàng Bè, p. HK, Hà Nội',
+    });
+    expect(llm.parseAddress).toHaveBeenCalledWith(
+      'Số 1 phố Hàng Bè, p. HK, Hà Nội',
+    );
+    expect(response.source).toBe('llm');
+    expect(response.applied).toBe(true);
+    expect(response.proposal).not.toBeNull();
+    expect(response.proposal!.status).toBe('Tự áp dụng');
+    expect(response.proposal!.source).toBe('llm');
+    expect(response.after.address.ward).toBe('Phường Hoàn Kiếm');
+    expect(response.after.trust).toBe(100);
+    expect((await store.findById(response.proposal!.id))!.source).toBe('llm');
+    expect(auditAppend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'address-proposal.llm-suggested',
+        orderId: 'DH-1001',
+      }),
+    );
+    expect(auditAppend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'address-proposal.auto-applied',
+        orderId: 'DH-1001',
+      }),
+    );
+  });
+
+  it('LLM điền được phường còn thiếu mà luật không suy ra được', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Cửa Nam',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    }));
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Hà Nội',
+    });
+    expect(response.source).toBe('llm');
+    expect(response.applied).toBe(true);
+    expect(response.after.address.ward).toBe('Phường Cửa Nam');
+    expect(response.after.trust).toBe(100);
+  });
+
+  it('LLM mức giữa thì lưu đề xuất Chờ duyệt, ghi audit llm-suggested', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Hoàn Kiếm',
+      street: '',
+    }));
+    const { service, store, auditAppend } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'p. HK, Hà Nội',
+    });
+    expect(response.source).toBe('llm');
+    expect(response.applied).toBe(false);
+    expect(response.proposal).not.toBeNull();
+    expect(response.proposal!.status).toBe('Chờ duyệt');
+    expect(response.proposal!.source).toBe('llm');
+    expect(response.after.trust).toBe(80);
+    expect((await store.findById(response.proposal!.id))!.source).toBe('llm');
+    expect(auditAppend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'address-proposal.created',
+        orderId: 'DH-1001',
+      }),
+    );
+    expect(auditAppend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'address-proposal.llm-suggested',
+        orderId: 'DH-1001',
+      }),
+    );
+  });
+
+  it('LLM bịa phường không có trong danh mục thì bỏ, dùng luật', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Không Có Thật',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    }));
+    const { service, auditAppend } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Hà Nội',
+    });
+    expect(llm.parseAddress).toHaveBeenCalled();
+    expect(response.source).toBe('rules');
+    expect(response.proposal).toBeNull();
+    expect(response.applied).toBe(false);
+    expect(response.after.trust).toBe(60);
+    expect(auditAppend).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'address-proposal.llm-suggested' }),
+    );
+  });
+
+  it('LLM lỗi (trả null) thì dùng luật', async () => {
+    const llm = buildLlmStub(() => null);
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Hà Nội',
+    });
+    expect(response.source).toBe('rules');
+    expect(response.after.trust).toBe(60);
+  });
+
+  it('LLM ném lỗi thì dùng luật, không làm hỏng suggest', async () => {
+    const llm = buildLlmStub(() => {
+      throw new Error('Workers AI timeout');
+    });
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, p. trần hưng đạo, q. hoàn kiếm, hà nội',
+    });
+    expect(response.source).toBe('rules');
+    expect(response.applied).toBe(true);
+    expect(response.after.trust).toBe(100);
+  });
+
+  it('LLM chưa cấu hình (enabled = false) thì không gọi parseAddress, dùng luật', async () => {
+    const llm = buildLlmStub(
+      () => ({
+        province: 'Hà Nội',
+        ward: 'Phường Hoàn Kiếm',
+        street: 'Số 1 phố Hàng Bè',
+      }),
+      false,
+    );
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 1 phố Hàng Bè, p. HK, Hà Nội',
+    });
+    expect(llm.parseAddress).not.toHaveBeenCalled();
+    expect(response.source).toBe('rules');
+    expect(response.proposal).toBeNull();
+    expect(response.after.trust).toBe(60);
+  });
+
+  it('địa chỉ đã đạt mức cao thì không gọi LLM', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Hoàn Kiếm',
+      street: 'Số 1 phố Hàng Bè',
+    }));
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, { orderId: 'DH-1003' });
+    expect(llm.parseAddress).not.toHaveBeenCalled();
+    expect(response.source).toBe('rules');
+    expect(response.proposal).toBeNull();
+    expect(response.note).toContain('đã đạt độ tin cậy cao');
   });
 });

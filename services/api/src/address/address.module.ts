@@ -5,6 +5,7 @@ import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
 import { OrdersModule } from '../orders/orders.module';
 import { AddressController } from './address.controller';
+import { AddressLlmService } from './address-llm.service';
 import { AddressProposalService } from './address-proposal.service';
 import {
   ADDRESS_PROPOSAL_STORE,
@@ -24,6 +25,7 @@ import { AddressService } from './address.service';
   controllers: [AddressController],
   providers: [
     AddressService,
+    AddressLlmService,
     AddressProposalService,
     {
       provide: ADDRESS_PROPOSAL_STORE,

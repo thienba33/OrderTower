@@ -70,6 +70,14 @@ export class AddressService implements OnModuleInit {
     return suggest(parts, this.gazetteer!, this.legacyMap);
   }
 
+  // Tách chuỗi thô thành các phần theo nội dung (xem splitRawAddress);
+  // dùng khi cần phần đã tách mà chưa cần đề xuất (ảnh chụp "trước" khi
+  // LLM phân tích, hoặc đường lui luật).
+  splitRaw(raw: string): { parts: AddressParts; notes: string[] } {
+    this.assertLoaded();
+    return splitRawAddress(raw, this.gazetteer!, this.legacyMap);
+  }
+
   // Đề xuất chuẩn hóa từ chuỗi thô dán vào (ví dụ "Số 12 ngõ 34 phố Hàng
   // Bè, p. trần hưng đạo, q. hoàn kiếm, hà nội"): tách theo nội dung rồi
   // đề xuất như suggestFromParts. Trả kèm các phần đã tách (để ghi ảnh
