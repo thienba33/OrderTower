@@ -3,15 +3,15 @@
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
   "version": 1,
-  "serialNumber": "urn:uuid:183fedb1-39de-43d0-952f-73f78c723da2",
+  "serialNumber": "urn:uuid:a94aa069-0f4f-48f0-9e66-a41f9727b21c",
   "metadata": {
-    "timestamp": "2026-11-26T07:39:25.388Z",
+    "timestamp": "2026-11-27T08:37:51.047Z",
     "tools": {
       "components": [
         {
           "type": "application",
           "name": "npm",
-          "version": "11.19.1"
+          "version": "11.17.0"
         },
         {
           "type": "application",
@@ -962,6 +962,114 @@
         {
           "name": "cdx:npm:package:path",
           "value": "node_modules/jose"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "parquetjs-lite",
+      "version": "0.8.7",
+      "bom-ref": "ordertower-api@0.1.0|parquetjs-lite@0.8.7",
+      "author": "ironSource",
+      "description": "fully asynchronous, pure JavaScript implementation of the Parquet file format",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/parquetjs-lite@0.8.7",
+      "externalReferences": [
+        {
+          "url": "git://github.com/ZJONSSON/parquetjs.git",
+          "type": "vcs",
+          "comment": "as detected from PackageJson property \"repository.url\""
+        },
+        {
+          "url": "https://github.com/ZJONSSON/parquetjs",
+          "type": "website",
+          "comment": "as detected from PackageJson property \"homepage\""
+        },
+        {
+          "url": "https://github.com/ZJONSSON/parquetjs/issues",
+          "type": "issue-tracker",
+          "comment": "as detected from PackageJson property \"bugs.url\""
+        },
+        {
+          "url": "https://registry.npmjs.org/parquetjs-lite/-/parquetjs-lite-0.8.7.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "2f4b5d1f3bf2d1bb4b26f00566f8ced3eaeef852fcb473ea89513dd0a127332e630eabfe5a6132f488bc4a3882f9ec403a2dd11b23d821d809bc58a363211a84"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:constraint:engine:node",
+          "value": ">=7.6"
+        },
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/parquetjs-lite"
+        }
+      ],
+      "components": [
+        {
+          "type": "library",
+          "name": "node-int64",
+          "version": "0.3.3",
+          "bom-ref": "ordertower-api@0.1.0|parquetjs-lite@0.8.7|node-int64@0.3.3",
+          "author": "Robert Kieffer",
+          "description": "Support for representing 64-bit integers in JavaScript",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT",
+                "acknowledgement": "declared"
+              }
+            }
+          ],
+          "purl": "pkg:npm/node-int64@0.3.3",
+          "externalReferences": [
+            {
+              "url": "git+https://github.com/broofa/node-int64.git",
+              "type": "vcs",
+              "comment": "as detected from PackageJson property \"repository.url\""
+            },
+            {
+              "url": "https://github.com/broofa/node-int64#readme",
+              "type": "website",
+              "comment": "as detected from PackageJson property \"homepage\""
+            },
+            {
+              "url": "https://github.com/broofa/node-int64/issues",
+              "type": "issue-tracker",
+              "comment": "as detected from PackageJson property \"bugs.url\""
+            },
+            {
+              "url": "https://registry.npmjs.org/node-int64/-/node-int64-0.3.3.tgz",
+              "type": "distribution",
+              "hashes": [
+                {
+                  "alg": "SHA-512",
+                  "content": "6cb74d3a9e52632a9f0f3fecb061edd8e4e0f2efa31240b1e04a19233a6ba9ea2714852195206b2aee347bfc7a848158271e1912deb8ffd21927269fbe1199af"
+                }
+              ],
+              "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+            }
+          ],
+          "properties": [
+            {
+              "name": "cdx:npm:package:path",
+              "value": "node_modules/parquetjs-lite/node_modules/node-int64"
+            }
+          ]
         }
       ]
     },
@@ -4667,6 +4775,159 @@
         {
           "name": "cdx:npm:package:path",
           "value": "node_modules/jest-cli"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "int53",
+      "version": "0.2.4",
+      "bom-ref": "ordertower-api@0.1.0|int53@0.2.4",
+      "author": "Danny Coates",
+      "description": "silly 53bit integer buffer serialization",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/int53@0.2.4",
+      "externalReferences": [
+        {
+          "url": "git://github.com/dannycoates/int53.git",
+          "type": "vcs",
+          "comment": "as detected from PackageJson property \"repository.url\""
+        },
+        {
+          "url": "https://github.com/dannycoates/int53#readme",
+          "type": "website",
+          "comment": "as detected from PackageJson property \"homepage\""
+        },
+        {
+          "url": "https://github.com/dannycoates/int53/issues",
+          "type": "issue-tracker",
+          "comment": "as detected from PackageJson property \"bugs.url\""
+        },
+        {
+          "url": "https://registry.npmjs.org/int53/-/int53-0.2.4.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "6b98e529fb52ec750e864532603ee3dac27f667bd688d9594b595d47e83589f43efd4b995c813e61373f94ad6a1a3fc6c0053917c6747b5795ab6b7527939bda"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/int53"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "snappyjs",
+      "version": "0.6.1",
+      "bom-ref": "ordertower-api@0.1.0|snappyjs@0.6.1",
+      "author": "Zhipeng Jia",
+      "description": "JavaScript implementation of Google's Snappy compression library",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/snappyjs@0.6.1",
+      "externalReferences": [
+        {
+          "url": "git+https://github.com/zhipeng-jia/snappyjs.git",
+          "type": "vcs",
+          "comment": "as detected from PackageJson property \"repository.url\""
+        },
+        {
+          "url": "https://github.com/zhipeng-jia/snappyjs#readme",
+          "type": "website",
+          "comment": "as detected from PackageJson property \"homepage\""
+        },
+        {
+          "url": "https://github.com/zhipeng-jia/snappyjs/issues",
+          "type": "issue-tracker",
+          "comment": "as detected from PackageJson property \"bugs.url\""
+        },
+        {
+          "url": "https://registry.npmjs.org/snappyjs/-/snappyjs-0.6.1.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "6082ba23696c1f4ef6504d1a385c7163574f0c24b8dc8e64b6a1e9780b2e2cd616904e691b144659f0cce3fbd251f3735e30b522fceddeac77d4f08b99cf72aa"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/snappyjs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "varint",
+      "version": "5.0.2",
+      "bom-ref": "ordertower-api@0.1.0|varint@5.0.2",
+      "author": "Chris Dickinson",
+      "description": "protobuf-style varint bytes - use msb to create integer values of varying sizes",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/varint@5.0.2",
+      "externalReferences": [
+        {
+          "url": "git://github.com/chrisdickinson/varint.git",
+          "type": "vcs",
+          "comment": "as detected from PackageJson property \"repository.url\""
+        },
+        {
+          "url": "https://github.com/chrisdickinson/varint#readme",
+          "type": "website",
+          "comment": "as detected from PackageJson property \"homepage\""
+        },
+        {
+          "url": "https://github.com/chrisdickinson/varint/issues",
+          "type": "issue-tracker",
+          "comment": "as detected from PackageJson property \"bugs.url\""
+        },
+        {
+          "url": "https://registry.npmjs.org/varint/-/varint-5.0.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "94ac4a606e87d37c82654a4018e3ceb0c706c5dd511c2bb588abc41d80cf993caad87b9e1a10fbdecb0d06aa9059fbd8b34e06f6250546f98054b5b6d09c3aa3"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/varint"
         }
       ]
     },
@@ -25557,10 +25818,10 @@
     },
     {
       "type": "library",
-      "name": "watcher-linux-x64-glibc",
+      "name": "watcher-win32-x64",
       "group": "@parcel",
       "version": "2.6.0",
-      "bom-ref": "ordertower-api@0.1.0|@parcel/watcher-linux-x64-glibc@2.6.0",
+      "bom-ref": "ordertower-api@0.1.0|@parcel/watcher-win32-x64@2.6.0",
       "description": "A native C++ Node module for querying and subscribing to filesystem events. Used by Parcel 2.",
       "scope": "optional",
       "licenses": [
@@ -25571,7 +25832,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40parcel/watcher-linux-x64-glibc@2.6.0",
+      "purl": "pkg:npm/%40parcel/watcher-win32-x64@2.6.0",
       "externalReferences": [
         {
           "url": "git+https://github.com/parcel-bundler/watcher.git",
@@ -25589,12 +25850,12 @@
           "comment": "as detected from PackageJson property \"bugs.url\""
         },
         {
-          "url": "https://registry.npmjs.org/@parcel/watcher-linux-x64-glibc/-/watcher-linux-x64-glibc-2.6.0.tgz",
+          "url": "https://registry.npmjs.org/@parcel/watcher-win32-x64/-/watcher-win32-x64-2.6.0.tgz",
           "type": "distribution",
           "hashes": [
             {
               "alg": "SHA-512",
-              "content": "ba5184eb1e8ecfa880c20ef94fc6104a882e0566ac9e221b5fe416a5a60f7029c33a97565f793ee316c460f6552f13aea0923eb2f2493c3dec123f06ee5ad0dc"
+              "content": "700fbfa575766247f1948717390e5f496a80cf33f20fbf3fc79a9b2bf234bd492b9581c0f13233f8c5e301b1a8ba0b8a5522386ce9a44d2275fe9a154ac82df8"
             }
           ],
           "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
@@ -25611,67 +25872,7 @@
         },
         {
           "name": "cdx:npm:package:path",
-          "value": "node_modules/@parcel/watcher-linux-x64-glibc"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "watcher-linux-x64-musl",
-      "group": "@parcel",
-      "version": "2.6.0",
-      "bom-ref": "ordertower-api@0.1.0|@parcel/watcher-linux-x64-musl@2.6.0",
-      "description": "A native C++ Node module for querying and subscribing to filesystem events. Used by Parcel 2.",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT",
-            "acknowledgement": "declared"
-          }
-        }
-      ],
-      "purl": "pkg:npm/%40parcel/watcher-linux-x64-musl@2.6.0",
-      "externalReferences": [
-        {
-          "url": "git+https://github.com/parcel-bundler/watcher.git",
-          "type": "vcs",
-          "comment": "as detected from PackageJson property \"repository.url\""
-        },
-        {
-          "url": "https://github.com/parcel-bundler/watcher#readme",
-          "type": "website",
-          "comment": "as detected from PackageJson property \"homepage\""
-        },
-        {
-          "url": "https://github.com/parcel-bundler/watcher/issues",
-          "type": "issue-tracker",
-          "comment": "as detected from PackageJson property \"bugs.url\""
-        },
-        {
-          "url": "https://registry.npmjs.org/@parcel/watcher-linux-x64-musl/-/watcher-linux-x64-musl-2.6.0.tgz",
-          "type": "distribution",
-          "hashes": [
-            {
-              "alg": "SHA-512",
-              "content": "b640582aded842b8c82566039eda366203bc31192394c4d2368447cec5e29c1a9b2dd78e3372f7db03d926f219c6a68b31f4a54bfe2c5231ffe924d53ff5c32f"
-            }
-          ],
-          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
-        }
-      ],
-      "properties": [
-        {
-          "name": "cdx:npm:package:constraint:engine:node",
-          "value": ">= 10.0.0"
-        },
-        {
-          "name": "cdx:npm:package:development",
-          "value": "true"
-        },
-        {
-          "name": "cdx:npm:package:path",
-          "value": "node_modules/@parcel/watcher-linux-x64-musl"
+          "value": "node_modules/@parcel/watcher-win32-x64"
         }
       ]
     },
@@ -25963,10 +26164,10 @@
     },
     {
       "type": "library",
-      "name": "resolver-binding-linux-x64-gnu",
+      "name": "resolver-binding-win32-x64-msvc",
       "group": "@unrs",
       "version": "1.13.0",
-      "bom-ref": "ordertower-api@0.1.0|@unrs/resolver-binding-linux-x64-gnu@1.13.0",
+      "bom-ref": "ordertower-api@0.1.0|@unrs/resolver-binding-win32-x64-msvc@1.13.0",
       "description": "UnRS Resolver Node API",
       "scope": "optional",
       "licenses": [
@@ -25977,7 +26178,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40unrs/resolver-binding-linux-x64-gnu@1.13.0",
+      "purl": "pkg:npm/%40unrs/resolver-binding-win32-x64-msvc@1.13.0",
       "externalReferences": [
         {
           "url": "git+https://github.com/unrs/unrs-resolver.git",
@@ -25995,12 +26196,12 @@
           "comment": "as detected from PackageJson property \"bugs.url\""
         },
         {
-          "url": "https://registry.npmjs.org/@unrs/resolver-binding-linux-x64-gnu/-/resolver-binding-linux-x64-gnu-1.13.0.tgz",
+          "url": "https://registry.npmjs.org/@unrs/resolver-binding-win32-x64-msvc/-/resolver-binding-win32-x64-msvc-1.13.0.tgz",
           "type": "distribution",
           "hashes": [
             {
               "alg": "SHA-512",
-              "content": "8b08cb795759a3ff2fe4e280791202fb8550574e39b7510f66be41fc054b814434e0876d36d856ce0ea7a2dd9c3636601f6807a527f87ce5cc98df3768b3b514"
+              "content": "0e92cc940aa5ae4e330552b70e20e3c0a0f4a2aee964dcbef01888051b81caa6fa766e63b1da0b321222ca1ff147bf967a3696ff5522f9781b80c35ae3ecd626"
             }
           ],
           "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
@@ -26013,63 +26214,7 @@
         },
         {
           "name": "cdx:npm:package:path",
-          "value": "node_modules/@unrs/resolver-binding-linux-x64-gnu"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "resolver-binding-linux-x64-musl",
-      "group": "@unrs",
-      "version": "1.13.0",
-      "bom-ref": "ordertower-api@0.1.0|@unrs/resolver-binding-linux-x64-musl@1.13.0",
-      "description": "UnRS Resolver Node API",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT",
-            "acknowledgement": "declared"
-          }
-        }
-      ],
-      "purl": "pkg:npm/%40unrs/resolver-binding-linux-x64-musl@1.13.0",
-      "externalReferences": [
-        {
-          "url": "git+https://github.com/unrs/unrs-resolver.git",
-          "type": "vcs",
-          "comment": "as detected from PackageJson property \"repository.url\""
-        },
-        {
-          "url": "https://github.com/unrs/unrs-resolver",
-          "type": "website",
-          "comment": "as detected from PackageJson property \"homepage\""
-        },
-        {
-          "url": "https://github.com/unrs/unrs-resolver/issues",
-          "type": "issue-tracker",
-          "comment": "as detected from PackageJson property \"bugs.url\""
-        },
-        {
-          "url": "https://registry.npmjs.org/@unrs/resolver-binding-linux-x64-musl/-/resolver-binding-linux-x64-musl-1.13.0.tgz",
-          "type": "distribution",
-          "hashes": [
-            {
-              "alg": "SHA-512",
-              "content": "4ce8757ea3a3caad4e3e886ddc10cb77b63e1de30947077983654d98241c9649c46e3a78a72e46151993e0bfeb3b26c5e407fcab42d3f731ecd961a4c25aadaf"
-            }
-          ],
-          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
-        }
-      ],
-      "properties": [
-        {
-          "name": "cdx:npm:package:development",
-          "value": "true"
-        },
-        {
-          "name": "cdx:npm:package:path",
-          "value": "node_modules/@unrs/resolver-binding-linux-x64-musl"
+          "value": "node_modules/@unrs/resolver-binding-win32-x64-msvc"
         }
       ]
     },
@@ -30652,6 +30797,7 @@
         "ordertower-api@0.1.0|@types/pg@8.23.1",
         "ordertower-api@0.1.0|jest@30.5.2",
         "ordertower-api@0.1.0|jose@6.2.17",
+        "ordertower-api@0.1.0|parquetjs-lite@0.8.7",
         "ordertower-api@0.1.0|pg-mem@3.0.14",
         "ordertower-api@0.1.0|pg@8.23.1",
         "ordertower-api@0.1.0|reflect-metadata@0.2.2",
@@ -30804,6 +30950,18 @@
     },
     {
       "ref": "ordertower-api@0.1.0|jose@6.2.17"
+    },
+    {
+      "ref": "ordertower-api@0.1.0|parquetjs-lite@0.8.7",
+      "dependsOn": [
+        "ordertower-api@0.1.0|int53@0.2.4",
+        "ordertower-api@0.1.0|parquetjs-lite@0.8.7|node-int64@0.3.3",
+        "ordertower-api@0.1.0|snappyjs@0.6.1",
+        "ordertower-api@0.1.0|varint@5.0.2"
+      ]
+    },
+    {
+      "ref": "ordertower-api@0.1.0|parquetjs-lite@0.8.7|node-int64@0.3.3"
     },
     {
       "ref": "ordertower-api@0.1.0|pg-mem@3.0.14",
@@ -31323,6 +31481,15 @@
         "ordertower-api@0.1.0|jest-validate@30.5.1",
         "ordertower-api@0.1.0|yargs@17.7.3"
       ]
+    },
+    {
+      "ref": "ordertower-api@0.1.0|int53@0.2.4"
+    },
+    {
+      "ref": "ordertower-api@0.1.0|snappyjs@0.6.1"
+    },
+    {
+      "ref": "ordertower-api@0.1.0|varint@5.0.2"
     },
     {
       "ref": "ordertower-api@0.1.0|functional-red-black-tree@1.0.1"
@@ -33003,8 +33170,7 @@
     {
       "ref": "ordertower-api@0.1.0|@parcel/watcher@2.6.0",
       "dependsOn": [
-        "ordertower-api@0.1.0|@parcel/watcher-linux-x64-glibc@2.6.0",
-        "ordertower-api@0.1.0|@parcel/watcher-linux-x64-musl@2.6.0",
+        "ordertower-api@0.1.0|@parcel/watcher-win32-x64@2.6.0",
         "ordertower-api@0.1.0|detect-libc@2.1.2",
         "ordertower-api@0.1.0|is-glob@4.0.3",
         "ordertower-api@0.1.0|node-addon-api@7.1.1",
@@ -33036,8 +33202,7 @@
     {
       "ref": "ordertower-api@0.1.0|unrs-resolver@1.13.0",
       "dependsOn": [
-        "ordertower-api@0.1.0|@unrs/resolver-binding-linux-x64-gnu@1.13.0",
-        "ordertower-api@0.1.0|@unrs/resolver-binding-linux-x64-musl@1.13.0",
+        "ordertower-api@0.1.0|@unrs/resolver-binding-win32-x64-msvc@1.13.0",
         "ordertower-api@0.1.0|napi-postinstall@0.3.8"
       ]
     },
@@ -33570,10 +33735,7 @@
       "ref": "ordertower-api@0.1.0|lines-and-columns@1.2.4"
     },
     {
-      "ref": "ordertower-api@0.1.0|@parcel/watcher-linux-x64-glibc@2.6.0"
-    },
-    {
-      "ref": "ordertower-api@0.1.0|@parcel/watcher-linux-x64-musl@2.6.0"
+      "ref": "ordertower-api@0.1.0|@parcel/watcher-win32-x64@2.6.0"
     },
     {
       "ref": "ordertower-api@0.1.0|detect-libc@2.1.2"
@@ -33597,10 +33759,7 @@
       ]
     },
     {
-      "ref": "ordertower-api@0.1.0|@unrs/resolver-binding-linux-x64-gnu@1.13.0"
-    },
-    {
-      "ref": "ordertower-api@0.1.0|@unrs/resolver-binding-linux-x64-musl@1.13.0"
+      "ref": "ordertower-api@0.1.0|@unrs/resolver-binding-win32-x64-msvc@1.13.0"
     },
     {
       "ref": "ordertower-api@0.1.0|napi-postinstall@0.3.8"

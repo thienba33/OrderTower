@@ -39,6 +39,7 @@ export const SCREEN_ORDER: readonly string[] = [
   "/approval-queue",
   "/restricted-list",
   "/bi-dx-score",
+  "/cold-data",
   "/address-split",
   "/distribution",
   "/warehouse",
@@ -59,6 +60,7 @@ export const ROLE_SCREENS: Record<string, readonly string[]> = {
     "/fleet-twin",
     "/restricted-list",
     "/bi-dx-score",
+    "/cold-data",
     "/tracking",
   ],
   "Điều phối viên": [
