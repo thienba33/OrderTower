@@ -15,6 +15,7 @@ import {
   Package,
   Settings,
   User,
+  Zap,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -58,7 +59,10 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Vận hành",
   },
   {
-    items: [{ href: "/admin", icon: Settings, label: "Quản trị hệ thống" }],
+    items: [
+      { href: "/admin", icon: Settings, label: "Quản trị hệ thống" },
+      { href: "/admin/automation", icon: Zap, label: "Tự động hóa" },
+    ],
     label: "Hệ thống",
   },
   {

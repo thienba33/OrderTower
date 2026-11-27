@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { Controller, Get, Post, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { OUTBOX_ROLES } from '../auth/permissions';
 import { Roles } from '../auth/roles.decorator';
 import type { OutboxEvent, OutboxRelayResult, OutboxStatus } from './outbox.types';
@@ -28,5 +28,10 @@ export class OutboxController {
     return this.outbox.relay(
       limit !== undefined ? Number.parseInt(limit, 10) : undefined,
     );
+  }
+
+  @Post(':id/retry')
+  requeue(@Param('id', ParseIntPipe) id: number): Promise<OutboxEvent> {
+    return this.outbox.requeue(id);
   }
 }

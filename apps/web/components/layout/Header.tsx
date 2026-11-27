@@ -2,16 +2,19 @@
 
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from "react";
-import { Menu } from "lucide-react";
+import Link from "next/link";
+import { Bell, Menu } from "lucide-react";
 import { SearchInput } from "@/components/ui/SearchInput";
 import type { Session } from "@/lib/auth";
 
 export function Header({
   onMenuClick,
   session,
+  unreadCount = 0,
 }: {
   onMenuClick: () => void;
   session?: Session | null;
+  unreadCount?: number;
 }) {
   const [query, setQuery] = useState("");
 
@@ -39,6 +42,22 @@ export function Header({
       </div>
       {session ? (
         <div className="flex shrink-0 items-center gap-2.5">
+          <Link
+            href="/notifications"
+            aria-label={
+              unreadCount > 0
+                ? `Thông báo, ${unreadCount} chưa đọc`
+                : "Thông báo"
+            }
+            className="relative flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+          >
+            <Bell size={18} />
+            {unreadCount > 0 ? (
+              <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-700 px-1 text-[10px] font-semibold text-white">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            ) : null}
+          </Link>
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-700 text-sm font-medium text-white">
             {session.username.charAt(0).toUpperCase()}
           </div>

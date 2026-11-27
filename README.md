@@ -87,6 +87,7 @@ Các doanh nghiệp nhỏ và hộ kinh doanh bán hàng đa kênh (vận hành 
 | **Tenant/RLS** | Claim `tenant_id` (fallback `default`), `tenant_id` trên bảng nghiệp vụ, trigger gán tenant và `FORCE ROW LEVEL SECURITY` trên Postgres runtime; audit giữ chuỗi hash toàn cục |
 | **Observability** | JSON access log kèm `requestId`/`tenantId`, `/api/metrics`, Prometheus + Grafana, backup/restore PostgreSQL và GitOps manifest |
 | **OpenBao dev** | KV v2 `secret/ordertower` cho DB/S3/Keycloak/demo (MPL 2.0); API đọc secret qua entrypoint, fallback env; tài liệu rotate/AppRole/HSM |
+| **Automation nội bộ** | Scheduler 15s/60s: outbox relay có retry/dead-letter, SLA scan tạo notification/escalation, run log + console admin; không tự đổi trạng thái nghiệp vụ |
 | **Lưu trữ file kiểm dịch** | Ảnh bằng chứng giao hàng và chứng từ tải qua API lưu trên SeaweedFS S3, quét ClamAV qua giao thức `INSTREAM` |
 | **Nguồn mở chuẩn PoF** | Giấy phép Apache 2.0, kiểm tra REUSE/SPDX trong CI, đầy đủ `CHANGELOG.md`, `LICENSES.md` và SBOM CycloneDX 1.7 |
 
@@ -176,8 +177,10 @@ OrderTower/
 │           ├── shipments/         # Điều xe, giao nhận, sự kiện giao hàng
 │           ├── tickets/           # Ticket CSKH tối thiểu
 │           ├── bi/                # Lớp BI pilot + DX-Score v1
+│           ├── automation/        # Scheduler, outbox relay, SLA scan, run log
+│           ├── notifications/     # Hộp thư theo vai + đánh dấu đã đọc
 │           ├── seed/              # Nạp dữ liệu lịch sử 112 đơn
-│           └── db/                # Kết nối Postgres + 14 SQL migrations (001..014)
+│           └── db/                # Kết nối Postgres + 22 SQL migrations (001..022)
 ├── packages/
 │   └── shared/                    # Khung kiểu dùng chung (chưa tách ở bản 0.1.0)
 ├── infra/                         # Cấu hình Keycloak realm, APISIX standalone, Postgres init
@@ -185,7 +188,7 @@ OrderTower/
 ├── seeds/                         # Dữ liệu mẫu minh họa cũ (API tự seed từ src/**/data/)
 ├── docs/                          # Kiến trúc (architecture.md), ADR, runbook demo
 ├── scripts/                       # generate-sample-data.mjs, make-release.sh
-├── compose.yaml                   # Hạ tầng 7 dịch vụ Docker Compose
+├── compose.yaml                   # Hạ tầng 12 dịch vụ Docker Compose
 ├── Makefile                       # Lệnh vận hành nhanh (up, down, lint, release)
 ├── CHANGELOG.md                   # Lịch sử phiên bản
 ├── CONTRIBUTING.md                # Hướng dẫn đóng góp và chuẩn PoF
@@ -241,7 +244,7 @@ Mở `.env` và điền các biến bắt buộc trước khi khởi động:
 - `ORDERTOWER_DEMO_PASSWORD` (mật khẩu cho 7 tài khoản demo `demo.*`)
 - Cập nhật mật khẩu tương ứng trong `DATABASE_URL`
 
-Khởi động toàn bộ 7 dịch vụ (`postgres`, `keycloak`, `apisix`, `seaweedfs`, `clamav`, `api`, `web`):
+Khởi động toàn bộ 12 dịch vụ (`postgres`, `keycloak`, `apisix`, `seaweedfs`, `clamav`, `openbao`, `openbao-init`, `api`, `waf`, `prometheus`, `grafana`, `web`):
 
 ```bash
 make up

@@ -28,6 +28,24 @@ describe('OutboxService', () => {
     expect((await service.relay()).processed).toBe(0);
   });
 
+  it('event lỗi retry có backoff rồi dead-letter và requeue được', async () => {
+    const store = new InMemoryOutboxStore();
+    const stored = await store.append(event('DH-2001'));
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      await expect(store.markFailed(stored.id, 'broker down')).resolves.toBe(
+        'retry',
+      );
+    }
+    await expect(store.markFailed(stored.id, 'broker down')).resolves.toBe(
+      'dead-letter',
+    );
+    expect(await store.list({ status: 'failed' })).toHaveLength(1);
+    expect(await store.requeue(stored.id)).toBe(true);
+    const requeued = await store.findById(stored.id);
+    expect(requeued).toMatchObject({ status: 'pending', attempts: 0 });
+  });
+
   it('từ chối event thiếu trường hoặc limit sai', async () => {
     const service = new OutboxService(new InMemoryOutboxStore());
     await expect(
