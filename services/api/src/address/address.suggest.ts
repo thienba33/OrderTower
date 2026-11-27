@@ -11,6 +11,7 @@ import {
   GazetteerProvince,
   LegacyWardMapping,
   MatchResult,
+  SplitError,
   SuggestedAddress,
 } from './address.types';
 
@@ -192,6 +193,59 @@ export function matchExact(
   return found ?? null;
 }
 
+// Các tỉnh có phường tên này (khớp chính xác sau chuẩn hóa). Dùng để
+// đối chiếu tỉnh do LLM đoán với dữ liệu hành chính: tỉnh chỉ được nhận
+// khi phường buộc ra đúng 1 tỉnh trong danh mục.
+export function provincesContainingWard(
+  wardName: string,
+  gazetteer: GazetteerProvince[],
+): GazetteerProvince[] {
+  const key = normalizeForMatch(wardName);
+  if (!key) return [];
+  return gazetteer.filter((p) =>
+    p.wards.some((w) => normalizeForMatch(w.name) === key),
+  );
+}
+
+// Khớp phường theo chữ cái đầu (viết tắt): ví dụ "p. HK" -> "Hoàn Kiếm".
+// Chỉ dùng khi phần phường rất ngắn (<= 3 ký tự sau chuẩn hóa) và không
+// khớp bằng cách nào khác (chính xác, bảng ánh xạ, khớp mờ). Chữ cái đầu
+// là ký tự đầu mỗi từ của tên phường sau chuẩn hóa (bỏ tiền tố phường/xã).
+// Chỉ nhận khi duy nhất 1 phường trong danh sách có chữ cái đầu trùng
+// khớp; trùng nhiều phường thì mơ hồ, không chọn.
+export function matchWardByInitials(
+  rawWard: string,
+  wardNames: string[],
+): { name: string | null; ambiguous: boolean } {
+  const key = normalizeForMatch(rawWard).replace(/[^a-z]/g, '');
+  if (!key || key.length > 3) return { name: null, ambiguous: false };
+  const initialsOf = (name: string): string =>
+    normalizeForMatch(name)
+      .split(' ')
+      .filter((w) => w.length > 0 && /^[a-z]/.test(w))
+      .map((w) => w[0])
+      .join('');
+  const matches = wardNames.filter((name) => initialsOf(name) === key);
+  if (matches.length === 1) return { name: matches[0], ambiguous: false };
+  if (matches.length > 1) return { name: null, ambiguous: true };
+  return { name: null, ambiguous: false };
+}
+
+// Một phần mang tiền tố phường/xã/quận/huyện thì không bao giờ là tỉnh
+// (ví dụ "Phường Láng Tròn" khớp mờ thành tỉnh "Lạng Sơn" nếu cứ thử
+// khớp tỉnh). "Xa lộ" là tên đường, không phải tiền tố xã.
+function hasWardOrDistrictPrefix(seg: string): boolean {
+  const lowerSeg = seg.toLowerCase();
+  if (lowerSeg.startsWith('xa lộ') || lowerSeg.startsWith('xa lo')) {
+    return false;
+  }
+  const isWardPrefixed =
+    /^(phường|phuong|xã|xa|p\.)\s?/.test(lowerSeg) || /^p\s/.test(lowerSeg);
+  const isDistrictPrefixed =
+    /^(quận|quan|huyện|huyen|q\.)\s?/.test(lowerSeg) || /^q\s/.test(lowerSeg);
+  return isWardPrefixed || isDistrictPrefixed;
+}
+
 // ---------------------------------------------------------------------------
 // Tách chuỗi địa chỉ thô (dán từ hệ thống khác) thành các phần theo NỘI
 // DUNG, không theo vị trí: tỉnh tìm trước (chuỗi có thể ghi tỉnh trước
@@ -226,9 +280,11 @@ export function splitRawAddress(
   const unmatched: string[] = [];
 
   // Lượt 1: tìm tỉnh trước (theo nội dung, không theo vị trí), phần còn
-  // lại để sang lượt sau.
+  // lại để sang lượt sau. Phần mang tiền tố phường/quận không thử khớp
+  // tỉnh (xem hasWardOrDistrictPrefix); phần mang tiền tố tỉnh (tỉnh/
+  // tp.) và phần không tiền tố vẫn khớp tỉnh như thường.
   for (const seg of segments) {
-    if (!province) {
+    if (!province && !hasWardOrDistrictPrefix(seg)) {
       const match = matchCandidate(seg, provinceNames);
       if (match.name && !match.ambiguous) {
         province = gazetteer.find((p) => p.name === match.name);
@@ -298,8 +354,17 @@ export function splitRawAddress(
       /^(tỉnh|tinh|thành phố|thanh pho|tp\.)\s?/.test(lowerSeg) ||
       /^tp\s/.test(lowerSeg);
     if (isProvincePrefixed) {
-      // Tỉnh lạ hoặc không còn (ví dụ Bình Dương đã sáp nhập): không phải
-      // phường, để lại làm đường để bước đề xuất ghi rõ.
+      // Tỉnh lạ hoặc không còn (ví dụ Bình Dương đã sáp nhập): giữ lại
+      // làm phần tỉnh để bước đề xuất báo lỗi phân tách (tỉnh không tra
+      // được), thay vì để vào đường làm mất dấu vết. Nhưng "Tỉnh lộ ..."
+      // là tên đường (tỉnh lộ + số), không phải tỉnh: vẫn để vào đường.
+      const remainder = normalizeForMatch(seg);
+      const looksLikeRoad =
+        remainder.startsWith('lo ') || remainder === 'lo' || /\d/.test(remainder);
+      if (!looksLikeRoad && remainder.length > 0 && !provincePart) {
+        provincePart = seg;
+        continue;
+      }
       streetParts.push(seg);
       continue;
     }
@@ -471,6 +536,13 @@ export function suggest(
   let wardName = '';
   let wardKnown = false;
 
+  // Dấu vết để tính lỗi phân tách ở cuối: tỉnh mơ hồ, phường mơ hồ
+  // (lý do cụ thể), bảng ánh xạ chỉ tới phường không có trong danh mục.
+  // Lỗi chỉ tính khi phần đó vẫn chưa xác định được sau mọi cách khớp.
+  let provinceAmbiguous = false;
+  let wardAmbiguousMessage: string | undefined;
+  let legacyDataError = false;
+
   // 1. Tỉnh: khớp theo thang (chính xác -> mờ).
   if (parts.province) {
     const { province: found, result } = findProvince(gazetteer, parts.province);
@@ -486,6 +558,7 @@ export function suggest(
         reasons.push(`Tỉnh "${shortProvinceName(found.name)}" đúng.`);
       }
     } else if (result.ambiguous) {
+      provinceAmbiguous = true;
       ambiguous.push(`Phần tỉnh "${parts.province}" khớp nhiều tỉnh, không chọn được.`);
       reasons.push(`Tỉnh "${parts.province}" mơ hồ, cần ghi rõ.`);
     } else {
@@ -588,14 +661,14 @@ export function suggest(
               `Phường cũ "${parts.ward}" đã tách thành nhiều phường mới (${distinctNew.join(', ')}); đề xuất phần chủ yếu "${wardName}", cần xác minh thêm.`,
             );
           } else {
-            ambiguous.push(
-              `Phường cũ "${parts.ward}" tách thành nhiều phường mới: ${distinctNew.join(', ')}.`,
-            );
+            wardAmbiguousMessage = `Phường cũ "${parts.ward}" tách thành nhiều phường mới: ${distinctNew.join(', ')}.`;
+            ambiguous.push(wardAmbiguousMessage);
             reasons.push(
               `Phường cũ "${parts.ward}" tách thành nhiều phường mới (${distinctNew.join(', ')}), cần xác minh thêm, chưa đề xuất được.`,
             );
           }
         } else {
+          legacyDataError = true;
           reasons.push(
             `Bảng ánh xạ ghi phường mới "${distinctNew[0]}" nhưng danh mục không có phường này, cần kiểm tra lại dữ liệu.`,
           );
@@ -611,6 +684,29 @@ export function suggest(
           reasons.push(
             `Phường "${parts.ward}" khớp mờ với "${ward}", cần kiểm tra lại.`,
           );
+        }
+      }
+      if (!wardKnown) {
+        // 2c. Viết tắt theo chữ cái đầu (ví dụ "p. HK" -> "Hoàn Kiếm"):
+        // chỉ khi phần phường rất ngắn (<= 3 ký tự sau chuẩn hóa) và
+        // không khớp bằng cách nào khác. Chỉ nhận khi duy nhất 1 phường
+        // trong tỉnh có chữ cái đầu trùng khớp; trùng nhiều phường thì
+        // mơ hồ, không chọn.
+        const initials = matchWardByInitials(
+          parts.ward,
+          province.wards.map((w) => w.name),
+        );
+        if (initials.name) {
+          wardName = initials.name;
+          wardKnown = true;
+          fuzzy = true;
+          reasons.push(
+            `Phường "${parts.ward}" viết tắt, chữ cái đầu trùng duy nhất với "${wardName}", cần kiểm tra lại.`,
+          );
+        } else if (initials.ambiguous) {
+          wardAmbiguousMessage = `Chữ cái đầu "${parts.ward}" trùng nhiều phường trong tỉnh "${shortProvinceName(province.name)}", cần ghi rõ.`;
+          ambiguous.push(wardAmbiguousMessage);
+          reasons.push(wardAmbiguousMessage);
         }
       }
       if (!wardKnown && !mapRowsFound) {
@@ -634,9 +730,8 @@ export function suggest(
           `Suy ra tỉnh "${shortProvinceName(province.name)}" từ phường "${wardName}" vì phường này chỉ có ở tỉnh đó.`,
         );
       } else if (exactMatches.length > 1) {
-        ambiguous.push(
-          `Phường "${parts.ward}" có ở nhiều tỉnh (${exactMatches.map((m) => shortProvinceName(m.province.name)).join(', ')}), cần ghi rõ tỉnh.`,
-        );
+        wardAmbiguousMessage = `Phường "${parts.ward}" có ở nhiều tỉnh (${exactMatches.map((m) => shortProvinceName(m.province.name)).join(', ')}), cần ghi rõ tỉnh.`;
+        ambiguous.push(wardAmbiguousMessage);
         reasons.push(`Phường "${parts.ward}" có ở nhiều tỉnh, cần ghi rõ tỉnh.`);
       } else {
         reasons.push(
@@ -648,18 +743,20 @@ export function suggest(
     reasons.push('Chưa ghi phường.');
   }
 
-  // 4. Gợi ý từ đường: khi phường vẫn chưa biết mà trong phần đường có
-  // đúng 1 tên phường hiện tại của tỉnh đó, dùng nó để sửa phường
-  // sai/thiếu. Tên phường phải xuất hiện như một cụm từ độc lập (đầu
-  // chuỗi hoặc sau từ chỉ loại đường/địa chỉ như phố, đường, ngõ, phường),
-  // không phải đuôi của tên dài hơn ("Trần Hưng Đạo" chứa "Hưng Đạo"
-  // nhưng "Trần" không phải từ chỉ loại, nên không gợi ý). Không bao giờ
-  // ghi đè phường đã đúng.
+  // 4. Gợi ý từ đường: CHỈ khi phường đang thiếu hẳn (người dùng không
+  // ghi phường) mà trong phần đường có đúng 1 tên phường hiện tại của
+  // tỉnh đó thì dùng nó để điền phường. Phường đã ghi rõ thì không bao
+  // giờ thay bằng phường khác từ đường: phường ghi rõ mà không có trong
+  // tỉnh là lỗi phân tách, để người dùng tự hiệu chỉnh. Tên phường phải
+  // xuất hiện như một cụm từ độc lập (đầu chuỗi hoặc sau từ chỉ loại
+  // đường/địa chỉ như phố, đường, ngõ, phường), không phải đuôi của tên
+  // dài hơn ("Trần Hưng Đạo" chứa "Hưng Đạo" nhưng "Trần" không phải từ
+  // chỉ loại, nên không gợi ý). Không bao giờ ghi đè phường đã đúng.
   const GENERIC_ADDRESS_WORDS = new Set([
     'so', 'pho', 'duong', 'ngo', 'ngach', 'hem', 'phuong', 'xa', 'quan',
     'huyen', 'tinh', 'thanh', 'ap', 'khu', 'thon', 'xom', 'toa', 'can',
   ]);
-  if (province && !wardKnown && parts.street) {
+  if (province && !wardKnown && !parts.ward && parts.street) {
     const words = normalizeForMatch(parts.street)
       .split(' ')
       .filter((w) => w.length > 0);
@@ -706,6 +803,40 @@ export function suggest(
     reasons.push('Chưa ghi địa chỉ đường.');
   }
 
+  // Lỗi phân tách: chỉ tính khi phần đó vẫn chưa xác định được sau mọi
+  // cách khớp. Hệ thống không đoán: màn hình đưa đơn vào phần Lỗi phân
+  // tách để người dùng tự hiệu chỉnh. Thứ tự ưu tiên: phường mơ hồ, rồi
+  // tỉnh không tra được, rồi phường không tra được.
+  let splitError: SplitError | undefined;
+  if (parts.ward && !wardKnown && wardAmbiguousMessage) {
+    splitError = { code: 'ambiguous-ward', message: wardAmbiguousMessage };
+  } else if (parts.province && !provinceKnown) {
+    splitError = {
+      code: 'province-not-found',
+      message: provinceAmbiguous
+        ? `Tỉnh "${parts.province}" mơ hồ, cần ghi rõ.`
+        : `Không tra được tỉnh "${parts.province}" trong danh mục 34 tỉnh/thành.`,
+    };
+  } else if (parts.ward && !wardKnown) {
+    if (legacyDataError) {
+      splitError = {
+        code: 'ward-not-found',
+        message:
+          'Bảng ánh xạ ghi phường mới nhưng danh mục không có phường này, cần kiểm tra lại dữ liệu.',
+      };
+    } else if (province) {
+      splitError = {
+        code: 'ward-not-in-province',
+        message: `Phường "${parts.ward}" không có trong tỉnh "${shortProvinceName(province.name)}", kiểm tra lại tên phường hoặc tỉnh.`,
+      };
+    } else {
+      splitError = {
+        code: 'ward-not-found',
+        message: `Không xác định được phường "${parts.ward}", cần ghi rõ tỉnh hoặc kiểm tra lại tên phường.`,
+      };
+    }
+  }
+
   const result: SuggestedAddress = {
     province: province ? shortProvinceName(province.name) : '',
     ward: wardName,
@@ -717,6 +848,7 @@ export function suggest(
     reasons,
     fuzzy,
     ambiguous,
+    splitError,
   };
   if (provinceKnown && !wardKnown && province) {
     result.choices = { wards: province.wards.map((w) => w.name) };

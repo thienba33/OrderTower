@@ -113,6 +113,24 @@ describe('AddressLlmService', () => {
     ).toContain('Số 12 ngõ 34 phố Hàng Bè');
   });
 
+  it('prompt hệ thống dặn bỏ qua quận/huyện cũ, không lấy tên quận làm phường', async () => {
+    const service = buildService();
+    fetchMock.mockResolvedValue(
+      fakeResponse(
+        200,
+        workersAiBody(
+          '{"province": "Hà Nội", "ward": "Phường Cửa Nam", "street": ""}',
+        ),
+      ),
+    );
+    await service.parseAddress('Số 1 phố Hàng Bè, p. HK, Hà Nội');
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    const system = (body.messages as Array<{ content: string }>)[0].content;
+    expect(system).toContain('Bỏ qua quận/huyện cũ');
+    expect(system).toContain('không lấy tên quận làm phường');
+  });
+
   it('phân tích được JSON dạng result.choices', async () => {
     const service = buildService();
     fetchMock.mockResolvedValue(

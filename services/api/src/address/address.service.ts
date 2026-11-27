@@ -13,6 +13,7 @@ import {
 import {
   addressLevelFor,
   normalizeForMatch,
+  provincesContainingWard,
   scoreAddress,
   shortProvinceName,
   splitRawAddress,
@@ -119,6 +120,14 @@ export class AddressService implements OnModuleInit {
       (p) => normalizeForMatch(p.name) === normalizeForMatch(provinceName),
     );
     return province ? province.wards.map((w) => w.name) : [];
+  }
+
+  // Các tỉnh có phường tên này (khớp chính xác sau chuẩn hóa), để đối
+  // chiếu tỉnh do LLM đoán với dữ liệu hành chính: tỉnh chỉ được nhận
+  // khi phường buộc ra đúng 1 tỉnh trong danh mục.
+  findProvincesByWard(wardName: string): GazetteerProvince[] {
+    this.assertLoaded();
+    return provincesContainingWard(wardName, this.gazetteer!);
   }
 
   // Tên ngắn của tỉnh ("Hà Nội") từ tên nhập vào, để hiển thị; trả tên

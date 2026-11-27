@@ -16,6 +16,7 @@ import { computeNextNumber } from '../db/id-counter';
 import { CLOSED_STATES, OrdersService } from '../orders/orders.service';
 import { AddressService, MIN_ADDRESS_TRUST } from './address.service';
 import { AddressLlmService } from './address-llm.service';
+import { normalizeForMatch } from './address.suggest';
 import {
   ADDRESS_PROPOSAL_STORE,
 } from './address-proposal.store';
@@ -51,9 +52,18 @@ function joinAddressParts(address: AddressInput): string {
 
 // Đề xuất chuẩn hóa địa chỉ + duyệt áp dụng (AI số 1, xem bản dự thảo
 // du-thao-ai-chuan-hoa-dia-chi.md mục 4-5). Luồng gợi ý (LLM lai):
-//   - LLM (Workers AI) phân tích chuỗi trước cho mọi lần gợi ý, rồi luật
-//     kiểm lại phường với danh mục; phường không có trong danh mục thì
-//     bỏ gợi ý LLM, dùng luật;
+//   - Luật trước: tính đề xuất luật ngay từ đầu; nếu luật đã xác định
+//     được đầy đủ (tin cậy >= 95) thì dùng luật, không gọi LLM. LLM có
+//     thể sửa 1 địa chỉ luật đã đúng thành phường khác cũng đúng trong
+//     cùng tỉnh (ví dụ "p. HK" luật tra chữ cái đầu ra Hoàn Kiếm, LLM
+//     đoán thành Hai Bà Trưng), nên không gọi LLM khi luật đã đủ tin cậy.
+//   - LLM (Workers AI) chỉ chạy khi luật chưa đủ tin cậy: phân tích
+//     chuỗi thành {province, ward, street}, rồi đối chiếu với dữ liệu
+//     hành chính trước khi nhận: tỉnh LLM trả phải khớp tỉnh đã ghi rõ
+//     trong chuỗi (nếu có); tỉnh do LLM đoán chỉ được nhận khi phường
+//     buộc ra đúng 1 tỉnh trong danh mục; luật kiểm lại phường chỉ nhận
+//     khi khớp chính xác, không khớp mờ. Không qua được cổng nào thì bỏ
+//     gợi ý LLM, dùng luật;
 //   - không có cấu hình LLM, LLM lỗi, hoặc địa chỉ đã đạt mức cao thì
 //     dùng luật (không gọi LLM);
 //   - mức cao (tin cậy 100): tự áp dụng vào đơn qua đường sửa đơn có sẵn
@@ -62,7 +72,11 @@ function joinAddressParts(address: AddressInput): string {
 //   - mức giữa (80): lưu đề xuất "Chờ duyệt" cho modal duyệt tay +
 //     audit address-proposal.created;
 //   - mức thấp (<= 60): KHÔNG có đề xuất áp dụng được, trả lý do từng
-//     phần + danh sách phường đúng để nhập tay.
+//     phần + danh sách phường đúng để nhập tay. Khi địa chỉ không xác
+//     định được an toàn từ dữ liệu hành chính (phường ghi rõ mà không có
+//     trong tỉnh, tỉnh không tra được, phường mơ hồ), trả thêm
+//     splitError để màn hình đưa đơn vào phần Lỗi phân tách cho người
+//     dùng tự hiệu chỉnh; hệ thống không đoán hay sửa thành vị trí khác.
 // Đề xuất từ LLM ghi thêm audit address-proposal.llm-suggested. Đề xuất
 // đã quyết định thì quyết định lại = 409. Từ chối bắt buộc có lý do. Đơn
 // đã đóng không tự áp dụng/lưu đề xuất được (sửa đơn đã đóng cần phê
@@ -153,14 +167,32 @@ export class AddressProposalService implements OnModuleInit {
       });
     };
 
-    // LLM trước (khi có cấu hình): phân tích chuỗi thành {province, ward,
-    // street}, kiểm lại phường với danh mục bằng cùng luật suggest();
-    // phường không có trong danh mục thì bỏ gợi ý LLM, dùng luật. Địa chỉ
-    // đã đạt mức cao thì không gọi LLM: không còn gì để gợi ý, và LLM có
-    // thể sửa 1 địa chỉ đã đúng thành phường khác cũng đúng.
+    // Luật trước: tính đề xuất luật ngay từ đầu. Nếu luật đã xác định
+    // được đầy đủ (tin cậy >= 95) thì dùng luật, không gọi LLM: LLM có
+    // thể sửa 1 địa chỉ luật đã đúng thành phường khác cũng đúng trong
+    // cùng tỉnh (ví dụ "p. HK" luật tra chữ cái đầu ra Hoàn Kiếm, LLM
+    // đoán thành Hai Bà Trưng). Chỉ khi luật chưa đủ tin cậy mới gọi
+    // LLM, và gợi ý LLM vẫn phải qua các cổng đối chiếu bên dưới.
+    // Địa chỉ đã đạt mức cao thì không gọi LLM: không còn gì để gợi ý,
+    // và LLM có thể sửa 1 địa chỉ đã đúng thành phường khác cũng đúng.
+    const rulesFirst = rulesSuggestion();
+    const rulesFirstTrust = this.addressService.evaluate({
+      province: rulesFirst.province,
+      ward: rulesFirst.ward,
+      street: rulesFirst.street,
+    }).trust;
     let suggestion: SuggestedAddress | null = null;
     let source: SuggestionSource = 'rules';
-    if (beforeEval.trust < 95 && this.llm?.enabled && llmText) {
+    // Tỉnh đã ghi rõ trong chuỗi (từ tách chuỗi khi có raw, hoặc từ địa
+    // chỉ có cấu trúc/đã lưu khi không có raw); dùng làm mốc đối chiếu
+    // tỉnh LLM trả. Không có tỉnh rõ ràng thì tỉnh LLM phải được dữ liệu
+    // hành chính buộc ra (xem kiểm tra grounding bên dưới).
+    const explicitProvince = hasRaw
+      ? rawParts?.province
+      : beforeAddress.province;
+    if (rulesFirstTrust >= 95) {
+      suggestion = rulesFirst;
+    } else if (beforeEval.trust < 95 && this.llm?.enabled && llmText) {
       let parsed: LlmParsedAddress | null = null;
       try {
         parsed = await this.llm.parseAddress(llmText);
@@ -172,17 +204,65 @@ export class AddressProposalService implements OnModuleInit {
         );
       }
       if (parsed) {
+        // (1) Tỉnh LLM trả phải khớp tỉnh đã ghi rõ trong chuỗi (sau
+        // chuẩn hóa). Tỉnh khác nghĩa là LLM đọc sai/gõ lỗi (ví dụ "Hề
+        // Nôi" thay vì "Hà Nội"); lỗi gõ ở tỉnh luật đã xử lý bằng khớp
+        // mờ nên bỏ gợi ý LLM không mất gì.
+        if (
+          parsed.province &&
+          explicitProvince &&
+          normalizeForMatch(parsed.province) !==
+            normalizeForMatch(explicitProvince)
+        ) {
+          this.logger.warn(
+            `LLM trả tỉnh "${parsed.province}" khác tỉnh đã ghi "${explicitProvince}", dùng luật.`,
+          );
+          parsed = null;
+        }
+        // (2) Chuỗi không ghi tỉnh mà LLM đoán tỉnh: chỉ nhận khi phường
+        // LLM trả chỉ có ở đúng 1 tỉnh trong danh mục và tỉnh đó đúng là
+        // tỉnh LLM trả (dữ liệu hành chính buộc ra tỉnh, không phải đoán).
+        // Phường có ở nhiều tỉnh thì tỉnh LLM là phỏng đoán, bỏ, dùng luật.
+        if (
+          parsed &&
+          !explicitProvince &&
+          parsed.province &&
+          parsed.ward
+        ) {
+          const provinces = this.addressService.findProvincesByWard(
+            parsed.ward,
+          );
+          const grounded =
+            provinces.length === 1 &&
+            normalizeForMatch(provinces[0].name) ===
+              normalizeForMatch(parsed.province);
+          if (!grounded) {
+            this.logger.warn(
+              `LLM đoán tỉnh "${parsed.province}" cho phường "${parsed.ward}" không đối chiếu được với danh mục, dùng luật.`,
+            );
+            parsed = null;
+          }
+        }
+      }
+      if (parsed) {
         const validated = this.addressService.suggestFromParts({
           province: parsed.province || undefined,
           ward: parsed.ward || undefined,
           street: parsed.street ?? '',
         });
-        if (validated.wardKnown) {
+        if (validated.wardKnown && !validated.fuzzy) {
           validated.reasons.unshift(
             'Gợi ý từ LLM, đã kiểm lại phường với danh mục.',
           );
           suggestion = validated;
           source = 'llm';
+        } else if (validated.wardKnown) {
+          // Luật phải khớp mờ mới ra phường: LLM đã tự sửa lỗi gõ nên
+          // khớp mờ thêm 1 lớp nữa sẽ biến tên bịa thành phường thật khác
+          // (ví dụ "Hồng Kông" thành "Hồng Sơn"); bỏ, dùng luật.
+          this.logger.warn(
+            `LLM trả phường "${parsed.ward}" chỉ khớp mờ với danh mục, dùng luật.`,
+          );
         } else {
           this.logger.warn(
             `LLM trả phường không có trong danh mục (${parsed.ward ?? '(trống)'}), dùng luật.`,
@@ -191,8 +271,11 @@ export class AddressProposalService implements OnModuleInit {
       }
     }
     if (suggestion === null) {
-      suggestion = rulesSuggestion();
+      suggestion = rulesFirst;
     }
+    // Lỗi phân tách (nếu có) từ đề xuất cuối cùng: màn hình đưa đơn vào
+    // phần Lỗi phân tách để người dùng tự hiệu chỉnh, không tự áp dụng.
+    const splitError = suggestion.splitError;
 
     const before: AddressSnapshot = {
       address: beforeAddress,
@@ -223,6 +306,7 @@ export class AddressProposalService implements OnModuleInit {
         after,
         source,
         applied: false,
+        splitError,
         note: 'Địa chỉ đã đạt độ tin cậy cao, không cần đề xuất.',
       };
     }
@@ -237,6 +321,7 @@ export class AddressProposalService implements OnModuleInit {
           after,
           source,
           applied: false,
+          splitError,
           note: 'Đề xuất đạt độ tin cậy cao nhưng không kèm đơn nên chưa áp dụng; gửi kèm orderId để tự áp dụng.',
         };
       }
@@ -247,6 +332,7 @@ export class AddressProposalService implements OnModuleInit {
           after,
           source,
           applied: false,
+          splitError,
           note: 'Đơn đã đóng nên không tự áp dụng được; sửa địa chỉ qua luồng phê duyệt sửa đơn đã đóng.',
         };
       }
@@ -288,7 +374,7 @@ export class AddressProposalService implements OnModuleInit {
           `Tin cậy ${beforeEval.trust} -> ${afterEval.trust}; nguồn LLM.`,
         );
       }
-      return { proposal, before, after, source, applied: true };
+      return { proposal, before, after, source, applied: true, splitError };
     }
 
     if (afterEval.trust >= MIN_ADDRESS_TRUST) {
@@ -299,6 +385,7 @@ export class AddressProposalService implements OnModuleInit {
           after,
           source,
           applied: false,
+          splitError,
           note: 'Đề xuất cần duyệt nhưng không kèm đơn nên chưa lưu; gửi kèm orderId để lưu đề xuất.',
         };
       }
@@ -309,6 +396,7 @@ export class AddressProposalService implements OnModuleInit {
           after,
           source,
           applied: false,
+          splitError,
           note: 'Đơn đã đóng nên chưa lưu đề xuất; sửa địa chỉ qua luồng phê duyệt sửa đơn đã đóng.',
         };
       }
@@ -348,7 +436,7 @@ export class AddressProposalService implements OnModuleInit {
           `Tin cậy ${beforeEval.trust} -> ${afterEval.trust}; nguồn LLM.`,
         );
       }
-      return { proposal, before, after, source, applied: false };
+      return { proposal, before, after, source, applied: false, splitError };
     }
 
     return {
@@ -358,6 +446,7 @@ export class AddressProposalService implements OnModuleInit {
       choices: suggestion.choices,
       source,
       applied: false,
+      splitError,
       note: 'Độ tin cậy thấp, chưa có đề xuất áp dụng được; nhập tay theo danh sách phường đúng.',
     };
   }
