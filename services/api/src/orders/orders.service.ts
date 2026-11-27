@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  forwardRef,
   Inject,
   Injectable,
   Logger,
@@ -55,7 +56,7 @@ import type {
 } from './orders.types';
 
 // Trạng thái đóng: không còn chuyển nào đi ra, mọi thao tác đều bị chặn.
-const CLOSED_STATES = ['Hoàn', 'Hủy'];
+export const CLOSED_STATES = ['Hoàn', 'Hủy'];
 
 // Trạng thái chưa giữ hàng: còn sửa được mặt hàng. Từ "Đang đóng gói" trở đi
 // kho đã giữ hàng cho đơn nên mặt hàng bị khóa, chỉ sửa được khách và địa chỉ.
@@ -121,6 +122,7 @@ export class OrdersService implements OnModuleInit {
     private readonly workflow: WorkflowService,
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
+    @Inject(forwardRef(() => AddressService))
     private readonly address: AddressService,
     private readonly instances: WorkflowInstanceService,
     private readonly approvals: ApprovalService,

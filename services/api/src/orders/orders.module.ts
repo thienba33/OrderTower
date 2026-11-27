@@ -19,7 +19,11 @@ import { ORDER_STORE, PostgresOrderStore } from './orders.store';
 
 @Module({
   imports: [
-    AddressModule,
+    // Đề xuất chuẩn hóa địa chỉ cần sửa đơn qua OrdersService, đơn lại
+    // chấm điểm địa chỉ qua AddressService nên hai mô-đun tham chiếu nhau;
+    // cả hai phía đều dùng forwardRef, giống cặp OrdersModule -
+    // ShipmentsModule ở dưới.
+    forwardRef(() => AddressModule),
     ApprovalsModule,
     AuditModule,
     ChannelsModule,
