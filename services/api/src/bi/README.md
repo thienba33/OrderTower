@@ -143,6 +143,16 @@ có quyết định nào), chỉ đo được khi vận hành thật có ngườ
 - `bi.frozen-data.spec.ts`: test trên dữ liệu mẫu đóng băng thật (nạp seed
   qua đường dịch vụ thật rồi tính).
 
+## Phả hệ dữ liệu
+
+- `GET /api/bi/lineage/latest`: phả hệ của snapshot DX-Score mới nhất.
+- `GET /api/bi/lineage/:snapshotId`: phả hệ của một snapshot.
+- Trả snapshot, 4 trục P/D/I/H + ratio, nguồn recommendation/feedback/order/
+  audit/archive và coverage. Chỉ ID/trạng thái/counts; không trả phone,
+  address, tên khách hàng hay audit detail.
+- UI hiển thị section “Phả hệ dữ liệu” trong tab Tổng quan của
+  `/bi-dx-score`.
+
 ## Giới hạn đã chấp nhận
 
 - Lưu nhiều thực thể là các bước tuần tự, không phải 1 giao dịch (giới hạn

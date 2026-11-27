@@ -8,6 +8,8 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { OrdersModule } from '../orders/orders.module';
 import { ReturnsModule } from '../returns/return.module';
 import { BiController } from './bi.controller';
+import { BiLineageController } from './bi-lineage.controller';
+import { BiLineageService } from './bi-lineage.service';
 import { BiService } from './bi.service';
 import { BI_STORE, PostgresBiStore } from './bi.store';
 
@@ -24,9 +26,10 @@ import { BI_STORE, PostgresBiStore } from './bi.store';
     AuditModule,
     ApprovalsModule,
   ],
-  controllers: [BiController],
+  controllers: [BiController, BiLineageController],
   providers: [
     BiService,
+    BiLineageService,
     {
       provide: BI_STORE,
       useFactory: (db: DbService) => new PostgresBiStore(db),

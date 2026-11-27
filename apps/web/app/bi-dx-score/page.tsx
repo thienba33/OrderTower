@@ -18,6 +18,7 @@ import type {
   ApiArchiveSummary,
   ApiColdAnalytics,
 } from "../cold-data/cold-data-types";
+import type { ApiBiLineage } from "./bi-lineage-types";
 import type { ApiChannel } from "../orders/orders-types";
 
 // Lấy danh sách từ API, trả về mảng đã kiểm tra dạng.
@@ -157,6 +158,18 @@ export default async function BiDxScorePage() {
     coldError = toSectionError(error);
   }
 
+  // Lineage đọc snapshot mới nhất; /bi/dx-score ở trên đã tạo snapshot nếu
+  // chưa có. 404 nghĩa là chưa có snapshot, không phải lỗi tải.
+  let lineage: ApiBiLineage | null = null;
+  let lineageError: BiSectionError | null = null;
+  try {
+    lineage = await fetchObject<ApiBiLineage>("/bi/lineage/latest");
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 404)) {
+      lineageError = toSectionError(error);
+    }
+  }
+
   return (
     <BiDxScoreClient
       forecastRows={forecastRows}
@@ -172,6 +185,8 @@ export default async function BiDxScorePage() {
       archiveSummary={archiveSummary}
       coldAnalytics={coldAnalytics}
       coldError={coldError}
+      lineage={lineage}
+      lineageError={lineageError}
       roles={session.roles}
     />
   );

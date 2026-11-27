@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { Pagination } from "../../components/ui/Pagination";
 import { Table, type TableColumn } from "../../components/ui/Table";
 import ColdDataSourceSection from "./cold-data-source-section";
+import LineageSection from "./lineage-section";
 import {
   BI_TABS,
   type ApiDxRatio,
@@ -167,6 +168,8 @@ export default function BiDxScorePage({
   archiveSummary,
   coldAnalytics,
   coldError,
+  lineage,
+  lineageError,
   roles,
 }: BiDxScoreClientProps) {
   const router = useRouter();
@@ -700,6 +703,8 @@ export default function BiDxScorePage({
             analytics={coldAnalytics}
             error={coldError}
           />
+
+          <LineageSection lineage={lineage} error={lineageError} />
 
           <div className="flex flex-col gap-3 xl:flex-row">
             <section className="min-w-0 flex-1 rounded-lg border bg-white p-4">

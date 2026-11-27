@@ -4,6 +4,7 @@ import type {
   ApiArchiveSummary,
   ApiColdAnalytics,
 } from "../cold-data/cold-data-types";
+import type { ApiBiLineage } from "./bi-lineage-types";
 
 // Kiểu dữ liệu API BI (so khớp services/api/src/bi/bi.types.ts) và prop
 // của màn BI và DX-Score. Màn giữ nguyên bố cục đóng băng, chỉ thay dữ
@@ -147,5 +148,7 @@ export interface BiDxScoreClientProps {
   archiveSummary: ApiArchiveSummary | null;
   coldAnalytics: ApiColdAnalytics | null;
   coldError: BiSectionError | null;
+  lineage: ApiBiLineage | null;
+  lineageError: BiSectionError | null;
   roles: string[];
 }
