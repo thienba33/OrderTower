@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# Reverse proxy WAF trước API. APISIX vẫn xử lý auth/rate-limit; service này
+# chỉ nhận traffic API đã qua APISIX (hoặc gọi trực tiếp để test).
+{
+  admin off
+  auto_https off
+  order coraza_waf first
+}
+
+:8080 {
+  handle /healthz {
+    respond "ok" 200
+  }
+
+  coraza_waf {
+    load_owasp_crs
+    directives `
+      Include @coraza.conf-recommended
+      Include @crs-setup.conf.example
+      Include @owasp_crs/*.conf
+      SecRuleEngine On
+    `
+  }
+
+  reverse_proxy api:3001
+
+  # Không bật access log của Caddy: URI public tracking có thể chứa SĐT.
+  # Coraza vẫn ghi log "WAF rule violation detected" khi chặn request.
+  handle_errors {
+    @waf expression `{http.error.message}.startsWith("interruption triggered")`
+    respond @waf "Blocked by WAF: {http.error.message}" 403
+    respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
+  }
+}

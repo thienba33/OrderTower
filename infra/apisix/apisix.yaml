@@ -92,7 +92,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "api:3001": 1
+        "waf:8080": 1
   # API nghiệp vụ yêu cầu access token.
   - id: ordertower-api
     uri: /api/*
@@ -102,6 +102,9 @@ routes:
         discovery: http://keycloak:8080/realms/ordertower/.well-known/openid-configuration
         bearer_only: true
         use_jwks: true
+        # Không chuyển access token sang header X-Access-Token cho upstream;
+        # API đọc Authorization, tránh WAF/access log ghi lại token.
+        set_access_token_header: false
         token_signing_alg_values_expected: RS256
         claim_validator:
           issuer:
@@ -136,7 +139,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "api:3001": 1
+        "waf:8080": 1
 upstreams:
   - id: keycloak
     type: roundrobin

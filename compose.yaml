@@ -117,6 +117,13 @@ services:
       seaweedfs:
         condition: service_healthy
 
+  waf:
+    build: ./infra/waf
+    ports:
+      - "127.0.0.1:8090:8080"
+    depends_on:
+      - api
+
   prometheus:
     image: prom/prometheus:v3.1.0
     command:
