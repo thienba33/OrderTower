@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ordertower
+resources:
+  - namespace.yaml
+  - api-configmap.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - web-configmap.yaml
+  - web-deployment.yaml
+  - web-service.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
+  - networkpolicy-keycloak-egress.yaml
+images:
+  - name: ordertower-api
+    newName: ghcr.io/thienba33/ordertower-api
+    newTag: 0.1.0
+  - name: ordertower-web
+    newName: ghcr.io/thienba33/ordertower-web
+    newTag: 0.1.0

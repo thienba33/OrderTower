@@ -126,7 +126,8 @@ services:
   api:
     build: ./services/api
     ports:
-      - "3001:3001"
+      # Chỉ mở trên loopback để debug local; traffic thật phải qua APISIX/WAF.
+      - "127.0.0.1:3001:3001"
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       KEYCLOAK_URL: ${KEYCLOAK_URL:-http://localhost:9080}
@@ -217,6 +218,9 @@ services:
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-ordertower-web}
       # Web gọi API qua APISIX (cửa trước), giống mặc định khi chạy dev.
       API_BASE_URL: http://apisix:9080/api
+      # Production sau TLS ingress đặt APP_ORIGIN=https://... và COOKIE_SECURE=true.
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     depends_on:
       - api
 

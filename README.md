@@ -88,6 +88,7 @@ Các doanh nghiệp nhỏ và hộ kinh doanh bán hàng đa kênh (vận hành 
 | **Observability** | JSON access log kèm `requestId`/`tenantId`, `/api/metrics`, Prometheus + Grafana, backup/restore PostgreSQL và GitOps manifest |
 | **OpenBao dev** | KV v2 `secret/ordertower` cho DB/S3/Keycloak/demo (MPL 2.0); API đọc secret qua entrypoint, fallback env; tài liệu rotate/AppRole/HSM |
 | **Automation nội bộ** | Scheduler 15s/60s: outbox relay có retry/dead-letter, SLA scan tạo notification/escalation, run log + console admin; không tự đổi trạng thái nghiệp vụ |
+| **Zero-Trust/GitOps** | API chỉ loopback ở compose; K8s manifest API/web + TLS ingress + NetworkPolicy default-deny; ArgoCD Application; cookie `Secure` theo env |
 | **Lưu trữ file kiểm dịch** | Ảnh bằng chứng giao hàng và chứng từ tải qua API lưu trên SeaweedFS S3, quét ClamAV qua giao thức `INSTREAM` |
 | **Nguồn mở chuẩn PoF** | Giấy phép Apache 2.0, kiểm tra REUSE/SPDX trong CI, đầy đủ `CHANGELOG.md`, `LICENSES.md` và SBOM CycloneDX 1.7 |
 
@@ -262,7 +263,7 @@ make up
 |---------|---------|---------|
 | **Web điều hành** | http://localhost:3000 | Chuyển hướng đăng nhập Keycloak |
 | **Tra cứu đơn công khai** | http://localhost:3000/tracking | Không cần đăng nhập (ví dụ `DH-1001` / `0901234501`) |
-| **API Health (trực tiếp)** | http://localhost:3001/api/health | Trả về `{"status":"ok","service":"ordertower-api"}` |
+| **API Health (trực tiếp)** | http://localhost:3001/api/health | Chỉ loopback để debug; traffic thật đi qua APISIX/WAF |
 | **API Health (qua APISIX)** | http://localhost:9080/api/health | Kiểm tra routing qua Gateway |
 | **Keycloak Admin Console** | http://localhost:8081/admin/ | Chỉ mở trên `127.0.0.1` |
 
