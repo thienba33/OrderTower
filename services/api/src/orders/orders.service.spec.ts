@@ -1759,11 +1759,20 @@ describe('OrdersService seed mẫu', () => {
       'Đang đóng gói',
       'Chờ điều xe',
     ]);
-    // Đơn đầu tin cậy thấp (chỉ tỉnh đúng 40 + đường 20 = 60),
-    // 7 đơn còn lại địa chỉ đủ 100.
-    const [low, ...rest] = list;
-    expect(low?.addressTrust).toBe(60);
-    expect(low?.addressLevel).toBe('Rủi ro cao');
+    // Theo luồng mới, 2 đơn Mới tạo chỉ lưu chuỗi thô khách ghi, chưa
+    // tách, chưa chấm điểm (tin cậy null); 6 đơn còn lại đã qua bước
+    // tách địa chỉ nên địa chỉ đủ 100.
+    const [raw1, raw2, ...rest] = list;
+    expect(raw1?.address).toEqual({
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Phường Không Có, Quận Không Có, Hà Nội',
+    });
+    expect(raw1?.addressTrust).toBeNull();
+    expect(raw1?.addressLevel).toBeNull();
+    expect(raw2?.address).toEqual({
+      raw: 'Số 12 phố Hàng Bè, Phường Hai Bà Trưng, Hà Nội',
+    });
+    expect(raw2?.addressTrust).toBeNull();
+    expect(raw2?.addressLevel).toBeNull();
     expect(rest.every((order) => order.addressTrust === 100)).toBe(true);
     // Tổng tiền do server tính từ giá kho: NM-25 93000, NM-15 64000,
     // HS-KHO 105000.

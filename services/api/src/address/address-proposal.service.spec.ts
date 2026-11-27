@@ -209,6 +209,25 @@ describe('AddressProposalService.suggest', () => {
     expect(orders.get('DH-1004')!.address.ward).toBe('Phường Cửa Nam');
   });
 
+  it('chuỗi thô mẫu của seed: chuỗi tốt tách được 100, chuỗi xấu lỗi phân tách', async () => {
+    const { service } = await buildService();
+    const good = await service.suggest(CALLER, {
+      raw: 'Số 12 phố Hàng Bè, Phường Hai Bà Trưng, Hà Nội',
+    });
+    expect(good.after.trust).toBe(100);
+    expect(good.after.address).toEqual({
+      province: 'Hà Nội',
+      ward: 'Phường Hai Bà Trưng',
+      street: 'Số 12 phố Hàng Bè',
+    });
+    const bad = await service.suggest(CALLER, {
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Phường Không Có, Quận Không Có, Hà Nội',
+    });
+    expect(bad.splitError?.code).toBe('ward-not-in-province');
+    expect(bad.proposal).toBeNull();
+    expect(bad.applied).toBe(false);
+  });
+
   it('đơn đã đóng: không tự áp dụng, không lưu đề xuất', async () => {
     const { service, orders } = await buildService();
     const response = await service.suggest(CALLER, {
