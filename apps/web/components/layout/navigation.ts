@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LucideIcon } from "lucide-react";
 import {
+  Activity,
   Archive,
   Ban,
   BarChart3,
@@ -49,6 +50,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/distribution", icon: Package, label: "Phân phối đơn" },
       { href: "/warehouse", icon: Archive, label: "Kho và tồn kho" },
+      { href: "/fleet-twin", icon: Activity, label: "Giám sát đội xe" },
       { href: "/customer-care", icon: Headset, label: "Chăm sóc khách hàng" },
     ],
     label: "Vận hành",

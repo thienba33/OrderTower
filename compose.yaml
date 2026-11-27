@@ -152,6 +152,9 @@ services:
       CLAMAV_PORT: 3310
       OLLAMA_HOST: ${OLLAMA_HOST:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      TELEMETRY_DEVICE_KEY: ${TELEMETRY_DEVICE_KEY:-dev-device-key}
+      TELEMETRY_ONLINE_SECONDS: ${TELEMETRY_ONLINE_SECONDS:-300}
+      TELEMETRY_STALE_SECONDS: ${TELEMETRY_STALE_SECONDS:-1800}
     depends_on:
       postgres:
         condition: service_healthy

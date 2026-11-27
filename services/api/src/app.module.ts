@@ -22,6 +22,7 @@ import { ReturnsModule } from './returns/return.module';
 import { SeedModule } from './seed/seed.module';
 import { ShipmentsModule } from './shipments/shipment.module';
 import { StorageModule } from './storage/storage.module';
+import { TelemetryModule } from './telemetry/telemetry.module';
 import { TenantModule } from './tenant/tenant.module';
 import { TenantContextInterceptor } from './tenant/tenant.interceptor';
 import { TicketsModule } from './tickets/tickets.module';
@@ -47,6 +48,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     SeedModule,
     ShipmentsModule,
     StorageModule,
+    TelemetryModule,
     TenantModule,
     TicketsModule,
     VehiclesModule,

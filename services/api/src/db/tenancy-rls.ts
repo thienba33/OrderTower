@@ -26,6 +26,7 @@ export const TENANT_RLS_TABLES: readonly string[] = [
   'tickets',
   'files',
   'outbox_events',
+  'telemetry_readings',
 ];
 
 export const TENANT_TRIGGER_ONLY_TABLES: readonly string[] = ['audit_log'];
