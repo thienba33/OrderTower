@@ -207,6 +207,10 @@ export const TELEMETRY_WRITE_ROLES: readonly string[] = [
   DISPATCHER,
 ];
 
+// Archive/lakehouse là dữ liệu quản trị; chỉ quản lý và quản trị viên.
+export const ARCHIVE_READ_ROLES: readonly string[] = [ADMIN, MANAGER];
+export const ARCHIVE_WRITE_ROLES: readonly string[] = [ADMIN, MANAGER];
+
 export function hasAnyRole(
   callerRoles: readonly string[],
   allowed: readonly string[],

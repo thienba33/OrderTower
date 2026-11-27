@@ -109,7 +109,7 @@ export interface LlmParsedAddress {
 }
 
 // 1 ảnh chụp địa chỉ kèm điểm tin cậy và lý do, lưu trong before_json /
-// after_json của đề xuất (dạng JSONB, xem migration 018).
+// after_json của đề xuất (dạng JSONB, xem migration 019).
 export interface AddressSnapshot {
   address: AddressInput;
   trust: number;

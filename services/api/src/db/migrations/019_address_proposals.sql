@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: Apache-2.0
--- Migration 018: bảng lưu bền cho đề xuất chuẩn hóa địa chỉ (AI số 1,
+-- Migration 019: bảng lưu bền cho đề xuất chuẩn hóa địa chỉ (AI số 1,
 -- xem bản dự thảo du-thao-ai-chuan-hoa-dia-chi.md mục 4.1).
 -- address_proposals: 1 đề xuất chuẩn hóa cho 1 đơn, kèm địa chỉ trước/sau
 -- và lý do từng phần; người duyệt quyết định 1 lần (áp dụng/từ chối).

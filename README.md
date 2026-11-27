@@ -151,7 +151,7 @@ API tự động kiểm tra và nạp dữ liệu mẫu khi bảng còn trống 
 ### Hồ sơ Proof of Freedom (PoF)
 
 - **Giấy phép:** Apache License 2.0 toàn văn tại [LICENSE](LICENSE), bản quyền tại [NOTICE](NOTICE), khai báo SPDX trong mọi tệp mã và kiểm tra bằng `reuse lint` trong CI.
-- **SBOM & Phụ thuộc:** Bảng kê khai giấy phép tại [LICENSES.md](LICENSES.md) cùng 2 tệp SBOM CycloneDX 1.7 sinh từ lockfile bằng `@cyclonedx/cyclonedx-npm`: [sbom/api.cyclonedx.json](sbom/api.cyclonedx.json) (491 thành phần) và [sbom/web.cyclonedx.json](sbom/web.cyclonedx.json) (361 thành phần).
+- **SBOM & Phụ thuộc:** Bảng kê khai giấy phép tại [LICENSES.md](LICENSES.md) cùng 2 tệp SBOM CycloneDX 1.7 sinh từ lockfile bằng `@cyclonedx/cyclonedx-npm`: [sbom/api.cyclonedx.json](sbom/api.cyclonedx.json) (493 thành phần) và [sbom/web.cyclonedx.json](sbom/web.cyclonedx.json) (361 thành phần).
 - **Phát hành mở:** Theo SemVer, định dạng `.tar.gz` kèm checksum `SHA256SUMS` qua [scripts/make-release.sh](scripts/make-release.sh).
 
 ---

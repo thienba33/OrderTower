@@ -18,8 +18,9 @@
 | pg | 8.23.1 | MIT | Truy cập Postgres (API) |
 | reflect-metadata | 0.2.2 | Apache-2.0 | Decorator NestJS (API) |
 | rxjs | 7.8.2 | Apache-2.0 | Luồng bất đồng bộ NestJS (API) |
+| parquetjs-lite | 0.8.7 | MIT | Ghi/đọc Parquet cho lakehouse-lite (API) |
 
 SBOM (CycloneDX 1.7) sinh từ lockfile bằng @cyclonedx/cyclonedx-npm:
-`sbom/api.cyclonedx.json` (services/api, 491 thành phần) và
+`sbom/api.cyclonedx.json` (services/api, 493 thành phần) và
 `sbom/web.cyclonedx.json` (apps/web, 361 thành phần). Mỗi tệp gồm cả
 dependencies dùng khi chạy và dependencies chỉ dùng khi phát triển.
