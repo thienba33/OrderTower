@@ -238,7 +238,7 @@ nên chưa có luồng lưu file end-to-end của ứng dụng.
 | Keycloak | 26.8.1 | 8081, chỉ loopback để quản trị; người dùng qua APISIX |
 | Apache APISIX | 3.19.0-debian | 9080 |
 | SeaweedFS (mini, object storage/S3) | 4.51 | 8333, 8888, 9333 |
-| Vault (dev) | 1.20.4 | 8200, chỉ loopback |
+| OpenBao (dev) | 2.7.3 | 8200, chỉ loopback |
 
 Lệnh ở bước 2 khởi động PostgreSQL, Keycloak và APISIX. Các dịch vụ còn lại
 được khai báo trong Compose; bảng này không xác nhận tích hợp đã hoàn tất.
@@ -274,10 +274,10 @@ Script backup tạo file custom-format + SHA-256; restore dừng API trong lúc
 restore rồi bật lại. GitOps manifest cho Prometheus/Grafana nằm ở
 [`gitops/`](gitops/README.md).
 
-## Vault dev
+## OpenBao dev
 
-`vault` + `vault-init` seed KV v2 `secret/ordertower` (DB URL, S3 key,
+`openbao` + `openbao-init` seed KV v2 `secret/ordertower` (DB URL, S3 key,
 Keycloak admin, demo password). API entrypoint đọc secret khi
-`VAULT_ENABLED=1`; fallback env nếu tắt. Chi tiết rotate/token/HSM ở
-[`vault/README.md`](vault/README.md). Đây là dev server/root token, không dùng
-cho production.
+`OPENBAO_ENABLED=1`; fallback env nếu tắt. Chi tiết rotate/token/HSM ở
+[`openbao/README.md`](openbao/README.md). Đây là dev server/root token, không
+dùng cho production. OpenBao (MPL 2.0) thay Vault (BUSL) để giữ lõi nguồn mở.

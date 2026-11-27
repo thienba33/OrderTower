@@ -86,7 +86,7 @@ Các doanh nghiệp nhỏ và hộ kinh doanh bán hàng đa kênh (vận hành 
 | **Bảo mật đa lớp** | Đăng nhập PKCE S256 qua Keycloak (token trong cookie `httpOnly`), APISIX gateway và kiểm tra vai trò `@Roles` (`RolesGuard`) ở API |
 | **Tenant/RLS** | Claim `tenant_id` (fallback `default`), `tenant_id` trên bảng nghiệp vụ, trigger gán tenant và `FORCE ROW LEVEL SECURITY` trên Postgres runtime; audit giữ chuỗi hash toàn cục |
 | **Observability** | JSON access log kèm `requestId`/`tenantId`, `/api/metrics`, Prometheus + Grafana, backup/restore PostgreSQL và GitOps manifest |
-| **Vault dev** | KV v2 `secret/ordertower` cho DB/S3/Keycloak/demo; API đọc secret qua entrypoint, fallback env; tài liệu rotate/AppRole/HSM |
+| **OpenBao dev** | KV v2 `secret/ordertower` cho DB/S3/Keycloak/demo (MPL 2.0); API đọc secret qua entrypoint, fallback env; tài liệu rotate/AppRole/HSM |
 | **Lưu trữ file kiểm dịch** | Ảnh bằng chứng giao hàng và chứng từ tải qua API lưu trên SeaweedFS S3, quét ClamAV qua giao thức `INSTREAM` |
 | **Nguồn mở chuẩn PoF** | Giấy phép Apache 2.0, kiểm tra REUSE/SPDX trong CI, đầy đủ `CHANGELOG.md`, `LICENSES.md` và SBOM CycloneDX 1.7 |
 
