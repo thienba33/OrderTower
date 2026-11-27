@@ -88,31 +88,30 @@ services:
     volumes:
       - clamdb:/var/lib/clamav
 
-  vault:
-    image: hashicorp/vault:1.20.4
-    command: server -dev -dev-root-token-id=${VAULT_ROOT_TOKEN:-dev-root-token} -dev-listen-address=0.0.0.0:8200
+  openbao:
+    image: openbao/openbao:2.7.3
+    command: server -dev -dev-root-token-id=${OPENBAO_ROOT_TOKEN:-dev-root-token}
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_ROOT_TOKEN:-dev-root-token}
-      VAULT_ROOT_TOKEN: ${VAULT_ROOT_TOKEN:-dev-root-token}
-      VAULT_ADDR: http://127.0.0.1:8200
+      BAO_DEV_ROOT_TOKEN_ID: ${OPENBAO_ROOT_TOKEN:-dev-root-token}
+      BAO_ADDR: http://127.0.0.1:8200
     cap_add:
       - IPC_LOCK
     ports:
       - "127.0.0.1:8200:8200"
     healthcheck:
-      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
       interval: 5s
       timeout: 3s
       retries: 12
 
-  vault-init:
-    image: hashicorp/vault:1.20.4
+  openbao-init:
+    image: openbao/openbao:2.7.3
     depends_on:
-      vault:
+      openbao:
         condition: service_healthy
     environment:
-      VAULT_ADDR: http://vault:8200
-      VAULT_TOKEN: ${VAULT_ROOT_TOKEN:-dev-root-token}
+      BAO_ADDR: http://openbao:8200
+      BAO_TOKEN: ${OPENBAO_ROOT_TOKEN:-dev-root-token}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
       S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
@@ -120,8 +119,8 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
       ORDERTOWER_DEMO_PASSWORD: ${ORDERTOWER_DEMO_PASSWORD:?ORDERTOWER_DEMO_PASSWORD is required}
     volumes:
-      - ./infra/vault/init.sh:/vault/init.sh:ro
-    entrypoint: ["/bin/sh", "/vault/init.sh"]
+      - ./infra/openbao/init.sh:/openbao/init.sh:ro
+    entrypoint: ["/bin/sh", "/openbao/init.sh"]
     restart: "no"
 
   api:
@@ -141,11 +140,11 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
       S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
       S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
-      VAULT_ENABLED: ${VAULT_ENABLED:-1}
-      VAULT_ADDR: http://vault:8200
-      VAULT_TOKEN: ${VAULT_ROOT_TOKEN:-dev-root-token}
-      VAULT_SECRET_PATH: secret/data/ordertower
-      VAULT_REQUIRED: ${VAULT_REQUIRED:-0}
+      OPENBAO_ENABLED: ${OPENBAO_ENABLED:-1}
+      OPENBAO_ADDR: http://openbao:8200
+      OPENBAO_TOKEN: ${OPENBAO_ROOT_TOKEN:-dev-root-token}
+      OPENBAO_SECRET_PATH: secret/data/ordertower
+      OPENBAO_REQUIRED: ${OPENBAO_REQUIRED:-0}
       CLAMAV_ENABLED: ${CLAMAV_ENABLED:-true}
       CLAMAV_REQUIRED: ${CLAMAV_REQUIRED:-true}
       CLAMAV_HOST: clamav
@@ -163,7 +162,7 @@ services:
         condition: service_healthy
       seaweedfs:
         condition: service_healthy
-      vault-init:
+      openbao-init:
         condition: service_completed_successfully
 
   waf:

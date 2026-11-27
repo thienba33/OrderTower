@@ -8,6 +8,7 @@
 | PostgreSQL | 16 | PostgreSQL License | Cơ sở dữ liệu giao dịch |
 | SeaweedFS | 4.51 | Apache 2.0 | Kho đối tượng, chế độ mini |
 | ClamAV | stable | GPL-2.0 | Kiểm dịch file upload, chạy container độc lập qua giao thức TCP INSTREAM |
+| OpenBao | 2.7.3 | MPL-2.0 | Quản lý secret dev (KV v2), thay Vault BUSL |
 | Next.js | 14.2.35 | MIT | Web điều hành |
 | React | 18.3.1 | MIT | Giao diện web |
 | lucide-react | 0.454.0 | ISC | Icon giao diện |

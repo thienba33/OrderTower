@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-# Seed KV v2 cho local. Chỉ dùng Vault dev; production dùng AppRole + TLS.
+# Seed KV v2 cho local. Chỉ dùng OpenBao dev; production dùng AppRole + TLS.
 set -eu
 
-export VAULT_ADDR="${VAULT_ADDR:-http://vault:8200}"
-: "${VAULT_TOKEN:?VAULT_TOKEN is required}"
+export BAO_ADDR="${BAO_ADDR:-http://openbao:8200}"
+: "${BAO_TOKEN:?BAO_TOKEN is required}"
 
-echo "Chờ Vault sẵn sàng..."
-until vault status >/dev/null 2>&1; do
+echo "Chờ OpenBao sẵn sàng..."
+until bao status >/dev/null 2>&1; do
   sleep 1
 done
 
-vault kv put secret/ordertower \
+bao kv put secret/ordertower \
   database_url="${DATABASE_URL:?DATABASE_URL is required}" \
   s3_access_key="${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}" \
   s3_secret_key="${S3_SECRET_KEY:?S3_SECRET_KEY is required}" \
