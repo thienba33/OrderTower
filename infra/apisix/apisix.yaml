@@ -93,6 +93,37 @@ routes:
       type: roundrobin
       nodes:
         "waf:8080": 1
+  # Thiết bị/cảm biến gửi telemetry. Không dùng JWT người dùng nhưng bắt
+  # buộc device key ở API; rate limit riêng để tránh lạm dụng.
+  - id: ordertower-telemetry-ingest
+    uri: /api/telemetry/readings
+    methods: ["POST"]
+    priority: 100
+    plugins:
+      limit-req:
+        rate: 5
+        burst: 10
+        nodelay: true
+        key: remote_addr
+        rejected_code: 429
+        rejected_msg: "Quá nhiều reading telemetry, thử lại sau."
+      request-id:
+        include_in_response: true
+      response-rewrite:
+        headers:
+          set:
+            X-Content-Type-Options: nosniff
+            X-Frame-Options: DENY
+            Referrer-Policy: no-referrer
+            Permissions-Policy: "geolocation=(), camera=(), microphone=()"
+            Cross-Origin-Resource-Policy: same-origin
+            Content-Security-Policy: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+            Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+    upstream:
+      type: roundrobin
+      nodes:
+        "waf:8080": 1
+
   # API nghiệp vụ yêu cầu access token.
   - id: ordertower-api
     uri: /api/*
