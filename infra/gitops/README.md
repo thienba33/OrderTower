@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# GitOps cho observability
+# GitOps cho observability và app
 
 Thư mục này là desired state cho Argo CD, tách khỏi compose dùng ở local.
 
@@ -7,10 +7,15 @@ Thư mục này là desired state cho Argo CD, tách khỏi compose dùng ở lo
 
 - `argocd/application.yaml`: Argo CD Application trỏ về `infra/gitops/observability`
   trên nhánh `dev`, tự sync/prune/self-heal.
+- `argocd/application-app.yaml`: Argo CD Application trỏ về `infra/gitops/app`.
 - `observability/`: Kustomize cho Prometheus + Grafana.
   - Prometheus scrape `ordertower-api.ordertower.svc.cluster.local:3001/api/metrics`.
   - Grafana datasource trỏ Prometheus trong cùng namespace.
   - Dashboard `OrderTower API` được provision sẵn.
+- `app/`: Kustomize cho API + web, Ingress TLS, NetworkPolicy zero-trust.
+  - API chỉ có ClusterIP; `/api`, `/realms`, `/resources` qua APISIX.
+  - Web chạy sau Ingress, cookie `Secure=true`.
+  - Chi tiết và điều kiện sync ở [`app/README.md`](app/README.md).
 
 ## Trước khi sync
 
@@ -29,6 +34,7 @@ Nếu API chạy ở namespace/tên service khác, sửa target trong
 
 ```bash
 kubectl kustomize infra/gitops/observability >/dev/null
+kubectl kustomize infra/gitops/app >/dev/null
 ```
 
 ## Liên hệ với local

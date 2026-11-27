@@ -155,7 +155,7 @@ backend phải kiểm tra quyền và phạm vi dữ liệu.
 | --- | --- |
 | `/realms/*` | Chuyển tới Keycloak; không yêu cầu token; có `limit-req` và request ID |
 | `/resources/*` | CSS, JavaScript, ảnh của Keycloak; tách khỏi quota xác thực |
-| `/api/*` | Kiểm tra token trước khi chuyển tới backend `api:3001` |
+| `/api/*` | Kiểm tra token trước khi chuyển tới backend `api:3001` (API chỉ loopback) |
 | `/admin/*`, `/metrics`, `/health` | Không có route public; trả `404` |
 
 Đăng nhập, đăng ký, quên mật khẩu, đổi code lấy token và logout đều dùng
@@ -271,8 +271,10 @@ RESTORE_YES=1 ./scripts/restore-postgres.sh backups/ordertower-<timestamp>.dump
 ```
 
 Script backup tạo file custom-format + SHA-256; restore dừng API trong lúc
-restore rồi bật lại. GitOps manifest cho Prometheus/Grafana nằm ở
-[`gitops/`](gitops/README.md).
+restore rồi bật lại. GitOps manifest cho Prometheus/Grafana và app API/web
+nằm ở [`gitops/`](gitops/README.md). App dùng Ingress TLS + NetworkPolicy
+default-deny; API chỉ có ClusterIP, chi tiết ở
+[`gitops/app/README.md`](gitops/app/README.md).
 
 ## OpenBao dev
 

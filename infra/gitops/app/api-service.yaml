@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# API không có Ingress riêng: chỉ APISIX/WAF trong cùng namespace gọi được.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ordertower-api
+  labels:
+    app.kubernetes.io/name: ordertower-api
+    app.kubernetes.io/part-of: ordertower
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ordertower-api
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http

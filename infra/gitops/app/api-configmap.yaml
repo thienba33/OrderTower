@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# Cấu hình không bí mật của API. Secret nằm trong Secret ordertower-secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ordertower-api-config
+  labels:
+    app.kubernetes.io/name: ordertower-api
+    app.kubernetes.io/part-of: ordertower
+data:
+  NODE_ENV: production
+  PORT: "3001"
+  KEYCLOAK_URL: https://ordertower.local
+  KEYCLOAK_INTERNAL_URL: http://keycloak.ordertower.svc.cluster.local:8080
+  KEYCLOAK_REALM: ordertower
+  KEYCLOAK_CLIENT_ID: ordertower-web
+  KEYCLOAK_PORTAL_CLIENT_ID: ordertower-portal
+  S3_ENDPOINT: http://seaweedfs.ordertower.svc.cluster.local:8333
+  S3_BUCKET: ordertower-chung-tu
+  OPENBAO_ENABLED: "1"
+  OPENBAO_ADDR: http://openbao.ordertower.svc.cluster.local:8200
+  OPENBAO_SECRET_PATH: secret/data/ordertower
+  OPENBAO_REQUIRED: "1"
+  AUTOMATION_ENABLED: "1"
+  AUTOMATION_OUTBOX_INTERVAL_MS: "15000"
+  AUTOMATION_SLA_INTERVAL_MS: "60000"
+  CLAMAV_ENABLED: "true"
+  CLAMAV_REQUIRED: "true"
+  CLAMAV_HOST: clamav.ordertower.svc.cluster.local
+  CLAMAV_PORT: "3310"
+  TELEMETRY_DEVICE_KEY: change-me
+  TELEMETRY_ONLINE_SECONDS: "300"
+  TELEMETRY_STALE_SECONDS: "1800"

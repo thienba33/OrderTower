@@ -9,8 +9,9 @@ import { cookies } from 'next/headers';
 // nên trình duyệt cũng không được gọi API trực tiếp.
 
 // Gốc của app web. Keycloak đã đăng ký redirect URI này; chạy production
-// thì đổi thành gốc thật và đăng ký lại redirect URI trong realm.
-export const APP_ORIGIN = 'http://localhost:3000';
+// đặt APP_ORIGIN=https://... và đăng ký lại redirect URI trong realm.
+export const APP_ORIGIN =
+  process.env.APP_ORIGIN ?? 'http://localhost:3000';
 
 const KEYCLOAK_URL = process.env.KEYCLOAK_URL ?? 'http://localhost:9080';
 // URL nội bộ để server gọi Keycloak (đổi token, lấy discovery): trong
@@ -29,13 +30,13 @@ const ID_TOKEN_COOKIE = 'ot_id_token';
 const STATE_COOKIE = 'ot_oauth_state';
 const VERIFIER_COOKIE = 'ot_code_verifier';
 
-// Cookie đăng nhập chạy qua HTTP ở môi trường dev nên Secure=false.
-// Production chạy HTTPS thì PHẢI đặt Secure=true.
+// Cookie đăng nhập chạy qua HTTP ở môi trường dev nên mặc định Secure=false.
+// Production chạy HTTPS thì PHẢI đặt COOKIE_SECURE=true.
 const COOKIE_BASE = {
   httpOnly: true,
   path: '/',
   sameSite: 'lax' as const,
-  secure: false,
+  secure: process.env.COOKIE_SECURE === 'true',
 };
 
 export interface Session {
