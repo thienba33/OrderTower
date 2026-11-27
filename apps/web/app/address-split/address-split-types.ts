@@ -54,10 +54,26 @@ export interface AddressProposal {
   updatedAt: string;
 }
 
+// Lỗi phân tách: địa chỉ không xác định được an toàn từ dữ liệu hành
+// chính nên hệ thống không đoán, màn hình đưa đơn vào phần Lỗi phân tách
+// để người dùng tự hiệu chỉnh.
+export type SplitErrorCode =
+  | "ward-not-in-province"
+  | "province-not-found"
+  | "ward-not-found"
+  | "ambiguous-ward";
+
+export interface SplitError {
+  code: SplitErrorCode;
+  message: string;
+}
+
 // Kết quả POST /api/address/suggest. proposal null khi mức thấp (không
 // có đề xuất áp dụng được), khi địa chỉ đã đạt mức cao, hoặc khi đơn đã
 // đóng; applied true chỉ khi mức cao và đã tự áp dụng vào đơn. source ghi
 // đề xuất đến từ luật hay từ LLM (đã kiểm lại phường với danh mục).
+// splitError có khi địa chỉ không xác định được an toàn: màn hình đưa đơn
+// vào phần Lỗi phân tách để người dùng tự hiệu chỉnh.
 export interface SuggestResponse {
   proposal: AddressProposal | null;
   before: AddressSnapshot;
@@ -66,4 +82,5 @@ export interface SuggestResponse {
   source: "rules" | "llm";
   applied: boolean;
   note?: string;
+  splitError?: SplitError;
 }

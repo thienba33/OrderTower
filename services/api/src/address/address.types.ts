@@ -64,6 +64,20 @@ export interface AddressParts {
   street: string;
 }
 
+// Mã lỗi phân tách: địa chỉ không xác định được an toàn từ dữ liệu
+// hành chính nên hệ thống không đoán, để người dùng tự hiệu chỉnh ở
+// phần Lỗi phân tách trên màn hình.
+export type SplitErrorCode =
+  | 'ward-not-in-province'
+  | 'province-not-found'
+  | 'ward-not-found'
+  | 'ambiguous-ward';
+
+export interface SplitError {
+  code: SplitErrorCode;
+  message: string;
+}
+
 // Kết quả thuật toán đề xuất chuẩn hóa: địa chỉ đề xuất kèm lý do từng
 // phần. Tỉnh trả về dạng tên ngắn (bỏ tiền tố "Tỉnh "/"Thành phố "),
 // phường trả về tên đầy đủ như danh mục ("Phường Cửa Nam"), giống cách
@@ -86,6 +100,9 @@ export interface SuggestedAddress {
   // Các phường đúng của tỉnh đã khớp, để nhập tay khi phường chưa xác
   // định được (mức thấp).
   choices?: { wards: string[] };
+  // Lỗi phân tách khi địa chỉ không xác định được an toàn: hệ thống
+  // không đoán, màn hình đưa đơn vào phần Lỗi phân tách để nhập tay.
+  splitError?: SplitError;
 }
 
 export type AddressProposalStatus =
@@ -155,6 +172,9 @@ export interface SuggestResponse {
   applied: boolean;
   // Ghi chú thêm, ví dụ đơn đã đóng nên không tự áp dụng được.
   note?: string;
+  // Lỗi phân tách khi địa chỉ không xác định được an toàn từ dữ liệu
+  // hành chính: màn hình đưa đơn vào phần Lỗi phân tách để nhập tay.
+  splitError?: SplitError;
 }
 
 export interface DecisionProposalInput {

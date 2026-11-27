@@ -365,6 +365,9 @@ describe('AddressProposalService.decide / getProposal', () => {
 
 describe('AddressProposalService.suggest (LLM lai)', () => {
   it('LLM sửa được phường viết tắt mà luật không khớp, tự áp dụng, ghi audit llm-suggested', async () => {
+    // "HKiem" luật không khớp được: quá dài cho tra chữ cái đầu (<= 3
+    // ký tự) và quá xa cho khớp mờ (cách "hoan kiem" 4 ký tự), nên LLM
+    // vẫn cần để sửa. "HK" thì luật đã tra chữ cái đầu ra, không gọi LLM.
     const llm = buildLlmStub(() => ({
       province: 'Hà Nội',
       ward: 'Phường Hoàn Kiếm',
@@ -373,10 +376,10 @@ describe('AddressProposalService.suggest (LLM lai)', () => {
     const { service, store, auditAppend } = await buildService(llm);
     const response = await service.suggest(CALLER, {
       orderId: 'DH-1001',
-      raw: 'Số 1 phố Hàng Bè, p. HK, Hà Nội',
+      raw: 'Số 1 phố Hàng Bè, p. HKiem, Hà Nội',
     });
     expect(llm.parseAddress).toHaveBeenCalledWith(
-      'Số 1 phố Hàng Bè, p. HK, Hà Nội',
+      'Số 1 phố Hàng Bè, p. HKiem, Hà Nội',
     );
     expect(response.source).toBe('llm');
     expect(response.applied).toBe(true);
@@ -495,7 +498,7 @@ describe('AddressProposalService.suggest (LLM lai)', () => {
     expect(response.after.trust).toBe(100);
   });
 
-  it('LLM chưa cấu hình (enabled = false) thì không gọi parseAddress, dùng luật', async () => {
+  it('LLM chưa cấu hình (enabled = false) thì không gọi parseAddress, dùng luật; luật tra chữ cái đầu ra Hoàn Kiếm', async () => {
     const llm = buildLlmStub(
       () => ({
         province: 'Hà Nội',
@@ -511,8 +514,9 @@ describe('AddressProposalService.suggest (LLM lai)', () => {
     });
     expect(llm.parseAddress).not.toHaveBeenCalled();
     expect(response.source).toBe('rules');
-    expect(response.proposal).toBeNull();
-    expect(response.after.trust).toBe(60);
+    expect(response.applied).toBe(true);
+    expect(response.after.address.ward).toBe('Phường Hoàn Kiếm');
+    expect(response.after.trust).toBe(100);
   });
 
   it('địa chỉ đã đạt mức cao thì không gọi LLM', async () => {
@@ -527,5 +531,150 @@ describe('AddressProposalService.suggest (LLM lai)', () => {
     expect(response.source).toBe('rules');
     expect(response.proposal).toBeNull();
     expect(response.note).toContain('đã đạt độ tin cậy cao');
+  });
+
+  it('LLM trả phường chỉ khớp mờ với danh mục thì bỏ, dùng luật; luật tra chữ cái đầu ra Hoàn Kiếm (p. HK)', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Hồng Kông',
+      street: 'Số 1 phố Hàng Bè',
+    }));
+    const { service, auditAppend } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 1 phố Hàng Bè, p. HK, Hà Nội',
+    });
+    expect(response.source).toBe('rules');
+    expect(response.applied).toBe(true);
+    expect(response.after.address.ward).toBe('Phường Hoàn Kiếm');
+    expect(response.after.trust).toBe(100);
+    expect(response.splitError).toBeUndefined();
+    expect(auditAppend).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'address-proposal.llm-suggested' }),
+    );
+  });
+
+  it('B6: luật tra chữ cái đầu đã đủ tin cậy thì KHÔNG gọi LLM, LLM không được ghi đè thành phường khác', async () => {
+    // LLM trả phường thật khác trong cùng tỉnh (Hai Bà Trưng thay vì
+    // Hoàn Kiếm): nếu gọi LLM thì cổng kiểm tra vẫn nhận, tự áp dụng
+    // sai. Luật đã ra Hoàn Kiếm ở trust 100 nên không gọi LLM.
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Hai Bà Trưng',
+      street: 'Số 1 phố Hàng Bè',
+    }));
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 1 phố Hàng Bè, p. HK, Hà Nội',
+    });
+    expect(llm.parseAddress).not.toHaveBeenCalled();
+    expect(response.source).toBe('rules');
+    expect(response.applied).toBe(true);
+    expect(response.after.address.ward).toBe('Phường Hoàn Kiếm');
+    expect(response.after.address.province).toBe('Hà Nội');
+    expect(response.after.trust).toBe(100);
+    expect(response.splitError).toBeUndefined();
+  });
+
+  it('phường ghi rõ mà không có trong tỉnh thì lỗi phân tách, không tự áp dụng (Láng Tròn)', async () => {
+    const { service } = await buildService();
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 7 đường Láng, Phường Láng Tròn, Hà Nội',
+    });
+    expect(response.source).toBe('rules');
+    expect(response.proposal).toBeNull();
+    expect(response.applied).toBe(false);
+    expect(response.after.trust).toBe(60);
+    expect(response.splitError?.code).toBe('ward-not-in-province');
+    expect(response.choices!.wards).toHaveLength(126);
+  });
+
+  it('tỉnh không tra được thì lỗi phân tách (Bình Dương đã sáp nhập)', async () => {
+    const { service } = await buildService();
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Phường Bến Nghé, Tỉnh Bình Dương',
+    });
+    expect(response.proposal).toBeNull();
+    expect(response.applied).toBe(false);
+    expect(response.after.trust).toBe(20);
+    expect(response.splitError?.code).toBe('province-not-found');
+  });
+
+  it('LLM trả phường cũ tách đôi thì rơi về luật, cùng đáp án đúng (Phạm Đình Hổ -> Hai Bà Trưng)', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Phạm Đình Hổ',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    }));
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Phường Phạm Đình Hổ, q. hai bà trưng, hà nội',
+    });
+    expect(response.source).toBe('rules');
+    expect(response.applied).toBe(true);
+    expect(response.after.address.ward).toBe('Phường Hai Bà Trưng');
+    expect(response.after.trust).toBe(100);
+  });
+
+  it('LLM trả tỉnh khác tỉnh đã ghi trong chuỗi thì bỏ, dùng luật (tỉnh lỗi dấu)', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hề Nôi',
+      ward: 'Phương Hoàng Vàn Thú',
+      street: 'Sô 20 ĐƯưộng Hoàng Vàn Thú',
+    }));
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 20 đường Hoàng Văn Thụ, Phường Hoàng Văn Thụ, Hà Nội',
+    });
+    expect(response.source).toBe('rules');
+    expect(response.applied).toBe(true);
+    expect(response.after.address.ward).toBe('Phường Tương Mai');
+    expect(response.after.trust).toBe(100);
+  });
+
+  it('LLM đoán tỉnh cho phường có ở nhiều tỉnh thì bỏ, dùng luật (Phường Hoàng Mai)', async () => {
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Hoàng Mai',
+      street: 'Số 5 đường Giải Phóng',
+    }));
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 5 đường Giải Phóng, Phường Hoàng Mai',
+    });
+    expect(response.source).toBe('rules');
+    expect(response.proposal).toBeNull();
+    expect(response.applied).toBe(false);
+    expect(response.after.trust).toBe(20);
+    expect(response.splitError?.code).toBe('ambiguous-ward');
+  });
+
+  it('LLM đoán tỉnh cho phường chỉ có ở đúng 1 tỉnh thì nhận (Cua Nma -> Cửa Nam, Hà Nội)', async () => {
+    // Phường gõ sai "Cua Nma" mà không ghi tỉnh: luật không tra được
+    // (nhánh không tỉnh chỉ khớp chính xác), nên LLM vẫn cần để sửa
+    // phường và đoán tỉnh. Phường Cửa Nam chỉ có ở Hà Nội nên tỉnh LLM
+    // đoán được dữ liệu hành chính buộc ra, nhận gợi ý LLM.
+    const llm = buildLlmStub(() => ({
+      province: 'Hà Nội',
+      ward: 'Phường Cửa Nam',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    }));
+    const { service } = await buildService(llm);
+    const response = await service.suggest(CALLER, {
+      orderId: 'DH-1001',
+      raw: 'Số 12 ngõ 34 phố Hàng Bè, Phường Cua Nma',
+    });
+    expect(llm.parseAddress).toHaveBeenCalled();
+    expect(response.source).toBe('llm');
+    expect(response.applied).toBe(true);
+    expect(response.after.address.province).toBe('Hà Nội');
+    expect(response.after.address.ward).toBe('Phường Cửa Nam');
+    expect(response.after.trust).toBe(100);
   });
 });

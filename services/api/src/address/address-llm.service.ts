@@ -16,6 +16,7 @@ const LLM_SYSTEM_PROMPT = [
   '- "ward": xã/phường, ví dụ "Phường Cửa Nam".',
   '- "street": số nhà, ngõ, đường, ví dụ "Số 12 ngõ 34 phố Hàng Bè".',
   'Giữ nguyên tên như trong chuỗi, chỉ sửa lỗi gõ nhẹ (ví dụ "Cua Nma" thành "Cửa Nam"). Không bịa thêm phường hay tỉnh không có trong chuỗi.',
+  'Bỏ qua quận/huyện cũ (q., quận, huyện): đó không phải phường, không lấy tên quận làm phường.',
   'Trả đúng dạng: {"province": "...", "ward": "...", "street": "..."}.',
 ].join('\n');
 

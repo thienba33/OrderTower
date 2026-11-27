@@ -17,8 +17,11 @@ import {
   matchCandidate,
   matchExact,
   matchStrict,
+  matchWardByInitials,
   normalizeForMatch,
+  provincesContainingWard,
   scoreAddress,
+  shortProvinceName,
   splitRawAddress,
   suggest,
 } from './address.suggest';
@@ -41,6 +44,7 @@ interface RunOutcome {
   trust: number;
   fuzzy: boolean;
   choicesLength: number;
+  splitError?: string;
 }
 
 function runRaw(raw: string): RunOutcome {
@@ -63,6 +67,7 @@ function runParts(parts: AddressParts): RunOutcome {
     trust,
     fuzzy: suggestion.fuzzy,
     choicesLength: suggestion.choices ? suggestion.choices.wards.length : 0,
+    splitError: suggestion.splitError?.code,
   };
 }
 
@@ -150,6 +155,69 @@ describe('splitRawAddress', () => {
       legacyMap,
     ).parts;
     expect(b).toEqual(a);
+  });
+
+  it('phần phường không bị nhận nhầm thành tỉnh (Phường Láng Tròn không thành Lạng Sơn)', () => {
+    const { parts } = splitRawAddress(
+      'Số 7 đường Láng, Phường Láng Tròn, Hà Nội',
+      gazetteer,
+      legacyMap,
+    );
+    expect(parts.province).toBe('Hà Nội');
+    expect(parts.ward).toBe('Phường Láng Tròn');
+    expect(parts.street).toBe('Số 7 đường Láng');
+  });
+
+  it('phần quận cũ không bị nhận nhầm thành tỉnh (q. Hoàn Kiếm không thành tỉnh)', () => {
+    const { parts } = splitRawAddress(
+      'Số 12 ngõ 34 phố Hàng Bè, q. hoàn kiếm, p. trần hưng đạo, hà nội',
+      gazetteer,
+      legacyMap,
+    );
+    expect(parts.province).toBe('hà nội');
+    expect(parts.ward).toBe('p. trần hưng đạo');
+    expect(parts.district).toBe('q. hoàn kiếm');
+  });
+
+  it('tỉnh không còn tồn tại vẫn giữ làm phần tỉnh để báo lỗi (Bình Dương)', () => {
+    const { parts } = splitRawAddress(
+      'Số 12 ngõ 34 phố Hàng Bè, Phường Bến Nghé, Tỉnh Bình Dương',
+      gazetteer,
+      legacyMap,
+    );
+    expect(parts.province).toBe('Tỉnh Bình Dương');
+    expect(parts.ward).toBe('Phường Bến Nghé');
+    expect(parts.street).toBe('Số 12 ngõ 34 phố Hàng Bè');
+  });
+
+  it('phần đường "Tỉnh lộ ..." không bị nhận thành tỉnh', () => {
+    const { parts } = splitRawAddress(
+      'Tỉnh lộ 123, Phường Cửa Nam, Hà Nội',
+      gazetteer,
+      legacyMap,
+    );
+    expect(parts.province).toBe('Hà Nội');
+    expect(parts.ward).toBe('Phường Cửa Nam');
+    expect(parts.street).toBe('Tỉnh lộ 123');
+  });
+});
+
+describe('provincesContainingWard', () => {
+  it('phường chỉ có ở 1 tỉnh, phường có ở nhiều tỉnh, phường không có', () => {
+    expect(
+      provincesContainingWard('Phường Cửa Nam', gazetteer).map((p) =>
+        shortProvinceName(p.name),
+      ),
+    ).toEqual(['Hà Nội']);
+    expect(
+      provincesContainingWard('Phường Hoàng Mai', gazetteer)
+        .map((p) => shortProvinceName(p.name))
+        .sort(),
+    ).toEqual(['Hà Nội', 'Nghệ An']);
+    expect(provincesContainingWard('Phường Không Có Thật', gazetteer)).toEqual(
+      [],
+    );
+    expect(provincesContainingWard('', gazetteer)).toEqual([]);
   });
 });
 
@@ -343,6 +411,119 @@ describe('bộ 20 trường hợp (bản dự thảo mục 7)', () => {
     expect(outcome.ward).toBe('');
     expect(outcome.trust).toBe(60);
     expect(outcome.choicesLength).toBe(126);
+  });
+
+  // Viết tắt theo chữ cái đầu + lỗi phân tách (hướng Sơn quyết 27/11:
+  // dữ liệu hành chính là chuẩn, không đoán; không xác định được thì báo
+  // lỗi để người dùng tự hiệu chỉnh).
+  describe('matchWardByInitials', () => {
+    const wards = [
+      'Phường Hoàn Kiếm',
+      'Phường Cửa Nam',
+      'Phường Hai Bà Trưng',
+      'Xã Hồng Sơn',
+    ];
+    it('chữ cái đầu trùng duy nhất thì nhận (HK -> Hoàn Kiếm)', () => {
+      expect(matchWardByInitials('HK', wards)).toEqual({
+        name: 'Phường Hoàn Kiếm',
+        ambiguous: false,
+      });
+    });
+    it('bỏ tiền tố phường trước khi tính chữ cái đầu (p. HK)', () => {
+      expect(matchWardByInitials('p. HK', wards).name).toBe(
+        'Phường Hoàn Kiếm',
+      );
+    });
+    it('trùng nhiều phường thì mơ hồ, không chọn', () => {
+      expect(
+        matchWardByInitials('HH', [
+          'Phường Hồng Hà',
+          'Phường Hoàng Hoa',
+          'Phường Cửa Nam',
+        ]),
+      ).toEqual({ name: null, ambiguous: true });
+    });
+    it('không trùng phường nào thì không khớp', () => {
+      expect(matchWardByInitials('ZZ', wards)).toEqual({
+        name: null,
+        ambiguous: false,
+      });
+    });
+    it('phần phường dài hơn 3 ký tự thì không tra chữ cái đầu', () => {
+      expect(matchWardByInitials('Hoan Kiem', wards)).toEqual({
+        name: null,
+        ambiguous: false,
+      });
+    });
+  });
+
+  it('viết tắt p. HK ở Hà Nội tra chữ cái đầu ra Hoàn Kiếm, tin cậy 100', () => {
+    const outcome = runRaw('Số 1 phố Hàng Bè, p. HK, Hà Nội');
+    expect(outcome.ward).toBe('Phường Hoàn Kiếm');
+    expect(outcome.trust).toBe(100);
+    expect(outcome.fuzzy).toBe(true);
+    expect(outcome.splitError).toBeUndefined();
+  });
+
+  it('phường ghi rõ mà không có trong tỉnh thì lỗi phân tách, không thay bằng phường khác từ đường (Láng Tròn)', () => {
+    const outcome = runRaw('Số 7 đường Láng, Phường Láng Tròn, Hà Nội');
+    expect(outcome.province).toBe('Hà Nội');
+    expect(outcome.ward).toBe('');
+    expect(outcome.trust).toBe(60);
+    expect(outcome.splitError).toBe('ward-not-in-province');
+    expect(outcome.choicesLength).toBe(126);
+  });
+
+  it('phường bịa không có trong tỉnh thì lỗi phân tách (Phường Không Có Thật)', () => {
+    const outcome = runRaw(
+      'Số 12 ngõ 34 phố Hàng Bè, Phường Không Có Thật, Hà Nội',
+    );
+    expect(outcome.ward).toBe('');
+    expect(outcome.trust).toBe(60);
+    expect(outcome.splitError).toBe('ward-not-in-province');
+  });
+
+  it('tỉnh không tra được thì lỗi phân tách (Bình Dương đã sáp nhập)', () => {
+    const outcome = runRaw(
+      'Số 12 ngõ 34 phố Hàng Bè, Phường Bến Nghé, Tỉnh Bình Dương',
+    );
+    expect(outcome.province).toBe('');
+    expect(outcome.trust).toBe(20);
+    expect(outcome.splitError).toBe('province-not-found');
+  });
+
+  it('phường có ở nhiều tỉnh mà không ghi tỉnh thì lỗi mơ hồ (Hoàng Mai)', () => {
+    const outcome = runParts({
+      ward: 'Phường Hoàng Mai',
+      street: 'Số 5 đường Giải Phóng',
+    });
+    expect(outcome.ward).toBe('');
+    expect(outcome.trust).toBe(20);
+    expect(outcome.splitError).toBe('ambiguous-ward');
+  });
+
+  it('phường có ở nhiều tỉnh mà không ghi tỉnh thì lỗi mơ hồ (Trần Hưng Đạo)', () => {
+    const outcome = runParts({
+      ward: 'Phường Trần Hưng Đạo',
+      street: 'Số 1 phố Hàng Bè',
+    });
+    expect(outcome.ward).toBe('');
+    expect(outcome.trust).toBe(20);
+    expect(outcome.splitError).toBe('ambiguous-ward');
+  });
+
+  it('thiếu phường hẳn thì không phải lỗi phân tách, chỉ mức thấp để nhập tay', () => {
+    const outcome = runRaw('Số 12 ngõ 34 phố Hàng Bè, Hà Nội');
+    expect(outcome.ward).toBe('');
+    expect(outcome.trust).toBe(60);
+    expect(outcome.splitError).toBeUndefined();
+    expect(outcome.choicesLength).toBe(126);
+  });
+
+  it('địa chỉ đúng thì không có lỗi phân tách', () => {
+    const outcome = runRaw('Số 12 ngõ 34 phố Hàng Bè, Phường Cửa Nam, Hà Nội');
+    expect(outcome.trust).toBe(100);
+    expect(outcome.splitError).toBeUndefined();
   });
 
   // 3 trường hợp chạy thêm dạng tỉnh viết trước, kết quả giống hệt.
