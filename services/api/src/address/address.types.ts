@@ -8,6 +8,10 @@ export interface AddressInput {
   district?: string;
   ward?: string;
   street?: string;
+  // Chuỗi địa chỉ thô khách ghi (Zalo/Facebook/landing page...). Chỉ dùng
+  // lúc tạo đơn: API tách bằng dữ liệu hành chính mới rồi lưu phần đã
+  // tách, không lưu nguyên văn vào đơn.
+  raw?: string;
 }
 
 export type AddressLevel = 'Tin cậy cao' | 'Cần lưu ý' | 'Rủi ro cao';

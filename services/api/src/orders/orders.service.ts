@@ -17,6 +17,10 @@ import {
   AddressService,
   MIN_ADDRESS_TRUST,
 } from '../address/address.service';
+import type {
+  AddressEvaluation,
+  AddressInput,
+} from '../address/address.types';
 import { AuditService } from '../audit/audit.service';
 import type { Caller } from '../auth/auth.types';
 import { ChannelsService } from '../channels/channel.service';
@@ -313,7 +317,7 @@ export class OrdersService implements OnModuleInit {
         if (typeof entry.address !== 'object' || entry.address === null) {
           throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: address của ${String(entry.idempotencyKey)} phải là 1 object khi có.`);
         }
-        for (const field of ['province', 'district', 'ward', 'street'] as const) {
+        for (const field of ['province', 'district', 'ward', 'street', 'raw'] as const) {
           const value = (entry.address as Record<string, unknown>)[field];
           if (value !== undefined && typeof value !== 'string') {
             throw new Error(`Tệp seed đơn tại ${path} không hợp lệ: address.${field} của ${String(entry.idempotencyKey)} phải là dạng chuỗi khi có.`);
@@ -326,6 +330,26 @@ export class OrdersService implements OnModuleInit {
       seenKeys.add(entry.idempotencyKey as string);
     }
     return items as OrderSeedItem[];
+  }
+
+  // Tách chuỗi thô khách ghi (nếu có) bằng dữ liệu hành chính mới rồi trả
+  // địa chỉ đã tách + điểm tin cậy; địa chỉ đã có cấu trúc thì chấm như
+  // cũ. Chuỗi thô thắng khi gửi kèm cả hai.
+  private resolveAddress(address: AddressInput): {
+    stored: AddressInput;
+    evaluation: AddressEvaluation;
+  } {
+    const raw = address.raw;
+    if (typeof raw === 'string' && raw.trim() !== '') {
+      const { suggestion } = this.address.suggestFromRaw(raw.trim());
+      const stored: AddressInput = {
+        ...(suggestion.province !== '' ? { province: suggestion.province } : {}),
+        ...(suggestion.ward !== '' ? { ward: suggestion.ward } : {}),
+        ...(suggestion.street !== '' ? { street: suggestion.street } : {}),
+      };
+      return { stored, evaluation: this.address.evaluate(stored) };
+    }
+    return { stored: address, evaluation: this.address.evaluate(address) };
   }
 
   async create(
@@ -347,12 +371,17 @@ export class OrdersService implements OnModuleInit {
       throw new BadRequestException('customer là bắt buộc, dạng chuỗi.');
     }
     validateItems(input.items);
+    // Địa chỉ nhận vào: chuỗi thô khách ghi (Zalo/Facebook/landing page...)
+    // thì tách bằng dữ liệu hành chính mới rồi lưu phần đã tách; địa chỉ
+    // đã có cấu trúc thì chấm như cũ.
+    let storedAddress: AddressInput | undefined;
+    let evaluation: AddressEvaluation | null = null;
     if (input.address !== undefined) {
       validateAddress(input.address);
+      const resolved = this.resolveAddress(input.address);
+      storedAddress = resolved.stored;
+      evaluation = resolved.evaluation;
     }
-    const evaluation = input.address
-      ? this.address.evaluate(input.address)
-      : null;
     // Rào chắn: không xác nhận đơn trùng (cùng idempotencyKey).
     const duplicate = await this.store.findByIdempotencyKey(
       input.idempotencyKey,
@@ -434,7 +463,7 @@ export class OrdersService implements OnModuleInit {
         deadline,
         channelId,
         customerId,
-        address: input.address ? { ...input.address } : undefined,
+        address: storedAddress ? { ...storedAddress } : undefined,
         addressTrust: evaluation ? evaluation.trust : null,
         addressLevel: evaluation ? evaluation.level : null,
         workflowInstanceId: instance.id,
@@ -1111,8 +1140,9 @@ export class OrdersService implements OnModuleInit {
     }
     let evaluation = null;
     if (input.address !== undefined) {
-      order.address = { ...input.address };
-      evaluation = this.address.evaluate(input.address);
+      const resolved = this.resolveAddress(input.address);
+      order.address = { ...resolved.stored };
+      evaluation = resolved.evaluation;
       order.addressTrust = evaluation.trust;
       order.addressLevel = evaluation.level;
     }
@@ -1204,7 +1234,7 @@ function validateAddress(address: unknown): void {
   if (typeof address !== 'object' || address === null) {
     throw new BadRequestException('address phải là 1 object khi có.');
   }
-  for (const field of ['province', 'district', 'ward', 'street'] as const) {
+  for (const field of ['province', 'district', 'ward', 'street', 'raw'] as const) {
     const value = (address as Record<string, unknown>)[field];
     if (value !== undefined && typeof value !== 'string') {
       throw new BadRequestException(

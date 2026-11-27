@@ -18,6 +18,7 @@ import {
   type AddressTrustLevel,
 } from "@/data/address-split";
 import type { ApiOrderDetail } from "../orders/[id]/order-detail-types";
+import type { ApiWorkflowTransition } from "../orders/[id]/order-detail-types";
 import type {
   AddressProposal,
   RowSplit,
@@ -350,9 +351,32 @@ function AiResult({
   );
 }
 
-export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[] }) {
+export default function AddressSplitClient({
+  orders,
+  transitions,
+  roles,
+}: {
+  orders: ApiOrderDetail[];
+  transitions: ApiWorkflowTransition[];
+  roles: string[];
+}) {
   const router = useRouter();
   const [tab, setTab] = useState<ModeTab>("pending");
+
+  // Bước tiếp theo của 1 đơn theo định nghĩa luồng: chuyển mà vai của
+  // người dùng được làm, bỏ qua Hủy. Đơn đã qua bước địa chỉ (Chờ kho
+  // trở đi) không có bước tiếp theo ở đây nên không có checkbox. Luồng
+  // yêu cầu vai Điều phối viên cho 2 chuyển Mới tạo -> Đã kiểm tra và
+  // Đã kiểm tra -> Chờ kho, nên Quản trị viên/CSKH không xác nhận được.
+  const forwardTransitionFor = (
+    order: ApiOrderDetail,
+  ): ApiWorkflowTransition | undefined =>
+    transitions.find(
+      (transition) =>
+        transition.from === order.state &&
+        roles.includes(transition.role) &&
+        transition.to !== "Hủy",
+    );
 
   // Đơn chờ tách: tin cậy dưới 70, hoặc chưa có địa chỉ để chấm. Đơn
   // đã tách xong (tin cậy từ 70) sang tab xác nhận.
@@ -404,6 +428,12 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
   const [confirmPage, setConfirmPage] = useState(1);
   const [showConfirmAdvanced, setShowConfirmAdvanced] = useState(true);
   const [confirmDrafts, setConfirmDrafts] = useState<Record<string, RowSplit>>({});
+
+  // Xác nhận hàng loạt: chuyển các đơn đã chọn sang bước tiếp theo.
+  const [confirmSelected, setConfirmSelected] = useState<Set<string>>(new Set());
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmNote, setConfirmNote] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   // Dialog xac nhan dia chi
   const [dialogOrder, setDialogOrder] = useState<ApiOrderDetail | null>(null);
@@ -475,6 +505,104 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
     filteredConfirm.length === 0
       ? { start: 0, end: 0, total: 0 }
       : { start: (confirmSafePage - 1) * PAGE_SIZE + 1, end: Math.min(confirmSafePage * PAGE_SIZE, filteredConfirm.length), total: filteredConfirm.length };
+
+  // Chỉ đơn có bước tiếp theo mà vai hiện tại làm được mới chọn để xác
+  // nhận hàng loạt. "Chọn tất cả" chỉ chọn các đơn đủ điều kiện trên
+  // trang này, không chọn đơn đã qua bước địa chỉ.
+  const confirmEligiblePaged = confirmPaged.filter(
+    (order) => forwardTransitionFor(order) !== undefined,
+  );
+  const confirmSelectedOnPage = confirmEligiblePaged.filter((order) =>
+    confirmSelected.has(order.id),
+  ).length;
+  const confirmAllPageSelected =
+    confirmEligiblePaged.length > 0 && confirmSelectedOnPage === confirmEligiblePaged.length;
+
+  const toggleConfirmOne = (id: string) => {
+    setConfirmSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleConfirmAllPage = () => {
+    setConfirmSelected((prev) => {
+      const next = new Set(prev);
+      if (confirmAllPageSelected) {
+        confirmEligiblePaged.forEach((order) => next.delete(order.id));
+      } else {
+        confirmEligiblePaged.forEach((order) => next.add(order.id));
+      }
+      return next;
+    });
+  };
+
+  // Chuyển 1 đơn sang bước tiếp theo qua API.
+  const postTransition = async (
+    id: string,
+    to: string,
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    let response: Response;
+    try {
+      response = await fetch(`/api/orders/${encodeURIComponent(id)}/transitions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ to }),
+      });
+    } catch {
+      return { ok: false, message: "Không gọi được API." };
+    }
+    if (!response.ok) {
+      let data: unknown = null;
+      try {
+        data = await response.json();
+      } catch {
+        // Rơi xuống thông báo mặc định ở dưới.
+      }
+      return { ok: false, message: parseApiMessage(data, `API trả về ${response.status}.`) };
+    }
+    return { ok: true };
+  };
+
+  // Xác nhận hàng loạt: chuyển từng đơn đã chọn sang bước tiếp theo của
+  // nó (Mới tạo -> Đã kiểm tra, Đã kiểm tra -> Chờ kho). Dừng ở lỗi đầu
+  // tiên, báo số đơn đã xong và số đơn bỏ qua vì chưa đủ điều kiện.
+  const confirmSelectedOrders = async () => {
+    if (confirmBusy) return;
+    const targets = confirmOrders.filter((order) => confirmSelected.has(order.id));
+    if (targets.length === 0) return;
+    setConfirmBusy(true);
+    setConfirmNote(null);
+    setConfirmError(null);
+    let done = 0;
+    const skipped: string[] = [];
+    let stoppedAt: string | null = null;
+    for (const order of targets) {
+      const next = forwardTransitionFor(order);
+      if (!next) {
+        skipped.push(order.id);
+        continue;
+      }
+      const result = await postTransition(order.id, next.to);
+      if (!result.ok) {
+        stoppedAt = `Đơn ${order.id}: ${result.message}`;
+        break;
+      }
+      done += 1;
+    }
+    setConfirmBusy(false);
+    if (stoppedAt !== null) {
+      setConfirmError(stoppedAt);
+    }
+    const parts: string[] = [];
+    if (done > 0) parts.push(`Đã xác nhận ${done} đơn, chuyển sang bước tiếp theo.`);
+    if (skipped.length > 0) parts.push(`Bỏ qua ${skipped.length} đơn chưa đủ điều kiện: ${skipped.join(", ")}.`);
+    if (parts.length > 0) setConfirmNote(parts.join(" "));
+    setConfirmSelected(new Set());
+    router.refresh();
+  };
 
   const togglePendingOne = (id: string) => {
     setPendingSelected((prev) => {
@@ -1058,6 +1186,49 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
 
   const confirmColumns: TableColumn<ApiOrderDetail>[] = [
     {
+      key: "sel",
+      header: (
+        <input
+          type="checkbox"
+          aria-label="Chọn tất cả đơn đủ điều kiện trên trang này"
+          checked={confirmAllPageSelected}
+          ref={(el) => {
+            if (el) {
+              el.indeterminate = confirmSelectedOnPage > 0 && !confirmAllPageSelected;
+            }
+          }}
+          onChange={toggleConfirmAllPage}
+          disabled={confirmEligiblePaged.length === 0}
+          className="size-4 cursor-pointer accent-red-700 disabled:cursor-not-allowed"
+        />
+      ),
+      render: (order) => {
+        const eligible = forwardTransitionFor(order) !== undefined;
+        if (!eligible) {
+          return (
+            <input
+              type="checkbox"
+              aria-label={`Đơn ${order.id} chưa đủ điều kiện xác nhận`}
+              checked={false}
+              disabled
+              className="size-4 accent-red-700"
+            />
+          );
+        }
+        return (
+          <input
+            type="checkbox"
+            aria-label={`Chọn đơn ${order.id} để xác nhận`}
+            checked={confirmSelected.has(order.id)}
+            onChange={() => toggleConfirmOne(order.id)}
+            className="size-4 cursor-pointer accent-red-700"
+          />
+        );
+      },
+      align: "center",
+      headerClassName: "w-[40px]",
+    },
+    {
       key: "order",
       header: "Đơn/Khách",
       render: (order) => (
@@ -1375,6 +1546,46 @@ export default function AddressSplitClient({ orders }: { orders: ApiOrderDetail[
               </div>
             )}
           </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={confirmSelectedOrders}
+              disabled={confirmSelected.size === 0 || confirmBusy}
+              className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Xác nhận
+            </button>
+            <p className="text-[13px] text-gray-500">
+              Xác nhận các đơn đã chọn để chuyển sang bước tiếp theo (Mới tạo -&gt; Đã kiểm tra, Đã kiểm tra -&gt; Chờ kho). Chỉ đơn ở 2 trạng thái này và đúng vai Điều phối viên mới chọn được.
+            </p>
+          </div>
+          {confirmSelected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3">
+              <p className="text-sm font-semibold text-gray-600">{confirmSelected.size} dòng đã được chọn</p>
+              <button
+                type="button"
+                onClick={confirmSelectedOrders}
+                disabled={confirmBusy}
+                className="flex h-9 items-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Xác nhận
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmSelected(new Set())}
+                className="flex h-9 items-center rounded-md bg-gray-100 px-3 text-sm font-medium text-gray-800 hover:bg-gray-200"
+              >
+                Bỏ chọn
+              </button>
+            </div>
+          )}
+          {confirmNote !== null && (
+            <p className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{confirmNote}</p>
+          )}
+          {confirmError !== null && (
+            <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{confirmError}</p>
+          )}
 
           <section aria-label="Hàng đợi xác nhận địa chỉ" className="overflow-hidden rounded-lg border border-gray-200 bg-white">
             <Table bare columns={confirmColumns} rows={confirmPaged} rowKey={(order) => order.id} emptyText="Không có đơn đã tách xong" />
