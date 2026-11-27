@@ -3,11 +3,12 @@ import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { AUTOMATION_ROLES } from '../auth/permissions';
 import { Roles } from '../auth/roles.decorator';
 import { NotificationsService } from '../notifications/notification.service';
-import type { Notification } from '../notifications/notification.types';
+import type { NotificationPage } from '../notifications/notification.types';
 import { AutomationService } from './automation.service';
 import type {
   AutomationJobName,
   AutomationRun,
+  AutomationRunPage,
   AutomationStatus,
 } from './automation.types';
 
@@ -25,18 +26,24 @@ export class AutomationController {
   }
 
   @Get('runs')
-  runs(@Query('limit') limit?: string): Promise<AutomationRun[]> {
-    return this.automation.listRuns(
+  runs(
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<AutomationRunPage> {
+    return this.automation.listRunsPage(
       limit !== undefined ? Number.parseInt(limit, 10) : undefined,
+      offset !== undefined ? Number.parseInt(offset, 10) : undefined,
     );
   }
 
   @Get('notifications')
   recentNotifications(
     @Query('limit') limit?: string,
-  ): Promise<Notification[]> {
-    return this.notifications.listAll(
+    @Query('offset') offset?: string,
+  ): Promise<NotificationPage> {
+    return this.notifications.listAllPage(
       limit !== undefined ? Number.parseInt(limit, 10) : undefined,
+      offset !== undefined ? Number.parseInt(offset, 10) : undefined,
     );
   }
 

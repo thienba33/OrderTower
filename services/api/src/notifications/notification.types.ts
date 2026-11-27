@@ -33,6 +33,13 @@ export interface NotificationList {
   unreadCount: number;
 }
 
+export interface NotificationPage {
+  items: Notification[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface NotificationFilters {
   unreadOnly?: boolean;
   limit?: number;

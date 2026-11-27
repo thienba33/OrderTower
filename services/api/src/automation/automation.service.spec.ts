@@ -32,8 +32,15 @@ function makeDb(handlers: {
       if (sql.includes('FROM workflow_instances')) {
         return { rows: handlers.workflowRows ?? [] };
       }
+      if (sql.includes('COUNT(*)') && sql.includes('automation_runs')) {
+        return { rows: [{ count: handlers.runs?.length ?? 0 }] };
+      }
       if (sql.includes('FROM automation_runs')) {
-        return { rows: handlers.runs ?? [] };
+        const limit = Number(params?.[0] ?? 50);
+        const offset = Number(params?.[1] ?? 0);
+        return {
+          rows: (handlers.runs ?? []).slice(offset, offset + limit),
+        };
       }
       return { rows: [] };
     }),
@@ -211,6 +218,28 @@ describe('AutomationService', () => {
     await expect(
       service.run('unknown' as never, 'manual'),
     ).rejects.toThrow('Job không hợp lệ');
+  });
+
+  it('listRunsPage trả items/total/limit/offset và chặn offset âm', async () => {
+    const db = makeDb({
+      runs: [
+        { id: 3, job_name: 'sla-scan' },
+        { id: 2, job_name: 'outbox-relay' },
+        { id: 1, job_name: 'outbox-relay' },
+      ],
+    });
+    const service = new AutomationService(
+      db,
+      { relay: jest.fn() } as unknown as OutboxService,
+      makeNotifications().service,
+      makeWorkflow([]),
+    );
+
+    const page = await service.listRunsPage(2, 1);
+
+    expect(page).toMatchObject({ total: 3, limit: 2, offset: 1 });
+    expect(page.items.map((run) => run.id)).toEqual([2, 1]);
+    await expect(service.listRunsPage(10, -1)).rejects.toThrow('offset');
   });
 
   it('status trả lastRun theo từng job', async () => {

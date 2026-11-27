@@ -5,9 +5,16 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { getSession } from "@/lib/auth";
 import { canAccessScreen } from "@/lib/roles";
 import { AccessDenied } from "@/components/layout/AccessDenied";
-import type { ApiNotification } from "../../notifications/notification-types";
+import type { ApiNotificationPage } from "../../notifications/notification-types";
 import AutomationClient from "./automation-client";
-import type { ApiAutomationRun, ApiAutomationStatus } from "./automation-types";
+import type {
+  ApiAutomationRunPage,
+  ApiAutomationStatus,
+} from "./automation-types";
+import {
+  NOTIFICATION_PAGE_SIZE,
+  RUN_PAGE_SIZE,
+} from "./automation-types";
 
 async function fetchJson(path: string): Promise<unknown> {
   const response = await apiFetch(path);
@@ -29,13 +36,15 @@ export default async function AutomationPage() {
   }
 
   let status: ApiAutomationStatus;
-  let runs: ApiAutomationRun[];
-  let notifications: ApiNotification[];
+  let runs: ApiAutomationRunPage;
+  let notifications: ApiNotificationPage;
   try {
     const [statusRaw, runsRaw, notificationsRaw] = await Promise.all([
       fetchJson("/automation/status"),
-      fetchJson("/automation/runs?limit=50"),
-      fetchJson("/automation/notifications?limit=20"),
+      fetchJson(`/automation/runs?limit=${RUN_PAGE_SIZE}&offset=0`),
+      fetchJson(
+        `/automation/notifications?limit=${NOTIFICATION_PAGE_SIZE}&offset=0`,
+      ),
     ]);
     if (
       !statusRaw ||
@@ -44,12 +53,12 @@ export default async function AutomationPage() {
     ) {
       throw new ApiError(0, "API trả về trạng thái automation không đúng dạng.");
     }
-    if (!Array.isArray(runsRaw) || !Array.isArray(notificationsRaw)) {
-      throw new ApiError(0, "API trả về run log không đúng dạng.");
+    if (!isPage(runsRaw) || !isPage(notificationsRaw)) {
+      throw new ApiError(0, "API trả về run log không đúng dạng phân trang.");
     }
     status = statusRaw as ApiAutomationStatus;
-    runs = runsRaw as ApiAutomationRun[];
-    notifications = notificationsRaw as ApiNotification[];
+    runs = runsRaw as ApiAutomationRunPage;
+    notifications = notificationsRaw as ApiNotificationPage;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Không tải được automation.";
@@ -73,9 +82,27 @@ export default async function AutomationPage() {
 
   return (
     <AutomationClient
-      status={status}
-      runs={runs}
-      notifications={notifications}
+      initialStatus={status}
+      initialRuns={runs}
+      initialNotifications={notifications}
     />
+  );
+}
+
+function isPage(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const page = value as {
+    items?: unknown;
+    total?: unknown;
+    limit?: unknown;
+    offset?: unknown;
+  };
+  return (
+    Array.isArray(page.items) &&
+    typeof page.total === "number" &&
+    typeof page.limit === "number" &&
+    typeof page.offset === "number"
   );
 }

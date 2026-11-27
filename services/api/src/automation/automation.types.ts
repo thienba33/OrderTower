@@ -16,6 +16,13 @@ export interface AutomationRun {
   error: string | null;
 }
 
+export interface AutomationRunPage {
+  items: AutomationRun[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface AutomationJobStatus {
   name: AutomationJobName;
   intervalMs: number;

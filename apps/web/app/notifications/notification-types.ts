@@ -20,3 +20,10 @@ export interface ApiNotificationList {
   items: ApiNotification[];
   unreadCount: number;
 }
+
+export interface ApiNotificationPage {
+  items: ApiNotification[];
+  total: number;
+  limit: number;
+  offset: number;
+}

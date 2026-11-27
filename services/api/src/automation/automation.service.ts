@@ -14,6 +14,7 @@ import type {
   AutomationJobName,
   AutomationJobStatus,
   AutomationRun,
+  AutomationRunPage,
   AutomationRunStatus,
   AutomationStatus,
   AutomationTrigger,
@@ -145,20 +146,40 @@ export class AutomationService {
   }
 
   async listRuns(limit = DEFAULT_LIMIT): Promise<AutomationRun[]> {
+    return (await this.listRunsPage(limit, 0)).items;
+  }
+
+  async listRunsPage(
+    limit = DEFAULT_LIMIT,
+    offset = 0,
+  ): Promise<AutomationRunPage> {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
       throw new BadRequestException(
         `limit phải là số nguyên từ 1 đến ${MAX_LIMIT}.`,
       );
     }
-    const result = await this.db.query(
-      `SELECT id, job_name, trigger, status, started_at, finished_at,
-              duration_ms, summary, error
-         FROM automation_runs
-        ORDER BY started_at DESC, id DESC
-        LIMIT $1`,
-      [limit],
-    );
-    return (result.rows as Array<Record<string, unknown>>).map(mapRun);
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new BadRequestException('offset phải là số nguyên không âm.');
+    }
+    const [countResult, rows] = await Promise.all([
+      this.db.query('SELECT COUNT(*)::int AS count FROM automation_runs'),
+      this.db.query(
+        `SELECT id, job_name, trigger, status, started_at, finished_at,
+                duration_ms, summary, error
+           FROM automation_runs
+          ORDER BY started_at DESC, id DESC
+          LIMIT $1 OFFSET $2`,
+        [limit, offset],
+      ),
+    ]);
+    return {
+      items: (rows.rows as Array<Record<string, unknown>>).map(mapRun),
+      total: Number(
+        (countResult.rows[0] as { count?: number } | undefined)?.count ?? 0,
+      ),
+      limit,
+      offset,
+    };
   }
 
   async run(

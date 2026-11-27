@@ -1,9 +1,8 @@
 "use client";
 
 // SPDX-License-Identifier: Apache-2.0
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
@@ -15,13 +14,20 @@ import {
   ServerCog,
   XCircle,
 } from "lucide-react";
+import { Pagination } from "@/components/ui/Pagination";
 import { Table, type TableColumn } from "@/components/ui/Table";
-import type { ApiNotification } from "../../notifications/notification-types";
 import type {
-  ApiAutomationJob,
-  ApiAutomationJobName,
-  ApiAutomationRun,
-  ApiAutomationStatus,
+  ApiNotification,
+  ApiNotificationPage,
+} from "../../notifications/notification-types";
+import {
+  NOTIFICATION_PAGE_SIZE,
+  RUN_PAGE_SIZE,
+  type ApiAutomationJob,
+  type ApiAutomationJobName,
+  type ApiAutomationRun,
+  type ApiAutomationRunPage,
+  type ApiAutomationStatus,
 } from "./automation-types";
 
 const JOB_LABEL: Record<ApiAutomationJobName, string> = {
@@ -78,6 +84,27 @@ function statusPill(status: "success" | "failed"): string {
   return status === "success"
     ? "inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800"
     : "inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800";
+}
+
+function apiMessage(
+  data: { message?: unknown } | null,
+  status: number,
+): string {
+  return typeof data?.message === "string"
+    ? data.message
+    : `API trả về ${status}.`;
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { cache: "no-store" });
+  const data = (await response.json().catch(() => null)) as
+    | T
+    | { message?: unknown }
+    | null;
+  if (!response.ok) {
+    throw new Error(apiMessage(data as { message?: unknown } | null, response.status));
+  }
+  return data as T;
 }
 
 const runColumns: TableColumn<ApiAutomationRun>[] = [
@@ -189,24 +216,124 @@ const notificationColumns: TableColumn<ApiNotification>[] = [
 ];
 
 export default function AutomationClient({
-  status,
-  runs,
-  notifications,
+  initialStatus,
+  initialRuns,
+  initialNotifications,
 }: {
-  status: ApiAutomationStatus;
-  runs: ApiAutomationRun[];
-  notifications: ApiNotification[];
+  initialStatus: ApiAutomationStatus;
+  initialRuns: ApiAutomationRunPage;
+  initialNotifications: ApiNotificationPage;
 }) {
-  const router = useRouter();
+  const [status, setStatus] = useState(initialStatus);
+  const [runsData, setRunsData] = useState(initialRuns);
+  const [notificationsData, setNotificationsData] = useState(
+    initialNotifications,
+  );
+  const [runsPage, setRunsPage] = useState(1);
+  const [notificationsPage, setNotificationsPage] = useState(1);
+  const [loadingRuns, setLoadingRuns] = useState(false);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [running, setRunning] = useState<ApiAutomationJobName | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const runsPageRef = useRef(1);
+  const notificationsPageRef = useRef(1);
 
   useEffect(() => {
-    const timer = setInterval(() => router.refresh(), 30_000);
+    runsPageRef.current = runsPage;
+  }, [runsPage]);
+
+  useEffect(() => {
+    notificationsPageRef.current = notificationsPage;
+  }, [notificationsPage]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void Promise.allSettled([
+        loadStatus(),
+        loadRuns(runsPageRef.current, false),
+        loadNotifications(notificationsPageRef.current, false),
+      ]);
+    }, 30_000);
     return () => clearInterval(timer);
-  }, [router]);
+  }, []);
+
+  async function loadStatus(): Promise<void> {
+    const data = await getJson<ApiAutomationStatus>("/api/automation/status");
+    setStatus(data);
+  }
+
+  async function loadRuns(
+    page: number,
+    showLoading = true,
+  ): Promise<void> {
+    if (showLoading) {
+      setLoadingRuns(true);
+    }
+    try {
+      const data = await getJson<ApiAutomationRunPage>(
+        `/api/automation/runs?limit=${RUN_PAGE_SIZE}&offset=${(page - 1) * RUN_PAGE_SIZE}`,
+      );
+      const totalPages = Math.max(1, Math.ceil(data.total / RUN_PAGE_SIZE));
+      if (page > totalPages) {
+        await loadRuns(totalPages, showLoading);
+        return;
+      }
+      setRunsData(data);
+      setRunsPage(page);
+    } finally {
+      if (showLoading) {
+        setLoadingRuns(false);
+      }
+    }
+  }
+
+  async function loadNotifications(
+    page: number,
+    showLoading = true,
+  ): Promise<void> {
+    if (showLoading) {
+      setLoadingNotifications(true);
+    }
+    try {
+      const data = await getJson<ApiNotificationPage>(
+        `/api/automation/notifications?limit=${NOTIFICATION_PAGE_SIZE}&offset=${(page - 1) * NOTIFICATION_PAGE_SIZE}`,
+      );
+      const totalPages = Math.max(
+        1,
+        Math.ceil(data.total / NOTIFICATION_PAGE_SIZE),
+      );
+      if (page > totalPages) {
+        await loadNotifications(totalPages, showLoading);
+        return;
+      }
+      setNotificationsData(data);
+      setNotificationsPage(page);
+    } finally {
+      if (showLoading) {
+        setLoadingNotifications(false);
+      }
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    setRefreshing(true);
+    setError("");
+    try {
+      await Promise.all([
+        loadStatus(),
+        loadRuns(runsPage),
+        loadNotifications(notificationsPage),
+      ]);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Không tải được automation.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function trigger(job: ApiAutomationJobName): Promise<void> {
     setRunning(job);
@@ -222,17 +349,17 @@ export default function AutomationClient({
         | { message?: unknown }
         | null;
       if (!response.ok) {
-        const detail =
-          data && typeof (data as { message?: unknown }).message === "string"
-            ? String((data as { message?: unknown }).message)
-            : `API trả về ${response.status}.`;
-        throw new Error(detail);
+        throw new Error(apiMessage(data as { message?: unknown } | null, response.status));
       }
       const run = data as ApiAutomationRun;
       setMessage(
         `Đã chạy ${JOB_LABEL[job]}: ${run.status === "success" ? "thành công" : "lỗi"} · ${summaryText(run.summary)}`,
       );
-      router.refresh();
+      await Promise.all([
+        loadStatus(),
+        loadRuns(runsPage),
+        loadNotifications(notificationsPage),
+      ]);
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Không chạy được job.",
@@ -242,13 +369,33 @@ export default function AutomationClient({
     }
   }
 
-  function refresh(): void {
-    setRefreshing(true);
-    router.refresh();
-    setTimeout(() => setRefreshing(false), 700);
-  }
-
-  const failedRuns = runs.filter((run) => run.status === "failed").length;
+  const runTotalPages = Math.max(
+    1,
+    Math.ceil(runsData.total / RUN_PAGE_SIZE),
+  );
+  const notificationTotalPages = Math.max(
+    1,
+    Math.ceil(notificationsData.total / NOTIFICATION_PAGE_SIZE),
+  );
+  const runRange = {
+    start: runsData.total === 0 ? 0 : runsData.offset + 1,
+    end: Math.min(runsData.offset + runsData.items.length, runsData.total),
+    total: runsData.total,
+  };
+  const notificationRange = {
+    start:
+      notificationsData.total === 0 ? 0 : notificationsData.offset + 1,
+    end: Math.min(
+      notificationsData.offset + notificationsData.items.length,
+      notificationsData.total,
+    ),
+    total: notificationsData.total,
+  };
+  const latestRun =
+    status.jobs
+      .map((job) => job.lastRun)
+      .filter((run): run is ApiAutomationRun => run !== null)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ?? null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -271,11 +418,12 @@ export default function AutomationClient({
           </Link>
           <button
             type="button"
-            onClick={refresh}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            onClick={() => void refresh()}
+            disabled={refreshing}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
-            Làm mới
+            {refreshing ? "Đang tải..." : "Làm mới"}
           </button>
         </div>
       </div>
@@ -297,27 +445,21 @@ export default function AutomationClient({
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <p className="text-xs font-medium text-gray-500">Lần chạy gần nhất</p>
           <p className="mt-1 text-lg font-semibold text-gray-900">
-            {runs[0] ? formatDateTime(runs[0].startedAt) : "--"}
+            {latestRun ? formatDateTime(latestRun.startedAt) : "--"}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-xs font-medium text-gray-500">Run lỗi / 50 gần</p>
-          <p
-            className={
-              failedRuns > 0
-                ? "mt-1 text-2xl font-semibold text-red-700"
-                : "mt-1 text-2xl font-semibold text-gray-900"
-            }
-          >
-            {failedRuns}
+          <p className="text-xs font-medium text-gray-500">Tổng run log</p>
+          <p className="mt-1 text-2xl font-semibold text-gray-900">
+            {runsData.total}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <p className="text-xs font-medium text-gray-500">
-            Notification gần đây
+            Tổng notification
           </p>
           <p className="mt-1 text-2xl font-semibold text-gray-900">
-            {notifications.length}
+            {notificationsData.total}
           </p>
         </div>
       </div>
@@ -339,47 +481,73 @@ export default function AutomationClient({
             key={job.name}
             job={job}
             running={running === job.name}
-            onRun={() => trigger(job.name)}
+            onRun={() => void trigger(job.name)}
           />
         ))}
       </div>
 
       <section className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-gray-900">Run log</h2>
           <span className="text-xs text-gray-500">
-            50 lần chạy gần nhất, tự làm mới mỗi 30 giây
+            Trang {runsPage}/{runTotalPages} · {runsData.total} dòng · tự làm
+            mới mỗi 30 giây
           </span>
         </div>
-        <Table
-          columns={runColumns}
-          rows={runs}
-          rowKey={(row) => String(row.id)}
-          emptyText="Chưa có lần chạy nào. Bấm Chạy ngay để test."
-        />
+        <div className={loadingRuns ? "opacity-60" : ""}>
+          <Table
+            columns={runColumns}
+            rows={runsData.items}
+            rowKey={(row) => String(row.id)}
+            emptyText="Chưa có lần chạy nào. Bấm Chạy ngay để test."
+          />
+        </div>
+        {runsData.total > 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-white">
+            <Pagination
+              page={runsPage}
+              totalPages={runTotalPages}
+              onPageChange={(page) => void loadRuns(page)}
+              range={runRange}
+            />
+          </div>
+        ) : null}
       </section>
 
       <section className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-gray-900">
-            Notification gần đây
+            Notification
           </h2>
           <span className="text-xs text-gray-500">
-            Tất cả vai trong tenant, dùng để kiểm tra escalation
+            Trang {notificationsPage}/{notificationTotalPages} ·{" "}
+            {notificationsData.total} dòng · tất cả vai trong tenant
           </span>
         </div>
-        <Table
-          columns={notificationColumns}
-          rows={notifications}
-          rowKey={(row) => String(row.id)}
-          emptyText="Chưa có notification. Chạy SLA scan khi có task quá hạn."
-        />
+        <div className={loadingNotifications ? "opacity-60" : ""}>
+          <Table
+            columns={notificationColumns}
+            rows={notificationsData.items}
+            rowKey={(row) => String(row.id)}
+            emptyText="Chưa có notification. Chạy SLA scan khi có task quá hạn."
+          />
+        </div>
+        {notificationsData.total > 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-white">
+            <Pagination
+              page={notificationsPage}
+              totalPages={notificationTotalPages}
+              onPageChange={(page) => void loadNotifications(page)}
+              range={notificationRange}
+            />
+          </div>
+        ) : null}
       </section>
 
       <p className="flex items-start gap-2 text-xs text-gray-500">
         <ServerCog size={14} className="mt-0.5 shrink-0" />
-        Outbox retry tối đa 5 lần với backoff 30/60/90/120 giây; quá hạn thành
-        dead-letter và có thể requeue qua API outbox. SLA scan dedup theo
+        Outbox retry tối đa 5 lần với backoff 30/60/90/120/150 giây; quá hạn
+        thành dead-letter và có thể requeue qua API outbox. SLA scan dedup theo
         task/trạng thái/vai, escalation sau 60 phút.
       </p>
     </div>

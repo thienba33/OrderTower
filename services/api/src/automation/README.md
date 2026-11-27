@@ -28,8 +28,10 @@ Khi `NODE_ENV=test`, scheduler không khởi động để unit test không ch�
 Chỉ Quản trị viên:
 
 - `GET /api/automation/status`: scheduler bật/tắt, interval, run gần nhất.
-- `GET /api/automation/runs?limit=50`: run log.
-- `GET /api/automation/notifications?limit=20`: notification toàn tenant.
+- `GET /api/automation/runs?limit=20&offset=0`: run log phân trang, trả
+  `{ items, total, limit, offset }`.
+- `GET /api/automation/notifications?limit=20&offset=0`: notification toàn
+  tenant, cùng dạng phân trang.
 - `POST /api/automation/jobs/:job/run`: chạy tay `outbox-relay` hoặc `sla-scan`.
 
 Notification cho caller:
@@ -50,8 +52,9 @@ Nguồn: `workflow_instances` active join `orders.deadline`.
 
 ## UI
 
-- `/admin/automation`: KPI, trạng thái scheduler, run log, chạy tay, notification
-  gần đây. Tự làm mới mỗi 30 giây.
+- `/admin/automation`: KPI, trạng thái scheduler, run log phân trang 10 dòng,
+  notification phân trang 8 dòng, chạy tay. Tự làm mới 30 giây và giữ trang
+  đang xem.
 - `/notifications`: hộp thư theo vai, lọc chưa đọc, đánh dấu đọc.
 - Chuông trên header hiển thị số chưa đọc.
 

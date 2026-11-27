@@ -11,6 +11,7 @@ import type {
   Notification,
   NotificationFilters,
   NotificationList,
+  NotificationPage,
   NotificationType,
 } from './notification.types';
 
@@ -102,19 +103,39 @@ export class NotificationsService {
 
   // Admin xem toàn bộ notification trong tenant để kiểm tra escalation.
   async listAll(limit = DEFAULT_LIMIT): Promise<Notification[]> {
+    return (await this.listAllPage(limit, 0)).items;
+  }
+
+  async listAllPage(
+    limit = DEFAULT_LIMIT,
+    offset = 0,
+  ): Promise<NotificationPage> {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
       throw new BadRequestException(
         `limit phải là số nguyên từ 1 đến ${MAX_LIMIT}.`,
       );
     }
-    const result = await this.db.query(
-      `SELECT ${COLUMNS}
-         FROM notifications
-        ORDER BY created_at DESC, id DESC
-        LIMIT $1`,
-      [limit],
-    );
-    return (result.rows as Array<Record<string, unknown>>).map(mapRow);
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new BadRequestException('offset phải là số nguyên không âm.');
+    }
+    const [countResult, rows] = await Promise.all([
+      this.db.query('SELECT COUNT(*)::int AS count FROM notifications'),
+      this.db.query(
+        `SELECT ${COLUMNS}
+           FROM notifications
+          ORDER BY created_at DESC, id DESC
+          LIMIT $1 OFFSET $2`,
+        [limit, offset],
+      ),
+    ]);
+    return {
+      items: (rows.rows as Array<Record<string, unknown>>).map(mapRow),
+      total: Number(
+        (countResult.rows[0] as { count?: number } | undefined)?.count ?? 0,
+      ),
+      limit,
+      offset,
+    };
   }
 
   // Trả null khi dedup_key đã tồn tại, để job biết không tạo thêm.
