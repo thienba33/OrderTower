@@ -69,6 +69,7 @@ describe('DbService', () => {
       'id_counters',
       'outbox_events',
       'address_proposals',
+      'telemetry_readings',
       'schema_migrations',
     ]) {
       // Bảng tồn tại khi truy vấn được, dù chưa có hàng nào.
@@ -103,8 +104,9 @@ describe('DbService', () => {
       '015_workflow_active_versions',
       '016_transactions_outbox',
       '017_tenancy_rls',
-      '018_address_proposals',
-      '019_address_proposals_source',
+      '018_telemetry_twin',
+      '019_address_proposals',
+      '020_address_proposals_source',
     ]);
   });
 });
