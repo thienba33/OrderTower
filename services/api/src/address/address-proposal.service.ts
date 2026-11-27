@@ -15,11 +15,11 @@ import { CLOSED_STATES, OrdersService } from '../orders/orders.service';
 import { AddressService, MIN_ADDRESS_TRUST } from './address.service';
 import {
   ADDRESS_PROPOSAL_STORE,
-  AddressProposalStore,
 } from './address-proposal.store';
 import {
   AddressInput,
   AddressProposal,
+  AddressProposalStore,
   AddressSnapshot,
   DecisionProposalInput,
   SuggestInput,

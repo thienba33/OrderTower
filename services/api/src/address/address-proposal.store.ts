@@ -110,7 +110,7 @@ export class PostgresAddressProposalStore implements AddressProposalStore {
       'SELECT * FROM address_proposals WHERE id = $1',
       [id],
     );
-    return rows.length > 0 ? toProposal(rows[0]) : null;
+    return rows.length > 0 ? toProposal(rows[0] as Record<string, unknown>) : null;
   }
 
   async listByOrderId(orderId: string): Promise<AddressProposal[]> {
@@ -127,32 +127,18 @@ export class PostgresAddressProposalStore implements AddressProposalStore {
   }
 }
 
-function toProposal(row: {
-  id: string;
-  order_id: string;
-  status: string;
-  before_json: unknown;
-  after_json: unknown;
-  requested_by: string;
-  requested_at: unknown;
-  decided_by: string | null;
-  decided_at: unknown;
-  decision_reason: string | null;
-  applied_at: unknown;
-  created_at: unknown;
-  updated_at: unknown;
-}): AddressProposal {
+function toProposal(row: Record<string, unknown>): AddressProposal {
   return {
-    id: row.id,
-    orderId: row.order_id,
+    id: row.id as string,
+    orderId: row.order_id as string,
     status: row.status as AddressProposal['status'],
     before: parseSnapshot(row.before_json),
     after: parseSnapshot(row.after_json),
-    requestedBy: row.requested_by,
+    requestedBy: row.requested_by as string,
     requestedAt: toIso(row.requested_at),
-    decidedBy: row.decided_by,
+    decidedBy: row.decided_by as string | null,
     decidedAt: row.decided_at ? toIso(row.decided_at) : null,
-    decisionReason: row.decision_reason,
+    decisionReason: row.decision_reason as string | null,
     appliedAt: row.applied_at ? toIso(row.applied_at) : null,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),

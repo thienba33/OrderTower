@@ -190,14 +190,14 @@ describe('AddressProposalService.suggest', () => {
       },
     });
     expect(response.proposal).toBeNull();
-    expect(response.after.ward).toBe('Phường Cửa Nam');
+    expect(response.after.address.ward).toBe('Phường Cửa Nam');
     expect(response.after.trust).toBe(100);
     expect(await store.listIds()).toEqual([]);
   });
 
   it('thiếu cả orderId, raw, address thì 400', async () => {
     const { service } = await buildService();
-    await expect(service.suggest(CALLER, {})).rejects.toThrowError(
+    await expect(service.suggest(CALLER, {})).rejects.toThrow(
       BadRequestException,
     );
   });
@@ -209,14 +209,14 @@ describe('AddressProposalService.suggest', () => {
         raw: 'Số 12 ngõ 34 phố Hàng Bè, Hà Nội',
         address: { province: 'Hà Nội' },
       }),
-    ).rejects.toThrowError(BadRequestException);
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('đơn không tồn tại thì 404', async () => {
     const { service } = await buildService();
     await expect(
       service.suggest(CALLER, { orderId: 'DH-9999' }),
-    ).rejects.toThrowError(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('id đề xuất nối tiếp AC-1001, AC-1002...', async () => {
@@ -289,7 +289,7 @@ describe('AddressProposalService.decide / getProposal', () => {
     const { service, proposal } = await buildWithPending();
     await expect(
       service.decide(CALLER, proposal.id, { decision: 'rejected' }),
-    ).rejects.toThrowError(BadRequestException);
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('từ chối có lý do: trạng thái Đã từ chối, không sửa đơn', async () => {
@@ -317,7 +317,7 @@ describe('AddressProposalService.decide / getProposal', () => {
     });
     await expect(
       service.decide(CALLER, proposal.id, { decision: 'approved' }),
-    ).rejects.toThrowError(ConflictException);
+    ).rejects.toThrow(ConflictException);
   });
 
   it('duyệt khi đơn đã đóng thì 409, đề xuất vẫn Chờ duyệt', async () => {
@@ -325,7 +325,7 @@ describe('AddressProposalService.decide / getProposal', () => {
     built.orders.get('DH-1001')!.state = 'Hoàn';
     await expect(
       built.service.decide(CALLER, built.proposal.id, { decision: 'approved' }),
-    ).rejects.toThrowError(ConflictException);
+    ).rejects.toThrow(ConflictException);
     const again = await built.service.getProposal(built.proposal.id);
     expect(again.status).toBe('Chờ duyệt');
   });
@@ -333,7 +333,7 @@ describe('AddressProposalService.decide / getProposal', () => {
   it('getProposal: tìm thấy và không tìm thấy thì 404', async () => {
     const { service, proposal } = await buildWithPending();
     expect((await service.getProposal(proposal.id)).id).toBe(proposal.id);
-    await expect(service.getProposal('AC-9999')).rejects.toThrowError(
+    await expect(service.getProposal('AC-9999')).rejects.toThrow(
       NotFoundException,
     );
   });
@@ -342,6 +342,6 @@ describe('AddressProposalService.decide / getProposal', () => {
     const { service } = await buildService();
     await expect(
       service.decide(CALLER, 'AC-9999', { decision: 'approved' }),
-    ).rejects.toThrowError(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 });

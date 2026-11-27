@@ -194,8 +194,7 @@ function createInput(key: string) {
     items: [{ sku: 'NM-40', quantity: 2 }],
     address: {
       province: 'Hà Nội',
-      district: 'Hai Bà Trưng',
-      ward: 'Phường Phạm Đình Hổ',
+      ward: 'Phường Hai Bà Trưng',
       street: 'Số 8 phố Hàng Bè',
     },
     actor: 'son',
@@ -837,8 +836,7 @@ describe('OrdersService', () => {
     const addressChanged = await orders.update(order.id, {
       address: {
         province: 'Hải Phòng',
-        district: 'Hồng Bàng',
-        ward: 'Phường Hoàng Văn Thụ',
+        ward: 'Phường Hồng Bàng',
         street: 'Số 12 Lê Lợi',
       },
     }, COORDINATOR);
@@ -1387,8 +1385,7 @@ describe('PostgresOrderStore', () => {
     expect(loaded).toEqual(created);
     expect(loaded?.address).toEqual({
       province: 'Hà Nội',
-      district: 'Hai Bà Trưng',
-      ward: 'Phường Phạm Đình Hổ',
+      ward: 'Phường Hai Bà Trưng',
       street: 'Số 8 phố Hàng Bè',
     });
     expect(loaded?.addressTrust).toBe(100);
@@ -1703,10 +1700,10 @@ describe('OrdersService seed mẫu', () => {
       'Đang đóng gói',
       'Chờ điều xe',
     ]);
-    // Đơn đầu tin cậy thấp (chỉ tỉnh đúng 40 + địa chỉ chi tiết 10 = 50),
+    // Đơn đầu tin cậy thấp (chỉ tỉnh đúng 40 + đường 20 = 60),
     // 7 đơn còn lại địa chỉ đủ 100.
     const [low, ...rest] = list;
-    expect(low?.addressTrust).toBe(50);
+    expect(low?.addressTrust).toBe(60);
     expect(low?.addressLevel).toBe('Rủi ro cao');
     expect(rest.every((order) => order.addressTrust === 100)).toBe(true);
     // Tổng tiền do server tính từ giá kho: NM-25 93000, NM-15 64000,
