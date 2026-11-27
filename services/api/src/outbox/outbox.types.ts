@@ -10,6 +10,8 @@ export interface OutboxEvent {
   payload: Record<string, unknown>;
   status: OutboxStatus;
   attempts: number;
+  maxAttempts: number;
+  nextAttemptAt: string | null;
   createdAt: string;
   processedAt: string | null;
   lastError: string | null;
@@ -30,6 +32,11 @@ export interface OutboxFilters {
 
 export interface OutboxRelayResult {
   processed: number;
+  // Event lỗi đã hết max_attempts, nằm ở dead-letter.
   failed: number;
+  // Event lỗi còn lượt, đã hẹn retry sau backoff.
+  retried: number;
   eventIds: number[];
 }
+
+export type OutboxFailureOutcome = 'retry' | 'dead-letter';

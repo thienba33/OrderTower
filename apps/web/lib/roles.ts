@@ -35,6 +35,7 @@
 // Thứ tự chuẩn của các màn, theo đúng thứ tự menu trong Sidebar.
 export const SCREEN_ORDER: readonly string[] = [
   "/",
+  "/notifications",
   "/orders",
   "/approval-queue",
   "/restricted-list",
@@ -46,6 +47,7 @@ export const SCREEN_ORDER: readonly string[] = [
   "/fleet-twin",
   "/customer-care",
   "/admin",
+  "/admin/automation",
   "/driver",
   "/tracking",
 ];
@@ -54,6 +56,7 @@ export const ROLE_SCREENS: Record<string, readonly string[]> = {
   "Quản trị viên": SCREEN_ORDER,
   "Quản lý": [
     "/",
+    "/notifications",
     "/orders",
     "/approval-queue",
     "/warehouse",
@@ -65,6 +68,7 @@ export const ROLE_SCREENS: Record<string, readonly string[]> = {
   ],
   "Điều phối viên": [
     "/",
+    "/notifications",
     "/orders",
     "/warehouse",
     "/fleet-twin",
@@ -73,16 +77,24 @@ export const ROLE_SCREENS: Record<string, readonly string[]> = {
     "/customer-care",
     "/tracking",
   ],
-  "Nhân viên kho": ["/", "/orders", "/warehouse", "/fleet-twin", "/tracking"],
+  "Nhân viên kho": [
+    "/",
+    "/notifications",
+    "/orders",
+    "/warehouse",
+    "/fleet-twin",
+    "/tracking",
+  ],
   "Nhân viên chăm sóc khách hàng": [
     "/",
+    "/notifications",
     "/orders",
     "/customer-care",
     "/address-split",
     "/restricted-list",
     "/tracking",
   ],
-  "Tài xế": ["/driver", "/tracking"],
+  "Tài xế": ["/notifications", "/driver", "/tracking"],
   "Khách hàng mô phỏng": ["/tracking"],
 };
 

@@ -14,18 +14,23 @@ Event hiện có:
 - `inventory.reserved`
 
 Mỗi event gồm `event_type`, `aggregate_type`, `aggregate_id`, `payload`,
-`status` (`pending`, `processed`, `failed`), `attempts`, `created_at`,
-`processed_at`, `last_error`.
+`status` (`pending`, `processed`, `failed`), `attempts`, `max_attempts`,
+`next_attempt_at`, `created_at`, `processed_at`, `last_error`.
+
+Retry: event lỗi được đẩy `next_attempt_at` theo backoff 30/60/90/120/150 giây.
+Sau `max_attempts` (mặc định 5) event thành `failed` (dead-letter) và có thể
+đưa lại hàng đợi.
 
 API (chỉ Quản trị viên/Quản lý):
 
 - `GET /api/outbox?status=pending&type=order.created&limit=100`
-- `POST /api/outbox/relay?limit=100`: đánh dấu các event `pending` là
-  `processed`, trả `{ processed, failed, eventIds }`.
+- `POST /api/outbox/relay?limit=100`: phát event pending đã đến hạn, trả
+  `{ processed, retried, failed, eventIds }`.
+- `POST /api/outbox/:id/retry`: requeue event `failed`.
 
-Chưa cắm broker thật. Relay hiện là điểm thay thế để demo/kiểm thử; khi có
-NATS/Kafka/webhook, thay phần publish trong `OutboxService.relay` và giữ
-nguyên phần ghi event trong transaction.
+Job `outbox-relay` trong `automation/` gọi relay mỗi 15 giây, nên không cần
+bấm tay. Chưa cắm broker thật; khi có NATS/Kafka/webhook, thay phần publish
+trong `OutboxService.relay` và giữ nguyên phần ghi event trong transaction.
 
 ## Bộ đếm ID
 
