@@ -53,6 +53,16 @@ export const ORDER_WRITE_ROLES: readonly string[] = [
   CUSTOMER_SERVICE,
 ];
 
+// Vai được gọi AI chuẩn hóa địa chỉ (suggest + duyệt đề xuất): đúng các
+// vai mở được màn phân tách địa chỉ ở web (apps/web/lib/roles.ts).
+// Quản trị viên thấy mọi màn; điều phối viên và CSKH là 2 vai làm việc
+// với địa chỉ; quản lý KHÔNG mở được màn này nên không có trong danh sách.
+export const ADDRESS_SPLIT_ROLES: readonly string[] = [
+  ADMIN,
+  DISPATCHER,
+  CUSTOMER_SERVICE,
+];
+
 // Vai có thể gọi endpoint chuyển trạng thái đơn trực tiếp. Service workflow
 // vẫn kiểm tra đúng vai của từng chuyển; đây chỉ là lớp chặn thô.
 export const ORDER_TRANSITION_ROLES: readonly string[] = [
