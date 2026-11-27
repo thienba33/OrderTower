@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  ApiArchiveSummary,
+  ApiColdAnalytics,
+} from "../cold-data/cold-data-types";
+
 // Kiểu dữ liệu API BI (so khớp services/api/src/bi/bi.types.ts) và prop
 // của màn BI và DX-Score. Màn giữ nguyên bố cục đóng băng, chỉ thay dữ
 // liệu mẫu bằng dữ liệu thật từ API BI.
@@ -139,5 +144,8 @@ export interface BiDxScoreClientProps {
   forecastError: BiSectionError | null;
   biError: BiSectionError | null;
   dxError: BiSectionError | null;
+  archiveSummary: ApiArchiveSummary | null;
+  coldAnalytics: ApiColdAnalytics | null;
+  coldError: BiSectionError | null;
   roles: string[];
 }
