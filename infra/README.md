@@ -69,6 +69,9 @@ Các tài khoản được tạo và gán role khi import lần đầu:
 Mỗi tài khoản có thêm quyền `account/view-profile` và `account/manage-account`
 để sử dụng trang hồ sơ cá nhân.
 
+`demo.admin` và `demo.manager` bắt buộc MFA TOTP; các vai khác login một bước.
+Secret demo, flow và recovery code ở [`keycloak/README.md`](keycloak/README.md).
+
 ## 4. Khi thay đổi cấu hình
 
 - **Realm JSON:** chỉ tự import khi realm chưa tồn tại. Nếu đã chạy rồi,
