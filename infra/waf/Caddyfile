@@ -17,6 +17,13 @@
     directives `
       Include @coraza.conf-recommended
       Include @crs-setup.conf.example
+      # API dùng PATCH (sửa đơn, tách địa chỉ) và DELETE, nhưng danh sách
+      # phương thức cho phép mặc định của CRS (crs-setup.conf.example)
+      # chỉ có GET HEAD POST OPTIONS, nên rule 911100 chặn mọi PATCH
+      # với 403 (Anomaly Score 5). Ghi đè danh sách cho đúng phương thức
+      # API dùng, trước khi nạp rule 911100. Auth/vai trò vẫn do API
+      # kiểm tra; WAF chỉ bỏ chặn phương thức, không bỏ chặn nội dung.
+      SecAction "id:100000, phase:1, pass, nolog, setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PATCH DELETE'"
       Include @owasp_crs/*.conf
       SecRuleEngine On
     `

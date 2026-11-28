@@ -276,6 +276,7 @@ export function splitRawAddress(
 
   const provinceNames = gazetteer.map((p) => p.name);
   let provincePart: string | undefined;
+  let provincePartIndex = -1;
   let province: GazetteerProvince | undefined;
   const unmatched: string[] = [];
 
@@ -283,21 +284,94 @@ export function splitRawAddress(
   // lại để sang lượt sau. Phần mang tiền tố phường/quận không thử khớp
   // tỉnh (xem hasWardOrDistrictPrefix); phần mang tiền tố tỉnh (tỉnh/
   // tp.) và phần không tiền tố vẫn khớp tỉnh như thường.
-  for (const seg of segments) {
-    if (!province && !hasWardOrDistrictPrefix(seg)) {
-      const match = matchCandidate(seg, provinceNames);
-      if (match.name && !match.ambiguous) {
-        province = gazetteer.find((p) => p.name === match.name);
-        provincePart = seg;
-        if (match.fuzzy) {
-          notes.push(
-            `Phần "${seg}" khớp tỉnh bằng khớp mờ, cần kiểm tra lại.`,
-          );
-        }
-        continue;
-      }
+  // Nếu chuỗi nhắc tới 2 tỉnh khác nhau thì chọn theo 2 tiêu chí, theo
+  // thứ tự: (1) tỉnh nào có phường/quận trùng với các phần còn lại trong
+  // chuỗi thì ưu tiên (đối chiếu phường và tên đường); (2) hòa nhau thì
+  // lấy tỉnh bên phải nhất (tỉnh thường đứng cuối địa chỉ).
+  const provinceCandidates: {
+    name: string;
+    seg: string;
+    fuzzy: boolean;
+    index: number;
+  }[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (hasWardOrDistrictPrefix(seg)) continue;
+    const match = matchCandidate(seg, provinceNames);
+    if (match.name && !match.ambiguous) {
+      provinceCandidates.push({ name: match.name, seg, fuzzy: match.fuzzy, index: i });
     }
-    unmatched.push(seg);
+  }
+  const distinctProvinces = [...new Set(provinceCandidates.map((c) => c.name))];
+  if (distinctProvinces.length === 1) {
+    const first = provinceCandidates[0];
+    province = gazetteer.find((p) => p.name === first.name);
+    provincePart = first.seg;
+    provincePartIndex = first.index;
+    if (first.fuzzy) {
+      notes.push(
+        `Phần "${first.seg}" khớp tỉnh bằng khớp mờ, cần kiểm tra lại.`,
+      );
+    }
+  } else if (distinctProvinces.length > 1) {
+    // Nhiều tỉnh: chấm điểm từng tỉnh bằng số phần còn lại trùng với
+    // phường hoặc quận cũ của tỉnh đó, rồi lấy điểm cao nhất; hòa thì
+    // lấy tỉnh bên phải nhất.
+    const provinceSegIndexes = new Set(provinceCandidates.map((c) => c.index));
+    const otherSegs = segments.filter((_, i) => !provinceSegIndexes.has(i));
+    const scored = distinctProvinces.map((name) => {
+      const prov = gazetteer.find((p) => p.name === name)!;
+      const wardNames = prov.wards.map((w) => w.name);
+      const provinceRows = legacyMap.filter(
+        (row) =>
+          normalizeForMatch(row.oldProvince) ===
+          normalizeForMatch(shortProvinceName(prov.name)),
+      );
+      const oldWardNames = provinceRows.map((row) => row.oldWard);
+      const districtNames = [...new Set(provinceRows.map((row) => row.oldDistrict))];
+      let support = 0;
+      for (const seg of otherSegs) {
+        if (
+          matchExact(seg, wardNames) ||
+          matchExact(seg, oldWardNames) ||
+          matchExact(seg, districtNames)
+        ) {
+          support += 1;
+        }
+      }
+      const lastIndex = Math.max(
+        ...provinceCandidates.filter((c) => c.name === name).map((c) => c.index),
+      );
+      return { name, support, lastIndex };
+    });
+    scored.sort((a, b) => b.support - a.support || b.lastIndex - a.lastIndex);
+    const chosen = scored[0];
+    const chosenCandidate = provinceCandidates.find(
+      (c) => c.name === chosen.name,
+    )!;
+    province = gazetteer.find((p) => p.name === chosen.name);
+    provincePart = chosenCandidate.seg;
+    provincePartIndex = chosenCandidate.index;
+    const provinceList = distinctProvinces
+      .map((n) => shortProvinceName(n))
+      .join(', ');
+    if (chosen.support > 0) {
+      notes.push(
+        `Chuỗi nhắc tới nhiều tỉnh (${provinceList}), chọn "${shortProvinceName(chosen.name)}" vì phường/quận trong chuỗi thuộc tỉnh này.`,
+      );
+    } else {
+      notes.push(
+        `Chuỗi nhắc tới nhiều tỉnh (${provinceList}), chọn tỉnh bên phải nhất "${shortProvinceName(chosen.name)}", cần kiểm tra lại.`,
+      );
+    }
+    if (chosenCandidate.fuzzy) {
+      notes.push(
+        `Phần "${chosenCandidate.seg}" khớp tỉnh bằng khớp mờ, cần kiểm tra lại.`,
+      );
+    }
+  }
+  for (let i = 0; i < segments.length; i++) {
+    if (i !== provincePartIndex) unmatched.push(segments[i]);
   }
 
   // Lượt 2: khớp phường và quận cũ trong các phần còn lại.

@@ -376,18 +376,35 @@ export default function AddressSplitClient({
   // Đã kiểm tra -> Chờ kho, nên Quản trị viên/CSKH không xác nhận được.
   const forwardTransitionFor = (
     order: ApiOrderDetail,
-  ): ApiWorkflowTransition | undefined =>
-    transitions.find(
+  ): ApiWorkflowTransition | undefined => {
+    const found = transitions.find(
       (transition) =>
         transition.from === order.state &&
         roles.includes(transition.role) &&
         transition.to !== "Hủy",
     );
+    if (!found) return undefined;
+    // Hai chuyển có rào chắn tin cậy địa chỉ (Mới tạo -> Đã kiểm tra,
+    // Đã kiểm tra -> Chờ kho) yêu cầu tin cậy từ 70. Đơn tin cậy thấp
+    // vẫn ở tab Xác nhận để sửa tay, nhưng chưa đủ điều kiện xác nhận
+    // hàng loạt cho tới khi sửa xong (nếu không, API chặn và cả đợt
+    // xác nhận dừng lại ở đơn đó).
+    if (
+      (found.from === "Mới tạo" && found.to === "Đã kiểm tra") ||
+      (found.from === "Đã kiểm tra" && found.to === "Chờ kho")
+    ) {
+      if (order.addressTrust === null || order.addressTrust < 70) {
+        return undefined;
+      }
+    }
+    return found;
+  };
 
   // Đơn chờ tách: chưa tách, chưa chấm điểm (tin cậy null, không có lỗi
   // phân tách). Đơn đổ về chưa làm gì hết thì nằm ở đây với đúng địa chỉ
-  // thô khách ghi. Đơn đã tách xong (tin cậy từ 70) sang tab xác nhận;
-  // đơn tách lỗi hoặc tin cậy thấp sang tab lỗi phân tách.
+  // thô khách ghi. Đơn đã tách xong (có tin cậy) sang tab xác nhận, kể cả
+  // tin cậy thấp để xác nhận lại; chỉ đơn tách bị lỗi mới sang tab lỗi
+  // phân tách.
   const pendingOrders = useMemo(
     () =>
       orders.filter(
@@ -398,21 +415,28 @@ export default function AddressSplitClient({
     [orders],
   );
   const confirmOrders = useMemo(
-    () => orders.filter((order) => order.addressTrust !== null && order.addressTrust >= 70),
+    () =>
+      orders.filter(
+        (order) =>
+          order.addressTrust !== null &&
+          (order.address?.splitError === undefined || order.address.splitError === null),
+      ),
     [orders],
   );
-  // Đơn lỗi phân tách: đã tách mà lỗi (có splitError đã lưu) hoặc tin
-  // cậy thấp (< 70). Người dùng sửa tay ở tab này rồi bấm Tách; đơn đã
-  // tách xong sẽ rời khỏi tab lỗi sau khi tải lại.
+  // Đơn lỗi phân tách: chỉ đơn tách bị lỗi (có splitError đã lưu) hoặc địa
+  // chỉ linh tinh không nhận dạng được. Đơn địa chỉ ổn nhưng tin cậy thấp
+  // vẫn ở tab Xác nhận để xác nhận lại tiếp, không về tab lỗi.
   const splitErrorOrders = useMemo(
     () =>
       orders.filter(
         (order) =>
-          (order.address?.splitError !== undefined && order.address.splitError !== null) ||
-          (order.addressTrust !== null && order.addressTrust < 70),
+          order.address?.splitError !== undefined && order.address.splitError !== null,
       ),
     [orders],
   );
+
+  // Lỗi phân tách: phân trang giống 2 tab còn lại.
+  const [errorPage, setErrorPage] = useState(1);
 
   // Cho tach dia chi
   const [pendingSelected, setPendingSelected] = useState<Set<string>>(new Set());
@@ -529,6 +553,14 @@ export default function AddressSplitClient({
     filteredConfirm.length === 0
       ? { start: 0, end: 0, total: 0 }
       : { start: (confirmSafePage - 1) * PAGE_SIZE + 1, end: Math.min(confirmSafePage * PAGE_SIZE, filteredConfirm.length), total: filteredConfirm.length };
+
+  const errorTotalPages = Math.max(1, Math.ceil(splitErrorOrders.length / PAGE_SIZE));
+  const errorSafePage = Math.min(errorPage, errorTotalPages);
+  const errorPaged = splitErrorOrders.slice((errorSafePage - 1) * PAGE_SIZE, errorSafePage * PAGE_SIZE);
+  const errorRange =
+    splitErrorOrders.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : { start: (errorSafePage - 1) * PAGE_SIZE + 1, end: Math.min(errorSafePage * PAGE_SIZE, splitErrorOrders.length), total: splitErrorOrders.length };
 
   // Chỉ đơn có bước tiếp theo mà vai hiện tại làm được mới chọn để xác
   // nhận hàng loạt. "Chọn tất cả" chỉ chọn các đơn đủ điều kiện trên
@@ -1835,10 +1867,13 @@ export default function AddressSplitClient({
           <Table
             bare
             columns={errorColumns}
-            rows={splitErrorOrders}
+            rows={errorPaged}
             rowKey={(order) => order.id}
             emptyText="Không có đơn lỗi phân tách. Đơn nào AI phân tách mà không xác định được địa chỉ sẽ hiện ở đây để sửa tay."
           />
+          <div className="border-t border-gray-200">
+            <Pagination page={errorSafePage} totalPages={errorTotalPages} onPageChange={setErrorPage} range={errorRange} />
+          </div>
         </section>
       )}
 

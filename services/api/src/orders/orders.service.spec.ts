@@ -629,12 +629,12 @@ describe('OrdersService', () => {
     expect((await orders.findOne(order.id)).state).toBe('Mới tạo');
   });
 
-  it('chấm lại tin cậy cho đơn cũ dùng phường trước sáp nhập (ô chọn trống mà vẫn 100)', async () => {
+  it('đơn Mới tạo cũ còn phần đã tách thì gom về chuỗi thô, bỏ tin cậy', async () => {
     const { orders, orderStore } = await buildServices();
     const good = await orders.create(createInput('key-1'), COORDINATOR);
     expect(good.addressTrust).toBe(100);
-    // Giả lập đơn cũ lưu sẵn trong DB: phường trước sáp nhập (Phường Phạm
-    // Đình Hổ không còn trong danh mục mới) nhưng điểm lưu sẵn vẫn 100.
+    // Giả lập đơn cũ lưu sẵn trong DB: đơn Mới tạo nhưng còn phần địa chỉ
+    // đã tách (phường trước sáp nhập) và điểm lưu sẵn 100.
     // Ghi thẳng qua kho để không đi qua đường tạo/cập nhật (đường đó chấm
     // lại điểm ngay nên không tạo được trạng thái cũ này).
     const stored = await orderStore.findById(good.id);
@@ -653,9 +653,114 @@ describe('OrdersService', () => {
     const fixed = await orders.rescoreAddressTrust();
     expect(fixed).toBe(1);
     const rescored = await orders.findOne(good.id);
+    expect(rescored.address).toEqual({
+      raw: 'Số 12 phố Hàng Bè, Phường Phạm Đình Hổ, Quận Hai Bà Trưng, Hà Nội',
+    });
+    expect(rescored.addressTrust).toBeNull();
+    expect(rescored.addressLevel).toBeNull();
+    // Chạy lại thì không còn gì để sửa (idempotent).
+    expect(await orders.rescoreAddressTrust()).toBe(0);
+  });
+
+  it('đơn Đã kiểm tra dùng phường cũ tách thành nhiều phường mới thì giữ điểm thấp để sửa tay', async () => {
+    const { orders, orderStore } = await buildServices();
+    const good = await orders.create(createInput('key-1'), COORDINATOR);
+    await orders.transition(good.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    expect((await orders.findOne(good.id)).state).toBe('Đã kiểm tra');
+    // Giả lập đơn cũ: phường Phạm Đình Hổ tách thành Cửa Nam (một phần) và
+    // Hai Bà Trưng (chủ yếu), không sửa tự động được, điểm lưu sẵn vẫn 100.
+    const stored = await orderStore.findById(good.id);
+    stored!.address = {
+      province: 'Hà Nội',
+      district: 'Quận Hai Bà Trưng',
+      ward: 'Phường Phạm Đình Hổ',
+      street: 'Số 12 phố Hàng Bè',
+    };
+    stored!.addressTrust = 100;
+    stored!.addressLevel = 'Tin cậy cao';
+    await orderStore.save(stored!);
+
+    const fixed = await orders.rescoreAddressTrust();
+    expect(fixed).toBe(1);
+    const rescored = await orders.findOne(good.id);
+    expect(rescored.address!.ward).toBe('Phường Phạm Đình Hổ');
     expect(rescored.addressTrust).toBe(60);
     expect(rescored.addressLevel).toBe('Rủi ro cao');
-    // Chạy lại thì không còn gì để sửa (idempotent).
+    expect(await orders.rescoreAddressTrust()).toBe(0);
+  });
+
+  it('đơn Đã kiểm tra dùng phường cũ sáp nhập toàn bộ thì sửa sang phường mới', async () => {
+    const { orders, orderStore } = await buildServices();
+    const good = await orders.create(createInput('key-1'), COORDINATOR);
+    await orders.transition(good.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    // Giả lập đơn cũ: phường Trần Hưng Đạo (Hoàn Kiếm) sáp nhập toàn bộ
+    // thành Cửa Nam, điểm lưu sẵn vẫn 100.
+    const stored = await orderStore.findById(good.id);
+    stored!.address = {
+      province: 'Hà Nội',
+      district: 'Quận Hoàn Kiếm',
+      ward: 'Phường Trần Hưng Đạo',
+      street: 'Số 5 phố Trần Hưng Đạo',
+    };
+    stored!.addressTrust = 100;
+    stored!.addressLevel = 'Tin cậy cao';
+    await orderStore.save(stored!);
+
+    const fixed = await orders.rescoreAddressTrust();
+    expect(fixed).toBe(1);
+    const rescored = await orders.findOne(good.id);
+    expect(rescored.address!.ward).toBe('Phường Cửa Nam');
+    expect(rescored.addressTrust).toBe(100);
+    expect(rescored.addressLevel).toBe('Tin cậy cao');
+    expect(await orders.rescoreAddressTrust()).toBe(0);
+  });
+
+  it('đơn Đã kiểm tra dùng phường cũ ở Hải Phòng thì sửa sang phường mới', async () => {
+    const { orders, orderStore } = await buildServices();
+    const good = await orders.create(createInput('key-1'), COORDINATOR);
+    await orders.transition(good.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    // Giả lập đơn cũ: phường Hoàng Văn Thụ (Hồng Bàng) sáp nhập toàn bộ
+    // thành Hồng Bàng, điểm lưu sẵn vẫn 100.
+    const stored = await orderStore.findById(good.id);
+    stored!.address = {
+      province: 'Hải Phòng',
+      district: 'Quận Hồng Bàng',
+      ward: 'Phường Hoàng Văn Thụ',
+      street: 'Số 20 phố Hoàng Văn Thụ',
+    };
+    stored!.addressTrust = 100;
+    stored!.addressLevel = 'Tin cậy cao';
+    await orderStore.save(stored!);
+
+    const fixed = await orders.rescoreAddressTrust();
+    expect(fixed).toBe(1);
+    const rescored = await orders.findOne(good.id);
+    expect(rescored.address!.ward).toBe('Phường Hồng Bàng');
+    expect(rescored.addressTrust).toBe(100);
+    expect(await orders.rescoreAddressTrust()).toBe(0);
+  });
+
+  it('đơn Đã kiểm tra dùng phường giả trong seed cũ thì sửa theo seed đã sửa', async () => {
+    const { orders, orderStore } = await buildServices();
+    const good = await orders.create(createInput('hist-order-9'), COORDINATOR);
+    await orders.transition(good.id, { to: 'Đã kiểm tra' }, COORDINATOR);
+    // Giả lập đơn cũ: phường giả "Phường Không Có" (không có thật), điểm
+    // lưu sẵn 60. Tệp seed đã sửa đổi sang Cửa Nam.
+    const stored = await orderStore.findById(good.id);
+    stored!.address = {
+      province: 'Hà Nội',
+      ward: 'Phường Không Có',
+      street: 'Số 12 ngõ 34 phố Hàng Bè',
+    };
+    stored!.addressTrust = 60;
+    stored!.addressLevel = 'Rủi ro cao';
+    await orderStore.save(stored!);
+
+    const fixed = await orders.rescoreAddressTrust();
+    expect(fixed).toBe(1);
+    const rescored = await orders.findOne(good.id);
+    expect(rescored.address!.ward).toBe('Phường Cửa Nam');
+    expect(rescored.addressTrust).toBe(100);
     expect(await orders.rescoreAddressTrust()).toBe(0);
   });
 

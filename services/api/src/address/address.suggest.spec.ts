@@ -200,6 +200,29 @@ describe('splitRawAddress', () => {
     expect(parts.ward).toBe('Phường Cửa Nam');
     expect(parts.street).toBe('Tỉnh lộ 123');
   });
+
+  it('chuỗi nhắc 2 tỉnh thì chọn tỉnh có phường/quận trùng (cầu tre, ngô quyền -> Hải Phòng)', () => {
+    const { parts, notes } = splitRawAddress(
+      '50/270, đà nẵng, cầu tre, ngõ quyền, hải phòng',
+      gazetteer,
+      legacyMap,
+    );
+    expect(parts.province).toBe('hải phòng');
+    expect(parts.ward).toBe('cầu tre');
+    expect(parts.district).toBe('ngõ quyền');
+    expect(notes.join(' ')).toContain('nhiều tỉnh');
+    expect(notes.join(' ')).toContain('Hải Phòng');
+  });
+
+  it('chuỗi nhắc 2 tỉnh mà không có phường/quận đối chiếu thì lấy tỉnh bên phải nhất', () => {
+    const { parts, notes } = splitRawAddress(
+      'Số 12 phố Hàng Bè, Đà Nẵng, Hải Phòng',
+      gazetteer,
+      legacyMap,
+    );
+    expect(parts.province).toBe('Hải Phòng');
+    expect(notes.join(' ')).toContain('bên phải nhất');
+  });
 });
 
 describe('provincesContainingWard', () => {

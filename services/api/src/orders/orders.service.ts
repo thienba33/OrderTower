@@ -17,6 +17,7 @@ import {
   AddressService,
   MIN_ADDRESS_TRUST,
 } from '../address/address.service';
+import { normalizeForMatch } from '../address/address.suggest';
 import type {
   AddressEvaluation,
   AddressInput,
@@ -68,6 +69,15 @@ const EDITABLE_ITEMS_STATES = ['Mới tạo', 'Đã kiểm tra', 'Chờ kho'];
 
 // Tên tệp seed mặc định. Đổi tệp seed rồi khởi động lại thì đơn mẫu mới có hiệu lực.
 const DEFAULT_SEED_FILE = 'orders.seed.json';
+
+// Phường thật thay cho phường giả "Phường Không Có" trong 2 đơn seed lịch
+// sử (hist-order-9, hist-order-112): phường này không có thật nên không có
+// trong bảng ánh xạ, nhưng tệp seed đã sửa (c4bcf55) đổi sang phường thật.
+// Chỉ dùng để sửa dữ liệu cũ trong DB lúc khởi động, cho khớp seed.
+const FAKE_WARD_FIX: Record<string, { ward: string; province: string }> = {
+  'hist-order-9': { ward: 'Phường Cửa Nam', province: 'Hà Nội' },
+  'hist-order-112': { ward: 'Phường Hai Bà Trưng', province: 'Hà Nội' },
+};
 
 // Người gọi lúc nạp seed: tài khoản hệ thống "seed". Audit ghi actor là
 // seed, vai đầu là Quản trị viên. Cần cả Điều phối viên (chuyển đơn tới
@@ -225,19 +235,29 @@ export class OrdersService implements OnModuleInit {
       orders.map((order) => order.id),
       'LS',
     );
-    // Chấm lại tin cậy địa chỉ cho đơn đã có sẵn trong DB. Điểm tin cậy
-    // lưu lúc tạo đơn có thể đã cũ: đơn tạo bằng phường trước sáp nhập
-    // (ví dụ Phường Phạm Đình Hổ, Phường Trần Hưng Đạo) không còn trong
-    // danh mục hành chính mới, nên ô chọn phường trên màn hình để trống
-    // trong khi điểm lưu sẵn vẫn 100. Chấm lại theo danh mục hiện tại để
-    // đơn đó rớt về tab Lỗi phân tách cho người dùng sửa tay. Đơn chỉ có
+    // Chấm lại tin cậy địa chỉ cho đơn đã có sẵn trong DB, đồng thời đưa
+    // dữ liệu cũ về đúng logic mới (xem rescoreAddressTrust): đơn Mới tạo
+    // về chuỗi thô (tin cậy null); đơn đã qua xác nhận sửa phường cũ sang
+    // phường mới khi sửa được, còn lại chấm lại điểm theo danh mục hiện
+    // tại. Đơn tạo bằng phường trước sáp nhập (ví dụ Phường Phạm Đình Hổ,
+    // Phường Trần Hưng Đạo) không còn trong danh mục mới, nên ô chọn phường
+    // trên màn hình để trống trong khi điểm lưu sẵn vẫn 100. Đơn chỉ có
     // chuỗi thô thì chưa tách, tin cậy null là đúng nên bỏ qua. Chạy
-    // idempotent: chỉ ghi lại đơn nào điểm đã đổi.
+    // idempotent: chỉ ghi lại đơn nào đã đổi.
     await this.rescoreAddressTrust();
   }
 
   // Chấm lại tin cậy địa chỉ cho mọi đơn đã lưu, theo danh mục hành chính
-  // hiện tại. Trả về số đơn đã sửa điểm.
+  // hiện tại, đồng thời đưa dữ liệu cũ về đúng logic mới:
+  // (1) Đơn Mới tạo chỉ lưu chuỗi thô, chưa tách, chưa chấm điểm: đơn cũ
+  // còn phần đã tách thì gom lại thành chuỗi thô, tin cậy null.
+  // (2) Đơn đã qua vòng phân tách (Đã kiểm tra trở đi) không được ở mức rủi
+  // ro cao: phường cũ sửa được bằng bảng ánh xạ (không mơ hồ) thì sửa sang
+  // phường mới; 2 đơn seed dùng phường giả "Phường Không Có" thì sửa theo
+  // tệp seed đã sửa. Phường không sửa được thì giữ điểm thấp để đơn về tab
+  // Lỗi phân tách cho người dùng sửa tay.
+  // (3) Đơn còn lại chỉ chấm lại điểm theo danh mục hiện tại.
+  // Trả về số đơn đã sửa. Chạy idempotent: chỉ ghi lại đơn nào đã đổi.
   async rescoreAddressTrust(): Promise<number> {
     const orders = await this.store.list();
     let fixed = 0;
@@ -249,13 +269,41 @@ export class OrdersService implements OnModuleInit {
         address.ward !== undefined ||
         address.street !== undefined;
       if (!hasParts) continue;
-      const evaluation = this.address.evaluate(address);
-      if (
-        evaluation.trust !== order.addressTrust ||
-        evaluation.level !== order.addressLevel
-      ) {
-        order.addressTrust = evaluation.trust;
-        order.addressLevel = evaluation.level;
+      let changed = false;
+      if (order.state === 'Mới tạo') {
+        // (1) Gom phần đã tách thành chuỗi thô, bỏ điểm tin cậy.
+        const raw =
+          address.raw ??
+          [address.street, address.ward, address.district, address.province]
+            .filter(
+              (part): part is string => part !== undefined && part !== '',
+            )
+            .join(', ');
+        const nextAddress: AddressInput = { raw };
+        if (address.splitError) nextAddress.splitError = address.splitError;
+        order.address = nextAddress;
+        order.addressTrust = null;
+        order.addressLevel = null;
+        changed = true;
+      } else {
+        // (2) Sửa phường cũ khi điểm thấp, rồi (3) chấm lại điểm.
+        let evaluation = this.address.evaluate(address);
+        if (evaluation.trust < MIN_ADDRESS_TRUST) {
+          if (this.repairOldWard(order)) {
+            changed = true;
+            evaluation = this.address.evaluate(order.address!);
+          }
+        }
+        if (
+          evaluation.trust !== order.addressTrust ||
+          evaluation.level !== order.addressLevel
+        ) {
+          order.addressTrust = evaluation.trust;
+          order.addressLevel = evaluation.level;
+          changed = true;
+        }
+      }
+      if (changed) {
         await this.store.save(order);
         fixed += 1;
       }
@@ -264,6 +312,39 @@ export class OrdersService implements OnModuleInit {
       this.logger.log(`Đã chấm lại tin cậy địa chỉ cho ${fixed} đơn cũ.`);
     }
     return fixed;
+  }
+
+  // Sửa phường cũ của 1 đơn đã qua vòng phân tách khi điểm thấp. Trả true
+  // khi đã đổi địa chỉ. Thứ tự: bảng ánh xạ (không mơ hồ) trước, rồi 2 đơn
+  // seed dùng phường giả.
+  private repairOldWard(order: Order): boolean {
+    const address = order.address;
+    if (!address || !address.ward || !address.province) return false;
+    const mapped = this.address.mapLegacyWard(
+      address.ward,
+      address.province,
+      address.district,
+    );
+    if (mapped) {
+      order.address = {
+        ...address,
+        ward: mapped.ward,
+        province: mapped.province,
+      };
+      return true;
+    }
+    if (normalizeForMatch(address.ward) === 'khong co') {
+      const fix = FAKE_WARD_FIX[order.idempotencyKey];
+      if (fix) {
+        order.address = {
+          ...address,
+          ward: fix.ward,
+          province: fix.province,
+        };
+        return true;
+      }
+    }
+    return false;
   }
 
   resolveSeedPath(): string {
