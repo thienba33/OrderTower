@@ -130,6 +130,49 @@ export class AddressService implements OnModuleInit {
     return provincesContainingWard(wardName, this.gazetteer!);
   }
 
+  // Ánh xạ 1 phường cũ sang phường mới khi không mơ hồ: mọi dòng ánh xạ
+  // khớp (tên phường + tỉnh, ưu tiên khớp cả quận/huyện cũ khi có) đều về
+  // cùng 1 phường mới, và phường mới đó có trong danh mục. Trả null khi
+  // không có dòng nào, khi phường cũ tách thành nhiều phường mới, hoặc khi
+  // phường mới không có trong danh mục. Chỉ dùng để sửa dữ liệu cũ đã lưu
+  // (migration khởi động); đề xuất cho người dùng vẫn qua suggest().
+  mapLegacyWard(
+    ward: string,
+    province: string,
+    district?: string,
+  ): { ward: string; province: string } | null {
+    this.assertLoaded();
+    const normWard = normalizeForMatch(ward);
+    const normProvince = normalizeForMatch(province);
+    let rows = this.legacyMap.filter(
+      (row) =>
+        normalizeForMatch(row.oldWard) === normWard &&
+        normalizeForMatch(row.oldProvince) === normProvince,
+    );
+    if (district) {
+      const withDistrict = rows.filter(
+        (row) => normalizeForMatch(row.oldDistrict) === normalizeForMatch(district),
+      );
+      if (withDistrict.length > 0) rows = withDistrict;
+    }
+    const distinctNew = [...new Set(rows.map((r) => r.newWard))];
+    if (distinctNew.length !== 1) return null;
+    const newWard = distinctNew[0];
+    const newProvince = rows[0].newProvince;
+    const provinceEntry = this.gazetteer!.find(
+      (p) => normalizeForMatch(p.name) === normalizeForMatch(newProvince),
+    );
+    if (!provinceEntry) return null;
+    if (
+      !provinceEntry.wards.some(
+        (w) => normalizeForMatch(w.name) === normalizeForMatch(newWard),
+      )
+    ) {
+      return null;
+    }
+    return { ward: newWard, province: shortProvinceName(newProvince) };
+  }
+
   // Tên ngắn của tỉnh ("Hà Nội") từ tên nhập vào, để hiển thị; trả tên
   // gốc khi không khớp danh mục.
   shortProvince(provinceName: string): string {
