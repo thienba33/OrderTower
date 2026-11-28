@@ -1,16 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
 import type {
   InventoryItem,
   InventorySeedItem,
+  RestockInput,
   StockCheck,
 } from './inventory.types';
 import type { OrderItem } from '../orders/orders.types';
 import type { Queryable } from '../db/db.types';
 import { INVENTORY_STORE, InMemoryInventoryStore } from './inventory.store';
 import type { InventoryStore } from './inventory.store';
+import { AuditService } from '../audit/audit.service';
+import type { Caller } from '../auth/auth.types';
 
 // Tên tệp seed mặc định. Đổi tệp seed rồi khởi động lại thì kho mới có hiệu lực.
 const DEFAULT_SEED_FILE = 'inventory.seed.json';
@@ -29,10 +40,14 @@ export class InventoryService implements OnModuleInit {
 
   // Store là tham số tùy chọn, mặc định bộ nhớ: kiểm thử đơn vị cũ không cần
   // truyền gì thêm. Khi chạy trong NestJS, mô-đun tiêm kho Postgres.
+  // Audit cũng tùy chọn vì cùng lý do: kiểm thử cũ tạo service không cần
+  // audit; khi chạy thật, mô-đun tiêm AuditService để ghi lại mỗi lần nhập.
   constructor(
     @Optional()
     @Inject(INVENTORY_STORE)
     private readonly store: InventoryStore = new InMemoryInventoryStore(),
+    @Optional()
+    private readonly audit?: AuditService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -115,6 +130,48 @@ export class InventoryService implements OnModuleInit {
       held.reserved += item.quantity;
       await this.store.save(held, client);
     }
+  }
+
+  // Nhập thêm hàng vào kho: tăng tồn kho khả dụng của 1 SKU. Đây là đầu
+  // còn lại của vòng lặp BI: đề xuất "Nhập thêm X đơn vị" chỉ gợi ý, còn
+  // việc nhập thật do nhân viên kho ghi nhận ở đây sau khi nhận hàng.
+  // Số lượng phải là số nguyên dương; SKU không có trong kho thì 404.
+  // Mỗi lần nhập đều ghi audit (inventory.restocked) để truy vết ai nhập,
+  // nhập bao nhiêu, tồn kho trước/sau là bao nhiêu.
+  async restock(
+    sku: string,
+    input: RestockInput,
+    caller: Caller,
+  ): Promise<InventoryItem> {
+    if (
+      !input ||
+      !Number.isInteger(input.quantity) ||
+      input.quantity <= 0
+    ) {
+      throw new BadRequestException(
+        'Số lượng nhập phải là số nguyên dương.',
+      );
+    }
+    const held = await this.store.get(sku);
+    if (!held) {
+      throw new NotFoundException(`Không tìm thấy SKU ${sku} trong kho.`);
+    }
+    const before = held.stock;
+    held.stock += input.quantity;
+    await this.store.save(held);
+    if (this.audit) {
+      await this.audit.append({
+        actor: caller.username,
+        role: caller.roles[0] ?? '',
+        action: 'inventory.restocked',
+        orderId: '',
+        detail:
+          `Nhập thêm ${input.quantity} ${held.unit} cho SKU ${sku}` +
+          (input.reason ? ` (lý do: ${input.reason})` : '') +
+          `. Tồn kho: ${before} -> ${held.stock} ${held.unit}.`,
+      });
+    }
+    return held;
   }
 
   private loadSeed(): InventorySeedItem[] {

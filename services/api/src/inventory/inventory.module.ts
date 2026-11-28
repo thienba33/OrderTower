@@ -2,12 +2,13 @@
 import { Module } from '@nestjs/common';
 import { DbModule } from '../db/db.module';
 import { DbService } from '../db/db.service';
+import { AuditModule } from '../audit/audit.module';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { INVENTORY_STORE, PostgresInventoryStore } from './inventory.store';
 
 @Module({
-  imports: [DbModule],
+  imports: [DbModule, AuditModule],
   controllers: [InventoryController],
   providers: [
     InventoryService,

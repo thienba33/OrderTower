@@ -131,6 +131,15 @@ export const RETURN_WRITE_ROLES: readonly string[] = [
 
 export const INVENTORY_READ_ROLES: readonly string[] = INTERNAL_ROLES;
 
+// Vai được nhập thêm hàng vào kho: nhân viên kho là người nhận hàng thật,
+// quản lý và quản trị viên cũng làm được. Điều phối viên và CSKH xem được
+// màn kho nhưng không được nhập hàng.
+export const INVENTORY_WRITE_ROLES: readonly string[] = [
+  ADMIN,
+  MANAGER,
+  WAREHOUSE,
+];
+
 export const CHANNEL_READ_ROLES: readonly string[] = INTERNAL_ROLES;
 
 export const CUSTOMER_READ_ROLES: readonly string[] = [

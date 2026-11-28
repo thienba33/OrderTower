@@ -121,6 +121,53 @@ describe('InventoryService', () => {
     const service = new InventoryService();
     await expect(service.onModuleInit()).rejects.toThrow('số nguyên không âm');
   });
+
+  it('nhập thêm hàng tăng tồn kho, số đã giữ và giá còn nguyên', async () => {
+    const service = await loadService();
+    const caller = { userId: 'u1', username: 'demo.warehouse-staff', roles: ['Nhân viên kho'] };
+    const updated = await service.restock('NM-40', { quantity: 50, reason: 'Theo đề xuất BI DX-1001' }, caller);
+    expect(updated).toMatchObject({ sku: 'NM-40', stock: 502, reserved: 0, unitPrice: 142000 });
+    expect(await service.get('NM-40')).toMatchObject({ stock: 502 });
+  });
+
+  it('nhập thêm hàng với số lượng không dương thì 400', async () => {
+    const service = await loadService();
+    const caller = { userId: 'u1', username: 'demo.warehouse-staff', roles: ['Nhân viên kho'] };
+    await expect(service.restock('NM-40', { quantity: 0 }, caller)).rejects.toThrow('số nguyên dương');
+    await expect(service.restock('NM-40', { quantity: -5 }, caller)).rejects.toThrow('số nguyên dương');
+    await expect(service.restock('NM-40', { quantity: 1.5 }, caller)).rejects.toThrow('số nguyên dương');
+  });
+
+  it('nhập thêm hàng cho SKU không có trong kho thì 404', async () => {
+    const service = await loadService();
+    const caller = { userId: 'u1', username: 'demo.warehouse-staff', roles: ['Nhân viên kho'] };
+    await expect(service.restock('XX-00', { quantity: 10 }, caller)).rejects.toThrow('Không tìm thấy SKU XX-00');
+  });
+
+  it('nhập thêm hàng ghi audit inventory.restocked với tồn kho trước/sau', async () => {
+    const appended: Array<Record<string, unknown>> = [];
+    const audit = {
+      append: async (input: Record<string, unknown>) => {
+        appended.push(input);
+        return undefined;
+      },
+    };
+    const service = new InventoryService(
+      undefined,
+      audit as unknown as import('../audit/audit.service').AuditService,
+    );
+    await service.onModuleInit();
+    const caller = { userId: 'u1', username: 'demo.warehouse-staff', roles: ['Nhân viên kho'] };
+    await service.restock('NM-40', { quantity: 50, reason: 'Theo đề xuất BI DX-1001' }, caller);
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      actor: 'demo.warehouse-staff',
+      role: 'Nhân viên kho',
+      action: 'inventory.restocked',
+    });
+    expect(String(appended[0].detail)).toContain('NM-40');
+    expect(String(appended[0].detail)).toContain('452 -> 502');
+  });
 });
 
 describe('PostgresInventoryStore', () => {
