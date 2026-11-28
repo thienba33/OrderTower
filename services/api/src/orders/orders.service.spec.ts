@@ -52,7 +52,7 @@ import { WorkflowService } from '../workflow/workflow.service';
 import type { OrderShipmentEvidence } from './order-shipment-gate';
 import type { OrderReturnGate } from './order-return-gate';
 import { OrdersService } from './orders.service';
-import { PostgresOrderStore } from './orders.store';
+import { InMemoryOrderStore, PostgresOrderStore } from './orders.store';
 
 // Outbox giả có công tắc lỗi để kiểm tra rollback transaction.
 class ToggleOutboxStore extends InMemoryOutboxStore {
@@ -73,6 +73,7 @@ async function buildServices(options: {
   withReturnGate?: boolean;
 } = {}): Promise<{
   orders: OrdersService;
+  orderStore: InMemoryOrderStore;
   audit: AuditService;
   inventory: InventoryService;
   instances: WorkflowInstanceService;
@@ -134,6 +135,7 @@ async function buildServices(options: {
   const returnGate: OrderReturnGate = {
     findById: async (id: string) => returns.get(id) ?? null,
   };
+  const orderStore = new InMemoryOrderStore();
   const orders = new OrdersService(
     workflow,
     audit,
@@ -141,7 +143,7 @@ async function buildServices(options: {
     address,
     instances,
     approvals,
-    undefined,
+    orderStore,
     gate,
     channels,
     customers,
@@ -171,6 +173,7 @@ async function buildServices(options: {
   );
   return {
     orders,
+    orderStore,
     audit,
     inventory,
     instances,
@@ -596,35 +599,64 @@ describe('OrdersService', () => {
     expect(order.total).toBe(93000);
   });
 
-  it('địa chỉ yếu thì chặn ở chuyển sang Chờ kho', async () => {
+  it('địa chỉ yếu thì chặn ngay ở chuyển sang Đã kiểm tra', async () => {
     const { orders, audit } = await buildServices();
     const order = await orders.create({
       ...createInput('key-1'),
       address: { province: 'Hà Nội' },
     }, COORDINATOR);
     expect(order.addressTrust).toBe(40);
-    await orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
     await expect(
-      orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR),
+      orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR),
     ).rejects.toThrow('chưa đạt tối thiểu');
-    expect((await orders.findOne(order.id)).state).toBe('Đã kiểm tra');
+    expect((await orders.findOne(order.id)).state).toBe('Mới tạo');
     const denied = (await audit.getAll()).filter(
       (record) => record.action === 'order.transition.denied',
     );
     expect(denied).toHaveLength(1);
   });
 
-  it('đơn không có địa chỉ thì chặn ở chuyển sang Chờ kho', async () => {
+  it('đơn không có địa chỉ thì chặn ngay ở chuyển sang Đã kiểm tra', async () => {
     const { orders } = await buildServices();
     const order = await orders.create({
       ...createInput('key-1'),
       address: undefined,
     }, COORDINATOR);
     expect(order.addressTrust).toBeNull();
-    await orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
     await expect(
-      orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR),
+      orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR),
     ).rejects.toThrow('chưa có địa chỉ');
+    expect((await orders.findOne(order.id)).state).toBe('Mới tạo');
+  });
+
+  it('chấm lại tin cậy cho đơn cũ dùng phường trước sáp nhập (ô chọn trống mà vẫn 100)', async () => {
+    const { orders, orderStore } = await buildServices();
+    const good = await orders.create(createInput('key-1'), COORDINATOR);
+    expect(good.addressTrust).toBe(100);
+    // Giả lập đơn cũ lưu sẵn trong DB: phường trước sáp nhập (Phường Phạm
+    // Đình Hổ không còn trong danh mục mới) nhưng điểm lưu sẵn vẫn 100.
+    // Ghi thẳng qua kho để không đi qua đường tạo/cập nhật (đường đó chấm
+    // lại điểm ngay nên không tạo được trạng thái cũ này).
+    const stored = await orderStore.findById(good.id);
+    expect(stored).not.toBeNull();
+    stored!.address = {
+      province: 'Hà Nội',
+      district: 'Quận Hai Bà Trưng',
+      ward: 'Phường Phạm Đình Hổ',
+      street: 'Số 12 phố Hàng Bè',
+    };
+    stored!.addressTrust = 100;
+    stored!.addressLevel = 'Tin cậy cao';
+    await orderStore.save(stored!);
+    expect((await orders.findOne(good.id)).addressTrust).toBe(100);
+
+    const fixed = await orders.rescoreAddressTrust();
+    expect(fixed).toBe(1);
+    const rescored = await orders.findOne(good.id);
+    expect(rescored.addressTrust).toBe(60);
+    expect(rescored.addressLevel).toBe('Rủi ro cao');
+    // Chạy lại thì không còn gì để sửa (idempotent).
+    expect(await orders.rescoreAddressTrust()).toBe(0);
   });
 
   it('tạo đơn bằng chuỗi thô thì chỉ lưu nguyên văn, chưa tách, chưa chấm điểm', async () => {

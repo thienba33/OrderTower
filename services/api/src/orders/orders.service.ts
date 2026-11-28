@@ -225,6 +225,45 @@ export class OrdersService implements OnModuleInit {
       orders.map((order) => order.id),
       'LS',
     );
+    // Chấm lại tin cậy địa chỉ cho đơn đã có sẵn trong DB. Điểm tin cậy
+    // lưu lúc tạo đơn có thể đã cũ: đơn tạo bằng phường trước sáp nhập
+    // (ví dụ Phường Phạm Đình Hổ, Phường Trần Hưng Đạo) không còn trong
+    // danh mục hành chính mới, nên ô chọn phường trên màn hình để trống
+    // trong khi điểm lưu sẵn vẫn 100. Chấm lại theo danh mục hiện tại để
+    // đơn đó rớt về tab Lỗi phân tách cho người dùng sửa tay. Đơn chỉ có
+    // chuỗi thô thì chưa tách, tin cậy null là đúng nên bỏ qua. Chạy
+    // idempotent: chỉ ghi lại đơn nào điểm đã đổi.
+    await this.rescoreAddressTrust();
+  }
+
+  // Chấm lại tin cậy địa chỉ cho mọi đơn đã lưu, theo danh mục hành chính
+  // hiện tại. Trả về số đơn đã sửa điểm.
+  async rescoreAddressTrust(): Promise<number> {
+    const orders = await this.store.list();
+    let fixed = 0;
+    for (const order of orders) {
+      const address = order.address;
+      if (!address) continue;
+      const hasParts =
+        address.province !== undefined ||
+        address.ward !== undefined ||
+        address.street !== undefined;
+      if (!hasParts) continue;
+      const evaluation = this.address.evaluate(address);
+      if (
+        evaluation.trust !== order.addressTrust ||
+        evaluation.level !== order.addressLevel
+      ) {
+        order.addressTrust = evaluation.trust;
+        order.addressLevel = evaluation.level;
+        await this.store.save(order);
+        fixed += 1;
+      }
+    }
+    if (fixed > 0) {
+      this.logger.log(`Đã chấm lại tin cậy địa chỉ cho ${fixed} đơn cũ.`);
+    }
+    return fixed;
   }
 
   resolveSeedPath(): string {

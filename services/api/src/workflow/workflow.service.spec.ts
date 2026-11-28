@@ -78,7 +78,7 @@ describe('WorkflowService', () => {
     expect(service.getDefinition('order-flow').version).toBe('1');
     expect(
       service.getTransition('order-flow', 'Mới tạo', 'Đã kiểm tra')?.guard,
-    ).toBe('không trùng đơn');
+    ).toBe('không trùng đơn, địa chỉ đạt mức tin cậy tối thiểu');
 
     service.setActiveVersion('order-flow', '2');
     expect(service.getActiveVersion('order-flow')).toBe('2');

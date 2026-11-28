@@ -242,6 +242,29 @@ describe('HistoricalSeedService', () => {
     expect((await audit.verify()).valid).toBe(true);
   });
 
+  it('đồng bộ logic mới: đơn Mới tạo chưa có tin cậy, đơn Đã kiểm tra trở đi không rủi ro cao', async () => {
+    const { orders, seed } = await buildStack();
+    await seed.onApplicationBootstrap();
+
+    const all = await orders.list();
+    // Đơn Mới tạo chỉ lưu chuỗi thô, chưa tách, chưa chấm điểm.
+    const fresh = all.filter((order) => order.state === 'Mới tạo');
+    expect(fresh.length).toBeGreaterThan(0);
+    for (const order of fresh) {
+      expect(order.addressTrust).toBeNull();
+      expect(order.addressLevel).toBeNull();
+    }
+    // Đơn đã qua vòng phân tách địa chỉ (Đã kiểm tra trở đi) không được
+    // ở mức rủi ro cao.
+    const checked = all.filter((order) => order.state !== 'Mới tạo');
+    expect(checked.length).toBeGreaterThan(0);
+    for (const order of checked) {
+      expect(order.addressTrust).not.toBeNull();
+      expect(order.addressTrust as number).toBeGreaterThanOrEqual(70);
+      expect(order.addressLevel).not.toBe('Rủi ro cao');
+    }
+  });
+
   it('chạy lại thì bỏ qua, không nạp trùng', async () => {
     const { orders, seed } = await buildStack();
     await seed.onApplicationBootstrap();

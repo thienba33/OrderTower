@@ -1418,6 +1418,180 @@ export default function AddressSplitClient({
     },
   ];
 
+  // Cot cua tab Loi phan tach: giong bang Cho tach (don/khach, sdt, dia chi
+  // hien tai, tinh/phuong/duong de sua tay) nhung thay cot Trang thai bang
+  // cot Loi phan tach (hop loi do kem ly do) va nut An de dua don ve lai
+  // tab Cho tach.
+  const errorColumns: TableColumn<ApiOrderDetail>[] = [
+    {
+      key: "order",
+      header: "Đơn/Khách",
+      render: (order) => (
+        <span className="flex flex-col gap-0.5 text-xs">
+          <span className="font-medium text-gray-900">{order.id}</span>
+          <span className="text-gray-500">{order.customer}</span>
+        </span>
+      ),
+      headerClassName: "w-[119px]",
+    },
+    {
+      key: "phone",
+      header: "SĐT",
+      render: (order) => order.phone ?? "-",
+      cellClassName: "text-xs text-gray-700",
+      headerClassName: "w-[109px]",
+    },
+    {
+      key: "raw",
+      header: "Địa chỉ hiện tại",
+      render: (order) => joinAddress(order),
+      cellClassName: "text-xs text-gray-700 !whitespace-normal",
+      headerClassName: "w-[157px]",
+    },
+    {
+      key: "province",
+      header: "Tỉnh/TP",
+      render: (order) => {
+        const split = splitFor(order);
+        return (
+          <MiniSelect
+            value={split.province}
+            onChange={(value) => setPendingSplit(order.id, { province: value })}
+            ariaLabel={`Chọn tỉnh/thành phố cho ${order.id}`}
+            placeholder="Chọn Tỉnh/TP"
+            options={[...ADDRESS_PROVINCES_2025]}
+          />
+        );
+      },
+      headerClassName: "w-[139px]",
+    },
+    {
+      key: "ward",
+      header: "Xã/Phường",
+      render: (order) => {
+        const split = splitFor(order);
+        return (
+          <SearchableSelect
+            small
+            disabled={split.province === ""}
+            value={split.ward}
+            onChange={(value) => setPendingSplit(order.id, { ward: value })}
+            ariaLabel={`Chọn xã/phường cho ${order.id}`}
+            placeholder="Tìm Xã/Phường"
+            options={wardsForProvince(split.province)}
+          />
+        );
+      },
+      headerClassName: "w-[139px]",
+    },
+    {
+      key: "detail",
+      header: "Địa chỉ chi tiết",
+      render: (order) => {
+        const split = splitFor(order);
+        return (
+          <input
+            type="text"
+            value={split.street}
+            onChange={(event) => setPendingSplit(order.id, { street: event.target.value })}
+            aria-label={`Địa chỉ chi tiết cho ${order.id}`}
+            placeholder="Số nhà, ngõ, đường..."
+            className="h-8 w-full rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-gray-500"
+          />
+        );
+      },
+      cellClassName: "text-xs text-gray-700 !whitespace-normal",
+      headerClassName: "w-[139px]",
+    },
+    {
+      key: "error",
+      header: "Lỗi phân tách",
+      render: (order) => {
+        const splitError = order.address?.splitError ?? null;
+        const suggestion = suggestions[order.id];
+        if (splitError !== null) {
+          return (
+            <div className="flex w-[230px] flex-col gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-gray-700">
+              <p className="font-semibold text-red-800">Lỗi phân tách.</p>
+              <p>{splitError.message}</p>
+              {suggestion?.after.reasons !== undefined && suggestion.after.reasons.length > 0 && (
+                <ul className="list-disc pl-4">
+                  {suggestion.after.reasons.map((reason, index) => (
+                    <li key={index}>{reason}</li>
+                  ))}
+                </ul>
+              )}
+              <p>Sửa tay ở dòng này rồi bấm Tách.</p>
+            </div>
+          );
+        }
+        return (
+          <p className="w-[230px] rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-gray-700">
+            <span className="font-semibold text-red-800">Mức thấp, nhập tay.</span>{" "}
+            Tin cậy chỉ {order.addressTrust ?? "-"}%, chưa đủ để xác nhận. Sửa tay tỉnh/thành phố, xã/phường và địa chỉ chi tiết rồi bấm Tách.
+          </p>
+        );
+      },
+      cellClassName: "!whitespace-normal",
+      headerClassName: "w-[230px]",
+    },
+    {
+      key: "trust",
+      header: "Độ tin cậy",
+      render: (order) =>
+        order.addressTrust === null ? (
+          <span className="text-xs text-gray-400">-</span>
+        ) : (
+          <span className="flex items-center gap-1">
+            <span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${trustDotClass(order.addressTrust)}`} />
+            <span className={`text-xs font-bold ${trustTextClass(order.addressTrust)}`}>{trustLabel(order)}</span>
+          </span>
+        ),
+      headerClassName: "w-[119px]",
+    },
+    {
+      key: "actions",
+      header: "Hành động",
+      render: (order) => {
+        const splitError = order.address?.splitError ?? null;
+        const complete = splitComplete(splitFor(order));
+        return (
+          <div className="flex w-[150px] flex-col gap-1.5">
+            <button
+              type="button"
+              disabled={!complete || pendingBusy}
+              onClick={() => splitOne(order)}
+              title={complete ? "Tách địa chỉ đơn này" : "Chọn đủ tỉnh/thành phố và xã/phường trước"}
+              className="flex h-8 items-center self-start rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Tách
+            </button>
+            {splitError !== null && (
+              <button
+                type="button"
+                disabled={pendingBusy}
+                onClick={async () => {
+                  const saved = await patchSplitError(order.id, null);
+                  if (!saved.ok) {
+                    setPendingError(`Đơn ${order.id}: ${saved.message}`);
+                    return;
+                  }
+                  setPendingNote(`Đã ẩn lỗi phân tách của đơn ${order.id}, đơn về lại tab Chờ tách.`);
+                  router.refresh();
+                }}
+                className="flex h-8 items-center self-start rounded-md border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+              >
+                Ẩn
+              </button>
+            )}
+          </div>
+        );
+      },
+      cellClassName: "!whitespace-normal",
+      headerClassName: "w-[150px]",
+    },
+  ];
+
   const aiEditComplete = aiEditProvince !== "" && aiEditWard !== "";
 
   return (
@@ -1651,122 +1825,21 @@ export default function AddressSplitClient({
       )}
 
       {tab === "error" && (
-        <>
-          {splitErrorOrders.length > 0 ? (
-            <section aria-label="Lỗi phân tách địa chỉ" className="overflow-hidden rounded-lg border border-red-200 bg-white">
-              <div className="border-b border-red-200 bg-red-50 px-5 py-3">
-                <h2 className="text-sm font-bold text-red-800">Lỗi phân tách ({splitErrorOrders.length})</h2>
-                <p className="text-xs text-red-700">
-                  Địa chỉ không xác định được an toàn từ dữ liệu hành chính nên hệ thống không đoán. Sửa tay tỉnh/thành phố, xã/phường và địa chỉ chi tiết rồi bấm Tách.
-                </p>
-              </div>
-              <ul className="flex flex-col divide-y divide-gray-200">
-                {splitErrorOrders.map((order) => {
-                  const splitError = order.address?.splitError ?? null;
-                  const split = splitFor(order);
-                  const complete = splitComplete(split);
-                  const suggestion = suggestions[order.id];
-                  return (
-                    <li key={order.id} className="flex flex-col gap-2 px-5 py-3">
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="font-medium text-gray-900">{order.id}</span>
-                        <span className="text-gray-500">{order.customer}</span>
-                        <span className="text-gray-700">{joinAddress(order)}</span>
-                        {order.addressTrust !== null && (
-                          <span className={`font-bold ${trustTextClass(order.addressTrust)}`}>
-                            {trustLabel(order)}
-                          </span>
-                        )}
-                      </div>
-                      {splitError !== null ? (
-                        <div className="flex flex-col gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-gray-700">
-                          <p className="font-semibold text-red-800">Lỗi phân tách.</p>
-                          <p>{splitError.message}</p>
-                          {suggestion?.after.reasons !== undefined && suggestion.after.reasons.length > 0 && (
-                            <ul className="list-disc pl-4">
-                              {suggestion.after.reasons.map((reason, index) => (
-                                <li key={index}>{reason}</li>
-                              ))}
-                            </ul>
-                          )}
-                          <p>Sửa tay ở dòng này rồi bấm Tách.</p>
-                        </div>
-                      ) : (
-                        <p className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-gray-700">
-                          <span className="font-semibold text-red-800">Mức thấp, nhập tay.</span>{" "}
-                          Tin cậy chỉ {order.addressTrust ?? "-"}%, chưa đủ để xác nhận. Sửa tay tỉnh/thành phố, xã/phường và địa chỉ chi tiết rồi bấm Tách.
-                        </p>
-                      )}
-                      <div className="flex flex-wrap items-end gap-2">
-                        <div className="w-[160px] max-w-full">
-                          <MiniSelect
-                            value={split.province}
-                            onChange={(value) => setPendingSplit(order.id, { province: value })}
-                            ariaLabel={`Chọn tỉnh/thành phố cho ${order.id}`}
-                            placeholder="Chọn Tỉnh/TP"
-                            options={[...ADDRESS_PROVINCES_2025]}
-                          />
-                        </div>
-                        <div className="w-[200px] max-w-full">
-                          <SearchableSelect
-                            small
-                            disabled={split.province === ""}
-                            value={split.ward}
-                            onChange={(value) => setPendingSplit(order.id, { ward: value })}
-                            ariaLabel={`Chọn xã/phường cho ${order.id}`}
-                            placeholder="Tìm Xã/Phường"
-                            options={wardsForProvince(split.province)}
-                          />
-                        </div>
-                        <div className="w-[220px] max-w-full">
-                          <input
-                            type="text"
-                            value={split.street}
-                            onChange={(event) => setPendingSplit(order.id, { street: event.target.value })}
-                            aria-label={`Địa chỉ chi tiết cho ${order.id}`}
-                            placeholder="Số nhà, ngõ, đường..."
-                            className="h-8 w-full rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-gray-500"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          disabled={!complete || pendingBusy}
-                          onClick={() => splitOne(order)}
-                          title={complete ? "Tách địa chỉ đơn này" : "Chọn đủ tỉnh/thành phố và xã/phường trước"}
-                          className="flex h-8 items-center rounded-md bg-red-700 px-2.5 text-[13px] font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Tách
-                        </button>
-                        {splitError !== null && (
-                          <button
-                            type="button"
-                            disabled={pendingBusy}
-                            onClick={async () => {
-                              const saved = await patchSplitError(order.id, null);
-                              if (!saved.ok) {
-                                setPendingError(`Đơn ${order.id}: ${saved.message}`);
-                                return;
-                              }
-                              setPendingNote(`Đã ẩn lỗi phân tách của đơn ${order.id}, đơn về lại tab Chờ tách.`);
-                              router.refresh();
-                            }}
-                            className="flex h-8 items-center rounded-md border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
-                          >
-                            Ẩn
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ) : (
-            <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
-              Không có đơn lỗi phân tách. Đơn nào AI phân tách mà không xác định được địa chỉ sẽ hiện ở đây để sửa tay.
+        <section aria-label="Lỗi phân tách địa chỉ" className="overflow-hidden rounded-lg border border-red-200 bg-white">
+          <div className="border-b border-red-200 bg-red-50 px-5 py-3">
+            <h2 className="text-sm font-bold text-red-800">Lỗi phân tách ({splitErrorOrders.length})</h2>
+            <p className="text-xs text-red-700">
+              Địa chỉ không xác định được an toàn từ dữ liệu hành chính nên hệ thống không đoán. Sửa tay tỉnh/thành phố, xã/phường và địa chỉ chi tiết rồi bấm Tách.
             </p>
-          )}
-        </>
+          </div>
+          <Table
+            bare
+            columns={errorColumns}
+            rows={splitErrorOrders}
+            rowKey={(order) => order.id}
+            emptyText="Không có đơn lỗi phân tách. Đơn nào AI phân tách mà không xác định được địa chỉ sẽ hiện ở đây để sửa tay."
+          />
+        </section>
       )}
 
       <Modal

@@ -18,7 +18,7 @@
       "from": "Mới tạo",
       "to": "Đã kiểm tra",
       "role": "Điều phối viên",
-      "guard": "không trùng đơn"
+      "guard": "không trùng đơn, địa chỉ đạt mức tin cậy tối thiểu"
     },
     {
       "from": "Đã kiểm tra",
