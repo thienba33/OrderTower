@@ -181,12 +181,6 @@
           "type": "password",
           "value": "${ORDERTOWER_DEMO_PASSWORD}",
           "temporary": false
-        },
-        {
-          "type": "otp",
-          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
-          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"period\":30,\"algorithm\":\"HmacSHA1\",\"counter\":0,\"secretEncoding\":\"BASE32\"}",
-          "userLabel": "Demo MFA"
         }
       ],
       "clientRoles": {
@@ -200,7 +194,10 @@
         "ordertower-portal": [
           "admin"
         ]
-      }
+      },
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ]
     },
     {
       "username": "demo.dispatcher",
@@ -317,12 +314,6 @@
           "type": "password",
           "value": "${ORDERTOWER_DEMO_PASSWORD}",
           "temporary": false
-        },
-        {
-          "type": "otp",
-          "secretData": "{\"value\":\"GEZDGNBVGY3TQOJQ\"}",
-          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"period\":30,\"algorithm\":\"HmacSHA1\",\"counter\":0,\"secretEncoding\":\"BASE32\"}",
-          "userLabel": "Demo MFA"
         }
       ],
       "clientRoles": {
@@ -336,7 +327,10 @@
         "ordertower-portal": [
           "manager"
         ]
-      }
+      },
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ]
     },
     {
       "username": "demo.customer",
@@ -362,134 +356,6 @@
         "ordertower-portal": [
           "customer"
         ]
-      }
-    }
-  ],
-  "browserFlow": "browser-mfa",
-  "authenticationFlows": [
-    {
-      "alias": "browser-mfa",
-      "description": "Browser + MFA for admin/manager",
-      "providerId": "basic-flow",
-      "topLevel": true,
-      "builtIn": false,
-      "authenticationExecutions": [
-        {
-          "authenticator": "auth-cookie",
-          "authenticatorFlow": false,
-          "requirement": "ALTERNATIVE",
-          "priority": 10,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        },
-        {
-          "authenticator": "auth-username-password-form",
-          "authenticatorFlow": false,
-          "requirement": "REQUIRED",
-          "priority": 20,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        },
-        {
-          "authenticatorFlow": true,
-          "requirement": "CONDITIONAL",
-          "priority": 30,
-          "autheticatorFlow": true,
-          "flowAlias": "mfa-admin",
-          "userSetupAllowed": false
-        },
-        {
-          "authenticatorFlow": true,
-          "requirement": "CONDITIONAL",
-          "priority": 40,
-          "autheticatorFlow": true,
-          "flowAlias": "mfa-manager",
-          "userSetupAllowed": false
-        }
-      ]
-    },
-    {
-      "alias": "mfa-admin",
-      "description": "MFA for admin",
-      "providerId": "basic-flow",
-      "topLevel": false,
-      "builtIn": false,
-      "authenticationExecutions": [
-        {
-          "authenticator": "conditional-user-role",
-          "authenticatorConfig": "mfa-admin-role",
-          "authenticatorFlow": false,
-          "requirement": "REQUIRED",
-          "priority": 10,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        },
-        {
-          "authenticator": "auth-otp-form",
-          "authenticatorFlow": false,
-          "requirement": "ALTERNATIVE",
-          "priority": 20,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        },
-        {
-          "authenticator": "auth-recovery-authn-code-form",
-          "authenticatorFlow": false,
-          "requirement": "ALTERNATIVE",
-          "priority": 30,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        }
-      ]
-    },
-    {
-      "alias": "mfa-manager",
-      "description": "MFA for manager",
-      "providerId": "basic-flow",
-      "topLevel": false,
-      "builtIn": false,
-      "authenticationExecutions": [
-        {
-          "authenticator": "conditional-user-role",
-          "authenticatorConfig": "mfa-manager-role",
-          "authenticatorFlow": false,
-          "requirement": "REQUIRED",
-          "priority": 10,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        },
-        {
-          "authenticator": "auth-otp-form",
-          "authenticatorFlow": false,
-          "requirement": "ALTERNATIVE",
-          "priority": 20,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        },
-        {
-          "authenticator": "auth-recovery-authn-code-form",
-          "authenticatorFlow": false,
-          "requirement": "ALTERNATIVE",
-          "priority": 30,
-          "autheticatorFlow": false,
-          "userSetupAllowed": false
-        }
-      ]
-    }
-  ],
-  "authenticatorConfig": [
-    {
-      "alias": "mfa-admin-role",
-      "config": {
-        "condUserRole": "ordertower-web.admin",
-        "negate": "false"
-      }
-    },
-    {
-      "alias": "mfa-manager-role",
-      "config": {
-        "condUserRole": "ordertower-web.manager",
-        "negate": "false"
       }
     }
   ]
