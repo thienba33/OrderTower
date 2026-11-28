@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { DriverPhone, type DriverTab } from "@/components/driver/DriverPhone";
+import { Pagination } from "@/components/ui/Pagination";
 import {
   ACTIVE_SHIPMENT_STATUSES,
   DRIVER_SHIPMENT_LABEL,
@@ -12,6 +13,8 @@ import {
   type DriverListView,
   type DriverOrderCard,
 } from "./driver-types";
+
+const PAGE_SIZE = 5;
 
 // ISO -> "HH:mm" giờ Việt Nam, null hoặc sai thì "-".
 function formatTime(iso: string | null): string {
@@ -146,9 +149,19 @@ export default function DriverClient({ view }: { view: DriverListView }) {
 
 function DriverListOk({ view }: { view: Extract<DriverListView, { kind: "ok" }> }) {
   const [tab, setTab] = useState<DriverTab>("orders");
+  const [activePage, setActivePage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
   const { driver, vehicleLabel, dateLabel, cards, loadNote } = view;
   const activeCards = cards.filter((card) => ACTIVE_SHIPMENT_STATUSES.includes(card.shipmentStatus));
   const finishedCards = cards.filter((card) => FINISHED_SHIPMENT_STATUSES.includes(card.shipmentStatus));
+  // Đơn của 1 tài xế tích lũy theo ngày nên phân trang 5 thẻ/trang cho cả
+  // tab đơn đang giao và tab lịch sử; mỗi tab giữ trang riêng.
+  const activeTotalPages = Math.max(1, Math.ceil(activeCards.length / PAGE_SIZE));
+  const activeSafePage = Math.min(activePage, activeTotalPages);
+  const activePaged = activeCards.slice((activeSafePage - 1) * PAGE_SIZE, activeSafePage * PAGE_SIZE);
+  const historyTotalPages = Math.max(1, Math.ceil(finishedCards.length / PAGE_SIZE));
+  const historySafePage = Math.min(historyPage, historyTotalPages);
+  const historyPaged = finishedCards.slice((historySafePage - 1) * PAGE_SIZE, historySafePage * PAGE_SIZE);
   const deliveringCount = cards.filter((card) => card.shipmentStatus === "Đang giao").length;
   const waitingCount = cards.filter((card) => card.shipmentStatus === "Chờ điều xe").length;
   const deliveredCount = cards.filter((card) => card.shipmentStatus === "Đã giao").length;
@@ -177,13 +190,18 @@ function DriverListOk({ view }: { view: Extract<DriverListView, { kind: "ok" }> 
             {activeCards.length === 0 ? (
               <p className="text-sm text-gray-500">Chưa có đơn đang giao.</p>
             ) : (
-              activeCards.map((card) => (
-                <OrderCard
-                  key={card.shipmentId}
-                  card={card}
-                  primary={card.shipmentStatus === "Đang giao" || card.orderId === earliestWaitingId}
-                />
-              ))
+              <>
+                {activePaged.map((card) => (
+                  <OrderCard
+                    key={card.shipmentId}
+                    card={card}
+                    primary={card.shipmentStatus === "Đang giao" || card.orderId === earliestWaitingId}
+                  />
+                ))}
+                <div className="flex justify-center pt-1">
+                  <Pagination page={activeSafePage} totalPages={activeTotalPages} onPageChange={setActivePage} />
+                </div>
+              </>
             )}
           </div>
         </>
@@ -200,9 +218,14 @@ function DriverListOk({ view }: { view: Extract<DriverListView, { kind: "ok" }> 
             {finishedCards.length === 0 ? (
               <p className="text-sm text-gray-500">Chưa có đơn đã giao.</p>
             ) : (
-              finishedCards.map((card) => (
-                <OrderCard key={card.shipmentId} card={card} primary={false} />
-              ))
+              <>
+                {historyPaged.map((card) => (
+                  <OrderCard key={card.shipmentId} card={card} primary={false} />
+                ))}
+                <div className="flex justify-center pt-1">
+                  <Pagination page={historySafePage} totalPages={historyTotalPages} onPageChange={setHistoryPage} />
+                </div>
+              </>
             )}
           </div>
         </>

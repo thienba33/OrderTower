@@ -175,6 +175,8 @@ export default function BiDxScorePage({
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<BiTab>("Tổng quan");
   const [page, setPage] = useState(1);
+  const [recPage, setRecPage] = useState(1);
+  const [dxLogPage, setDxLogPage] = useState(1);
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectHint, setRejectHint] = useState(false);
@@ -266,6 +268,20 @@ export default function BiDxScorePage({
     }),
     [tabRows, page],
   );
+
+  // Tab Cảnh báo (đề xuất) chưa có phân trang: đề xuất tăng theo số bất
+  // thường nên phân trang riêng, không dùng chung trang của tab dự báo.
+  const recTotalPages = Math.max(1, Math.ceil(recommendations.length / PAGE_SIZE));
+  const recSafePage = Math.min(recPage, recTotalPages);
+  const recPaged = recommendations.slice((recSafePage - 1) * PAGE_SIZE, recSafePage * PAGE_SIZE);
+  const recRange =
+    recommendations.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (recSafePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(recSafePage * PAGE_SIZE, recommendations.length),
+          total: recommendations.length,
+        };
 
   const decide = async (
     id: string,
@@ -604,6 +620,19 @@ export default function BiDxScorePage({
     }
   }
 
+  // Bảng log gốc tăng theo ngày và vai nên phân trang 5 dòng/trang.
+  const dxLogTotalPages = Math.max(1, Math.ceil(dxLogRows.length / PAGE_SIZE));
+  const dxLogSafePage = Math.min(dxLogPage, dxLogTotalPages);
+  const dxLogPaged = dxLogRows.slice((dxLogSafePage - 1) * PAGE_SIZE, dxLogSafePage * PAGE_SIZE);
+  const dxLogRange =
+    dxLogRows.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (dxLogSafePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(dxLogSafePage * PAGE_SIZE, dxLogRows.length),
+          total: dxLogRows.length,
+        };
+
   const dxLogColumns: TableColumn<DxLogRow>[] = [
     { key: "id", header: "Mã log", render: (row) => <span className="font-medium text-gray-900">{row.id}</span>, cellClassName: "w-[139px]" },
     { key: "metric", header: "Chỉ số", render: (row) => row.metric, cellClassName: "w-[199px]" },
@@ -787,11 +816,14 @@ export default function BiDxScorePage({
               )}
               <Table
                 columns={anomalyColumns}
-                rows={recommendations}
+                rows={recPaged}
                 rowKey={(row) => row.id}
                 bare
                 emptyText="Không có bất thường đang mở"
               />
+              <div className="border-t">
+                <Pagination page={recSafePage} totalPages={recTotalPages} onPageChange={setRecPage} range={recRange} />
+              </div>
             </>
           )}
         </section>
@@ -859,13 +891,16 @@ export default function BiDxScorePage({
               <SectionError error={dxError} />
             ) : (
               <>
-                <Table columns={dxLogColumns} rows={dxLogRows} rowKey={(row) => row.id} bare />
+                <Table columns={dxLogColumns} rows={dxLogPaged} rowKey={(row) => row.id} bare />
                 {hWaitEmpty && (
                   <p className="border-t px-4 py-3 text-xs text-gray-500">
                     Chưa có phê duyệt nào trong log nên chưa đo được thời gian chờ
                     duyệt và số quyết định theo người/ngày.
                   </p>
                 )}
+                <div className="border-t">
+                  <Pagination page={dxLogSafePage} totalPages={dxLogTotalPages} onPageChange={setDxLogPage} range={dxLogRange} />
+                </div>
               </>
             )}
           </section>

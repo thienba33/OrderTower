@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Database, RefreshCw, Archive } from "lucide-react";
+import { Pagination, type PaginationRange } from "@/components/ui/Pagination";
 import type {
   ApiArchiveRun,
   ApiArchiveSummary,
@@ -58,11 +59,19 @@ function GroupTable({
   rows,
   keyLabel,
   formatKey,
+  page,
+  totalPages,
+  onPageChange,
+  range,
 }: {
   title: string;
   rows: ApiColdGroup[];
   keyLabel: string;
   formatKey?: (value: string) => string;
+  page?: number;
+  totalPages?: number;
+  onPageChange?: (page: number) => void;
+  range?: PaginationRange;
 }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
@@ -105,9 +114,19 @@ function GroupTable({
           </tbody>
         </table>
       </div>
+      {page !== undefined &&
+      totalPages !== undefined &&
+      onPageChange !== undefined &&
+      range !== undefined ? (
+        <div className="border-t">
+          <Pagination page={page} totalPages={totalPages} onPageChange={onPageChange} range={range} />
+        </div>
+      ) : null}
     </div>
   );
 }
+
+const PAGE_SIZE = 5;
 
 export default function ColdDataClient({
   initialSummary,
@@ -128,6 +147,37 @@ export default function ColdDataClient({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [runsPage, setRunsPage] = useState(1);
+  const [byDayPage, setByDayPage] = useState(1);
+
+  // Lịch sử archive tăng theo mỗi run, bảng theo ngày tăng theo từng ngày
+  // nên phân trang 5 dòng/trang; theo trạng thái và theo kênh bị giới hạn
+  // bởi số trạng thái/kênh cố định nên giữ nguyên không phân trang.
+  const runsTotalPages = Math.max(1, Math.ceil(runs.length / PAGE_SIZE));
+  const runsSafePage = Math.min(runsPage, runsTotalPages);
+  const runsPaged = runs.slice((runsSafePage - 1) * PAGE_SIZE, runsSafePage * PAGE_SIZE);
+  const runsRange: PaginationRange =
+    runs.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (runsSafePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(runsSafePage * PAGE_SIZE, runs.length),
+          total: runs.length,
+        };
+  const byDayTotalPages = Math.max(1, Math.ceil(analytics.byDay.length / PAGE_SIZE));
+  const byDaySafePage = Math.min(byDayPage, byDayTotalPages);
+  const byDayPaged = analytics.byDay.slice(
+    (byDaySafePage - 1) * PAGE_SIZE,
+    byDaySafePage * PAGE_SIZE,
+  );
+  const byDayRange: PaginationRange =
+    analytics.byDay.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (byDaySafePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(byDaySafePage * PAGE_SIZE, analytics.byDay.length),
+          total: analytics.byDay.length,
+        };
 
   useEffect(() => {
     setSummary(initialSummary);
@@ -297,7 +347,7 @@ export default function ColdDataClient({
               </tr>
             </thead>
             <tbody className="divide-y">
-              {runs.map((run) => (
+              {runsPaged.map((run) => (
                 <tr key={run.id} className="align-top">
                   <td className="px-4 py-2 font-medium text-gray-900">
                     {run.id}
@@ -346,6 +396,9 @@ export default function ColdDataClient({
             </tbody>
           </table>
         </div>
+        <div className="border-t">
+          <Pagination page={runsSafePage} totalPages={runsTotalPages} onPageChange={setRunsPage} range={runsRange} />
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
@@ -353,9 +406,13 @@ export default function ColdDataClient({
         <GroupTable title="Theo kênh" rows={analytics.byChannel} keyLabel="Kênh" />
         <GroupTable
           title="Theo ngày"
-          rows={analytics.byDay}
+          rows={byDayPaged}
           keyLabel="Ngày"
           formatKey={formatDay}
+          page={byDaySafePage}
+          totalPages={byDayTotalPages}
+          onPageChange={setByDayPage}
+          range={byDayRange}
         />
       </div>
 

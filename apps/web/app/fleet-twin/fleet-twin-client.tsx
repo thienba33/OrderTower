@@ -12,7 +12,10 @@ import {
   BatteryMedium,
   User,
 } from "lucide-react";
+import { Pagination, type PaginationRange } from "@/components/ui/Pagination";
 import type { ApiVehicleTwin, TwinStatus } from "./fleet-twin-types";
+
+const PAGE_SIZE = 7;
 
 const STATUS_LABEL: Record<TwinStatus, string> = {
   online: "Online",
@@ -75,6 +78,20 @@ export default function FleetTwinClient({
   const [twins, setTwins] = useState<ApiVehicleTwin[]>(initialTwins);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+
+  // Danh sách xe tăng theo đội xe nên phân trang 7 dòng/trang.
+  const totalPages = Math.max(1, Math.ceil(twins.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedTwins = twins.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const range: PaginationRange =
+    twins.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (safePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(safePage * PAGE_SIZE, twins.length),
+          total: twins.length,
+        };
 
   // Server component refresh trả prop mới; đồng bộ lại state local.
   useEffect(() => {
@@ -184,7 +201,7 @@ export default function FleetTwinClient({
             </tr>
           </thead>
           <tbody className="divide-y">
-            {twins.map((twin) => {
+            {pagedTwins.map((twin) => {
               const last = twin.lastReading;
               const temperature = last?.temperatureC ?? null;
               const battery = last?.batteryPct ?? null;
@@ -335,6 +352,9 @@ export default function FleetTwinClient({
             ) : null}
           </tbody>
         </table>
+        <div className="border-t">
+          <Pagination page={safePage} totalPages={totalPages} onPageChange={setPage} range={range} />
+        </div>
       </div>
 
       <p className="text-xs text-gray-500">

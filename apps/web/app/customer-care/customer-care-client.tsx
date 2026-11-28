@@ -476,6 +476,21 @@ export default function CskhPage({
   const [callSearch, setCallSearch] = useState("");
   const [callSortByEta, setCallSortByEta] = useState(false);
   const [callPage, setCallPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+
+  // Lịch sử liên hệ tăng theo từng cuộc gọi nên phân trang 6 dòng/trang,
+  // dùng chung PAGE_SIZE của màn.
+  const historyTotalPages = Math.max(1, Math.ceil(historyRows.length / PAGE_SIZE));
+  const historySafePage = Math.min(historyPage, historyTotalPages);
+  const historyPaged = historyRows.slice((historySafePage - 1) * PAGE_SIZE, historySafePage * PAGE_SIZE);
+  const historyRange =
+    historyRows.length === 0
+      ? { start: 0, end: 0, total: 0 }
+      : {
+          start: (historySafePage - 1) * PAGE_SIZE + 1,
+          end: Math.min(historySafePage * PAGE_SIZE, historyRows.length),
+          total: historyRows.length,
+        };
 
   const filteredPriority = useMemo(() => {
     const query = callSearch.trim().toLowerCase();
@@ -1158,13 +1173,18 @@ export default function CskhPage({
             )}
           </p>
         ) : (
-          <Table
-            columns={historyColumns}
-            rows={historyRows}
-            rowKey={(row, index) => `${row.time}-${row.customer}-${index}`}
-            emptyText="Chưa có lịch sử liên hệ. Ghi nhật ký cuộc gọi ở tab Công việc để hiện ở đây."
-            bare
-          />
+          <>
+            <Table
+              columns={historyColumns}
+              rows={historyPaged}
+              rowKey={(row, index) => `${row.time}-${row.customer}-${index}`}
+              emptyText="Chưa có lịch sử liên hệ. Ghi nhật ký cuộc gọi ở tab Công việc để hiện ở đây."
+              bare
+            />
+            <div className="border-t">
+              <Pagination page={historySafePage} totalPages={historyTotalPages} onPageChange={setHistoryPage} range={historyRange} />
+            </div>
+          </>
         )}
       </div>
       )}
