@@ -596,35 +596,34 @@ describe('OrdersService', () => {
     expect(order.total).toBe(93000);
   });
 
-  it('địa chỉ yếu thì chặn ở chuyển sang Chờ kho', async () => {
+  it('địa chỉ yếu thì chặn ngay ở chuyển sang Đã kiểm tra', async () => {
     const { orders, audit } = await buildServices();
     const order = await orders.create({
       ...createInput('key-1'),
       address: { province: 'Hà Nội' },
     }, COORDINATOR);
     expect(order.addressTrust).toBe(40);
-    await orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
     await expect(
-      orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR),
+      orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR),
     ).rejects.toThrow('chưa đạt tối thiểu');
-    expect((await orders.findOne(order.id)).state).toBe('Đã kiểm tra');
+    expect((await orders.findOne(order.id)).state).toBe('Mới tạo');
     const denied = (await audit.getAll()).filter(
       (record) => record.action === 'order.transition.denied',
     );
     expect(denied).toHaveLength(1);
   });
 
-  it('đơn không có địa chỉ thì chặn ở chuyển sang Chờ kho', async () => {
+  it('đơn không có địa chỉ thì chặn ngay ở chuyển sang Đã kiểm tra', async () => {
     const { orders } = await buildServices();
     const order = await orders.create({
       ...createInput('key-1'),
       address: undefined,
     }, COORDINATOR);
     expect(order.addressTrust).toBeNull();
-    await orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR);
     await expect(
-      orders.transition(order.id, { to: 'Chờ kho' }, COORDINATOR),
+      orders.transition(order.id, { to: 'Đã kiểm tra' }, COORDINATOR),
     ).rejects.toThrow('chưa có địa chỉ');
+    expect((await orders.findOne(order.id)).state).toBe('Mới tạo');
   });
 
   it('tạo đơn bằng chuỗi thô thì chỉ lưu nguyên văn, chưa tách, chưa chấm điểm', async () => {
