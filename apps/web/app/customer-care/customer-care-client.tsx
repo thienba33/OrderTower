@@ -25,6 +25,7 @@ import {
   DEMO_CSKH_ACCOUNTS,
   type ApiAssignment,
   type ApiCallLog,
+  type ApiNextCall,
   type ApiTicketKpis,
   type AssignmentStatus,
   type CallResult,
@@ -285,11 +286,16 @@ export default function CskhPage({
   const [assignTo, setAssignTo] = useState<Record<string, string>>({});
   const [callsErrorText, setCallsErrorText] = useState("");
   const [busyCall, setBusyCall] = useState<string | null>(null);
+  // Thẻ "Cuộc gọi tiếp theo" do AI gợi ý: hiện sau khi ghi kết quả 1 cuộc
+  // gọi xong (tự nhảy). null là chưa có gợi ý nào đang hiện.
+  const [nextCall, setNextCall] = useState<ApiNextCall | null>(null);
+  const [nextCallBusy, setNextCallBusy] = useState(false);
+  const [nextCallDone, setNextCallDone] = useState("");
 
   // Gửi thao tác cuộc gọi (chia đơn, bắt đầu gọi, ghi kết quả) qua route
   // nội bộ; lỗi hiện message của API, xong thì tải lại dữ liệu server.
   // Ẩn/hiện theo vai chỉ là tiện ích giao diện; API kiểm tra lại vai trò
-  // và trạng thái ở mỗi thao tác.
+  // và trạng thái ở mỗi thao tác. Trả true khi thao tác thành công.
   const postCall = async (path: string, body: unknown, action: string) => {
     setBusyCall(action);
     setCallsErrorText("");
@@ -307,13 +313,51 @@ export default function CskhPage({
             ? message
             : `Thao tác cuộc gọi lỗi (${response.status}).`,
         );
+        return false;
+      }
+      router.refresh();
+      return true;
+    } catch {
+      setCallsErrorText("Không gọi được máy chủ, thử lại sau.");
+      return false;
+    } finally {
+      setBusyCall(null);
+    }
+  };
+
+  // Lấy cuộc gọi tiếp theo do AI gợi ý cho chính người đang đăng nhập.
+  // Hết đơn ưu tiên thì hiện thông báo hết đơn, không báo lỗi.
+  const fetchNextCall = async () => {
+    setNextCallBusy(true);
+    setNextCallDone("");
+    try {
+      const response = await fetch("/api/ai-assignments/telesale/next", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setCallsErrorText(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Không lấy được cuộc gọi tiếp theo (${response.status}).`,
+        );
         return;
       }
+      const data = (await response.json()) as ApiNextCall;
+      if (data.assignment === null) {
+        setNextCall(null);
+        setNextCallDone(data.reason);
+        return;
+      }
+      setNextCall(data);
       router.refresh();
     } catch {
       setCallsErrorText("Không gọi được máy chủ, thử lại sau.");
     } finally {
-      setBusyCall(null);
+      setNextCallBusy(false);
     }
   };
 
@@ -995,6 +1039,50 @@ export default function CskhPage({
             {callTab === "work" && isCskh && (
               <div>
                 <p className="mb-2 text-sm font-semibold text-gray-900">VIỆC CỦA TÔI</p>
+                {nextCall !== null && nextCall.assignment !== null && nextCall.order !== null && (
+                  <div className="mb-3 flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-sm font-semibold text-gray-900">
+                      Cuộc gọi tiếp theo (AI gợi ý)
+                    </p>
+                    <p className="text-sm text-gray-900">
+                      Đơn {nextCall.order.orderId} · {nextCall.order.customer}
+                      {nextCall.order.phone !== null ? ` · ${nextCall.order.phone}` : ""}
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      {nextCall.order.reason} · ETA {nextCall.order.eta}
+                      {nextCall.order.suggestion !== "" ? ` · ${nextCall.order.suggestion}` : ""}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={busyCall !== null}
+                        onClick={async () => {
+                          const ok = await postCall(
+                            `/api/assignments/${nextCall.assignment?.id}/start`,
+                            {},
+                            `start-${nextCall.assignment?.id}`,
+                          );
+                          if (ok) {
+                            setNextCall(null);
+                          }
+                        }}
+                        className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        {busyCall === `start-${nextCall.assignment.id}` ? "Đang bắt đầu..." : "Bắt đầu gọi"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNextCall(null)}
+                        className="flex h-9 items-center justify-center rounded-md border border-gray-300 px-3 text-sm font-medium text-gray-700"
+                      >
+                        Bỏ qua cuộc này
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {nextCallDone !== "" && (
+                  <p className="mb-3 text-sm text-gray-700">{nextCallDone}</p>
+                )}
                 {myAssignments.length === 0 ? (
                   <p className="text-sm text-gray-500">Chưa có đơn nào được chia cho bạn.</p>
                 ) : (
@@ -1072,8 +1160,8 @@ export default function CskhPage({
                               <button
                                 type="button"
                                 disabled={!durationValid || busyCall !== null}
-                                onClick={() =>
-                                  postCall(
+                                onClick={async () => {
+                                  const ok = await postCall(
                                     "/api/call-logs",
                                     {
                                       assignmentId: item.id,
@@ -1084,8 +1172,13 @@ export default function CskhPage({
                                         : { note: form.note.trim() }),
                                     },
                                     `log-${item.id}`,
-                                  )
-                                }
+                                  );
+                                  // Ghi kết quả xong thì AI tự nhảy cuộc
+                                  // tiếp theo cho chính người vừa gọi xong.
+                                  if (ok) {
+                                    await fetchNextCall();
+                                  }
+                                }}
                                 className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white disabled:opacity-50"
                               >
                                 {busyCall === `log-${item.id}` ? "Đang ghi..." : "Ghi kết quả"}

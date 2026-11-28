@@ -116,26 +116,54 @@ export class AssignmentsService implements OnModuleInit {
         `Tạo phân đơn cần vai ${DISPATCHER_ROLE}.`,
       );
     }
+    return this.insertAssignment(orderId, input.kind, assignedTo, caller);
+  }
+
+  // CSKH tự nhận cuộc gọi tiếp theo cho chính mình (AI chia cuộc gọi):
+  // chỉ tạo phân đơn telesale, chỉ gán cho chính người gọi, không gán cho
+  // người khác, không tạo phân đơn kho. Điều phối viên vẫn là người duy
+  // nhất tạo phân đơn cho người khác (xem create ở trên).
+  async createTelesaleSelf(
+    orderId: string,
+    caller: Caller,
+  ): Promise<Assignment> {
+    const trimmed = requireNonEmpty(
+      orderId,
+      'Tạo phân đơn cần có mã đơn.',
+    ).trim();
+    if (!caller.roles.includes(CSKH_ROLE)) {
+      throw new ConflictException(
+        `Tự nhận cuộc gọi cần vai ${CSKH_ROLE}.`,
+      );
+    }
+    return this.insertAssignment(trimmed, 'telesale', caller.username, caller);
+  }
+
+  // Tạo thật 1 phân đơn sau khi đã kiểm tra vai ở create/createTelesaleSelf:
+  // đơn phải có thật, đơn chưa có phân đơn cùng loại đang hoạt động.
+  private async insertAssignment(
+    orderId: string,
+    kind: AssignmentKind,
+    assignedTo: string,
+    caller: Caller,
+  ): Promise<Assignment> {
     // Đơn không tồn tại thì báo 404, không ghi audit, giống đơn không tồn
     // tại lúc tạo trả hàng.
     await this.orders.findOne(orderId);
-    const existing = await this.store.findByOrderIdAndKind(
-      orderId,
-      input.kind,
-    );
+    const existing = await this.store.findByOrderIdAndKind(orderId, kind);
     const active = existing.find((item) =>
       ACTIVE_STATUSES.includes(item.status),
     );
     if (active) {
       throw new ConflictException(
-        `Đơn ${orderId} đã có phân đơn ${input.kind === 'telesale' ? 'gọi điện' : 'kho'} đang xử lý (${active.id}, trạng thái "${active.status}").`,
+        `Đơn ${orderId} đã có phân đơn ${kind === 'telesale' ? 'gọi điện' : 'kho'} đang xử lý (${active.id}, trạng thái "${active.status}").`,
       );
     }
     const now = new Date().toISOString();
     const assignment: Assignment = {
       id: `PC-${String(this.nextNumber++).padStart(4, '0')}`,
       orderId,
-      kind: input.kind,
+      kind,
       assignedTo,
       assignedBy: caller.username,
       status: 'Chờ xử lý',
@@ -152,7 +180,7 @@ export class AssignmentsService implements OnModuleInit {
       orderId,
       from: null,
       to: 'Chờ xử lý',
-      detail: `Phân đơn ${input.kind === 'telesale' ? 'gọi điện' : 'kho'} ${assignment.id} cho ${assignedTo}.`,
+      detail: `Phân đơn ${kind === 'telesale' ? 'gọi điện' : 'kho'} ${assignment.id} cho ${assignedTo}.`,
     });
     return copyAssignment(assignment);
   }
