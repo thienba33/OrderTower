@@ -45,7 +45,13 @@ interface WarehouseClientProps {
   queueError: PackingQueueError | null;
   showQueue: boolean;
   username: string;
+  roles: string[];
 }
+
+// Vai được nhập thêm hàng vào kho (khớp INVENTORY_WRITE_ROLES ở API):
+// nhân viên kho, quản lý, quản trị viên. Điều phối viên xem được màn kho
+// nhưng không thấy form nhập hàng.
+const RESTOCK_ROLES = ["Quản trị viên", "Quản lý", "Nhân viên kho"];
 
 function toRow(item: ApiInventoryItem): WarehouseRow {
   return { ...item, status: inventoryStatus(item), total: item.stock + item.reserved };
@@ -78,12 +84,19 @@ export default function WarehouseClient({
   queueError,
   showQueue,
   username,
+  roles,
 }: WarehouseClientProps) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [selectedSku, setSelectedSku] = useState<string | null>(items[0]?.sku ?? null);
+  const canRestock = roles.some((role) => RESTOCK_ROLES.includes(role));
+  const [restockQuantity, setRestockQuantity] = useState("");
+  const [restockReason, setRestockReason] = useState("");
+  const [restockBusy, setRestockBusy] = useState(false);
+  const [restockError, setRestockError] = useState("");
+  const [restockDone, setRestockDone] = useState("");
 
   // Hàng đợi phân đơn của nhân viên kho đang đăng nhập: phân đơn kho
   // đang hoạt động, mới nhất lên trước. Đơn không tìm thấy (không bao
@@ -155,6 +168,55 @@ export default function WarehouseClient({
       setQueueErrorText("Không gọi được máy chủ, thử lại sau.");
     } finally {
       setQueueBusyId(null);
+    }
+  };
+
+  // Nhập thêm hàng cho SKU đang chọn: số lượng phải là số nguyên dương
+  // (API cũng chặn). Xong thì tải lại dữ liệu server để tồn kho mới hiện.
+  const submitRestock = async () => {
+    if (selectedSku === null) {
+      return;
+    }
+    const quantity = Number(restockQuantity);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      setRestockError("Số lượng nhập phải là số nguyên dương.");
+      setRestockDone("");
+      return;
+    }
+    setRestockBusy(true);
+    setRestockError("");
+    setRestockDone("");
+    try {
+      const response = await fetch(
+        `/api/inventory/${encodeURIComponent(selectedSku)}/restock`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            restockReason.trim() === ""
+              ? { quantity }
+              : { quantity, reason: restockReason.trim() },
+          ),
+        },
+      );
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setRestockError(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Thao tác lỗi (${response.status}).`,
+        );
+        return;
+      }
+      setRestockQuantity("");
+      setRestockReason("");
+      setRestockDone(`Đã nhập thêm ${quantity} đơn vị vào kho.`);
+      router.refresh();
+    } catch {
+      setRestockError("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setRestockBusy(false);
     }
   };
 
@@ -448,6 +510,46 @@ export default function WarehouseClient({
               <p className="text-sm font-semibold text-gray-900">{selected.unitPrice === null ? "-" : formatMoney(selected.unitPrice)}</p>
             </div>
           </div>
+          {canRestock && (
+            <div className="flex flex-col gap-3 border-t border-gray-200 pt-3">
+              <p className="text-sm font-semibold text-gray-900">Nhập thêm hàng</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={restockQuantity}
+                  onChange={(e) => setRestockQuantity(e.target.value)}
+                  placeholder="Số lượng nhập"
+                  aria-label="Số lượng nhập"
+                  className="h-10 w-[160px] rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+                />
+                <input
+                  type="text"
+                  value={restockReason}
+                  onChange={(e) => setRestockReason(e.target.value)}
+                  placeholder="Lý do nhập (không bắt buộc)"
+                  aria-label="Lý do nhập"
+                  className="h-10 min-w-[220px] flex-1 rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => void submitRestock()}
+                  disabled={restockBusy}
+                  className="h-10 rounded-md bg-red-700 px-4 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {restockBusy ? "Đang nhập..." : "Nhập kho"}
+                </button>
+              </div>
+              {restockError !== "" && (
+                <p className="text-sm text-red-700">{restockError}</p>
+              )}
+              {restockDone !== "" && (
+                <p className="text-sm text-green-700">{restockDone}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

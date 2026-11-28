@@ -110,6 +110,7 @@ export default async function KhoPage() {
       queueError={queueError}
       showQueue={showQueue}
       username={session.username}
+      roles={session.roles}
     />
   );
 }

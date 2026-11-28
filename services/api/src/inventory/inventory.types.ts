@@ -34,3 +34,10 @@ export interface StockCheck {
   sufficient: boolean;
   lacking: StockShortage[];
 }
+
+// Đầu vào khi nhập thêm hàng vào kho: số lượng phải là số nguyên dương.
+// reason ghi lý do nhập (ví dụ theo đề xuất BI DX-1001), để audit ghi lại.
+export interface RestockInput {
+  quantity: number;
+  reason?: string;
+}
