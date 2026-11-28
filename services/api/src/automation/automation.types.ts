@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-export type AutomationJobName = 'outbox-relay' | 'sla-scan';
+export type AutomationJobName =
+  | 'outbox-relay'
+  | 'sla-scan'
+  | 'lakehouse-archive';
 export type AutomationTrigger = 'schedule' | 'manual';
 export type AutomationRunStatus = 'success' | 'failed';
 

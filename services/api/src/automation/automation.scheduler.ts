@@ -28,8 +28,14 @@ export class AutomationScheduler implements OnModuleInit, OnModuleDestroy {
     }
     this.schedule('outbox-relay', this.automation.outboxIntervalMs);
     this.schedule('sla-scan', this.automation.slaIntervalMs);
+    // Archive nặng hơn; cho API ổn định rồi mới chạy lần đầu.
+    this.schedule(
+      'lakehouse-archive',
+      this.automation.archiveIntervalMs,
+      30_000,
+    );
     this.logger.log(
-      `Automation scheduler bật: outbox ${this.automation.outboxIntervalMs}ms, SLA ${this.automation.slaIntervalMs}ms.`,
+      `Automation scheduler bật: outbox ${this.automation.outboxIntervalMs}ms, SLA ${this.automation.slaIntervalMs}ms, archive ${this.automation.archiveIntervalMs}ms.`,
     );
   }
 
@@ -44,8 +50,12 @@ export class AutomationScheduler implements OnModuleInit, OnModuleDestroy {
     this.initialRuns.length = 0;
   }
 
-  private schedule(job: AutomationJobName, intervalMs: number): void {
-    const initial = setTimeout(() => void this.tick(job), START_DELAY_MS);
+  private schedule(
+    job: AutomationJobName,
+    intervalMs: number,
+    initialDelayMs = START_DELAY_MS,
+  ): void {
+    const initial = setTimeout(() => void this.tick(job), initialDelayMs);
     initial.unref?.();
     this.initialRuns.push(initial);
     const timer = setInterval(() => void this.tick(job), intervalMs);

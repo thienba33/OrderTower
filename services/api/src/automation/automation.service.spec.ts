@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AutomationService } from './automation.service';
+import type { ArchiveService } from '../archive/archive.service';
 import type { DbService } from '../db/db.service';
 import type { NotificationsService } from '../notifications/notification.service';
 import type { NewNotification } from '../notifications/notification.types';
@@ -220,6 +221,48 @@ describe('AutomationService', () => {
     ).rejects.toThrow('Job không hợp lệ');
   });
 
+  it('lakehouse-archive gọi ArchiveService với retention/limit và log summary', async () => {
+    const archive = {
+      run: jest.fn(async () => ({
+        archived: 2,
+        run: {
+          id: 'AR-1001',
+          dataset: 'orders',
+          cutoffAt: '2026-11-01T00:00:00.000Z',
+          objectKey:
+            'warehouse/tenants/default/orders/cutoff=2026-11-01/run=AR-1001.parquet',
+          rowCount: 2,
+          bytes: 1024,
+          status: 'completed',
+          error: null,
+          startedAt: '2026-11-28T00:00:00.000Z',
+          finishedAt: '2026-11-28T00:00:01.000Z',
+          createdAt: '2026-11-28T00:00:00.000Z',
+        },
+      })),
+    } as unknown as ArchiveService;
+    const service = new AutomationService(
+      makeDb({}),
+      { relay: jest.fn() } as unknown as OutboxService,
+      makeNotifications().service,
+      makeWorkflow([]),
+      archive,
+    );
+
+    const run = await service.run('lakehouse-archive', 'manual');
+
+    expect(archive.run).toHaveBeenCalledWith(
+      { olderThanDays: 0, limit: 500 },
+      expect.objectContaining({ username: 'system', userId: 'system' }),
+    );
+    expect(run.summary).toMatchObject({
+      archived: 2,
+      runId: 'AR-1001',
+      rows: 2,
+      bytes: 1024,
+    });
+  });
+
   it('listRunsPage trả items/total/limit/offset và chặn offset âm', async () => {
     const db = makeDb({
       runs: [
@@ -278,6 +321,7 @@ describe('AutomationService', () => {
 
     const status = await service.status();
 
+    expect(status.jobs).toHaveLength(3);
     expect(status.jobs.find((job) => job.name === 'sla-scan')?.lastRun?.id).toBe(2);
     expect(
       status.jobs.find((job) => job.name === 'outbox-relay')?.lastRun?.id,

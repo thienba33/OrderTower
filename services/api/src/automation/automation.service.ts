@@ -4,7 +4,11 @@ import {
   ConflictException,
   Injectable,
   Logger,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { ArchiveService } from '../archive/archive.service';
+import type { Caller } from '../auth/auth.types';
 import { BUSINESS_ROLE } from '../auth/permissions';
 import { DbService } from '../db/db.service';
 import { NotificationsService } from '../notifications/notification.service';
@@ -20,11 +24,21 @@ import type {
   AutomationTrigger,
 } from './automation.types';
 
-const JOB_NAMES: readonly AutomationJobName[] = ['outbox-relay', 'sla-scan'];
+const JOB_NAMES: readonly AutomationJobName[] = [
+  'outbox-relay',
+  'sla-scan',
+  'lakehouse-archive',
+];
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const ESCALATION_MINUTES = 60;
 const SLA_SCAN_LIMIT = 200;
+
+const SYSTEM_CALLER: Caller = {
+  userId: 'system',
+  username: 'system',
+  roles: [BUSINESS_ROLE.ADMIN],
+};
 
 function readInterval(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -32,10 +46,30 @@ function readInterval(name: string, fallback: number): number {
     return fallback;
   }
   const value = Number.parseInt(raw, 10);
-  if (!Number.isInteger(value) || value < 5000 || value > 3_600_000) {
+  if (
+    !Number.isInteger(value) ||
+    value < 5000 ||
+    value > 86_400_000
+  ) {
     return fallback;
   }
   return value;
+}
+
+function readBoundedInt(
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    return fallback;
+  }
+  const value = Number.parseInt(raw, 10);
+  return Number.isInteger(value) && value >= min && value <= max
+    ? value
+    : fallback;
 }
 
 function toIso(value: unknown): string {
@@ -106,6 +140,8 @@ export class AutomationService {
     private readonly outbox: OutboxService,
     private readonly notifications: NotificationsService,
     private readonly workflow: WorkflowService,
+    @Optional()
+    private readonly archive?: ArchiveService,
   ) {}
 
   get enabled(): boolean {
@@ -120,6 +156,18 @@ export class AutomationService {
 
   get slaIntervalMs(): number {
     return readInterval('AUTOMATION_SLA_INTERVAL_MS', 60_000);
+  }
+
+  get archiveIntervalMs(): number {
+    return readInterval('AUTOMATION_ARCHIVE_INTERVAL_MS', 86_400_000);
+  }
+
+  get archiveRetentionDays(): number {
+    return readBoundedInt('ARCHIVE_RETENTION_DAYS', 0, 0, 3650);
+  }
+
+  get archiveLimit(): number {
+    return readBoundedInt('ARCHIVE_LIMIT', 500, 1, 1000);
   }
 
   async status(): Promise<AutomationStatus> {
@@ -140,6 +188,11 @@ export class AutomationService {
         name: 'sla-scan',
         intervalMs: this.slaIntervalMs,
         lastRun: lastByJob.get('sla-scan') ?? null,
+      },
+      {
+        name: 'lakehouse-archive',
+        intervalMs: this.archiveIntervalMs,
+        lastRun: lastByJob.get('lakehouse-archive') ?? null,
       },
     ];
     return { enabled: this.enabled, jobs };
@@ -201,10 +254,13 @@ export class AutomationService {
     let summary: Record<string, unknown> = {};
     let error: string | null = null;
     try {
-      summary =
-        jobName === 'outbox-relay'
-          ? await this.runOutboxRelay()
-          : await this.runSlaScan();
+      if (jobName === 'outbox-relay') {
+        summary = await this.runOutboxRelay();
+      } else if (jobName === 'sla-scan') {
+        summary = await this.runSlaScan();
+      } else {
+        summary = await this.runArchive();
+      }
     } catch (caught) {
       status = 'failed';
       error = caught instanceof Error ? caught.message : String(caught);
@@ -328,6 +384,29 @@ export class AutomationService {
       overdueNotifications: overdueCreated,
       escalated,
       notificationsCreated: overdueCreated + escalated,
+    };
+  }
+
+  private async runArchive(): Promise<Record<string, unknown>> {
+    if (!this.archive) {
+      throw new ServiceUnavailableException(
+        'ArchiveService chưa sẵn sàng cho job lakehouse-archive.',
+      );
+    }
+    const result = await this.archive.run(
+      {
+        olderThanDays: this.archiveRetentionDays,
+        limit: this.archiveLimit,
+      },
+      SYSTEM_CALLER,
+    );
+    return {
+      archived: result.archived,
+      runId: result.run?.id ?? null,
+      rows: result.run?.rowCount ?? 0,
+      bytes: result.run?.bytes ?? 0,
+      cutoffAt: result.run?.cutoffAt ?? null,
+      objectKey: result.run?.objectKey ?? null,
     };
   }
 }

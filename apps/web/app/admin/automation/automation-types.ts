@@ -3,7 +3,10 @@
 export const RUN_PAGE_SIZE = 10;
 export const NOTIFICATION_PAGE_SIZE = 8;
 
-export type ApiAutomationJobName = "outbox-relay" | "sla-scan";
+export type ApiAutomationJobName =
+  | "outbox-relay"
+  | "sla-scan"
+  | "lakehouse-archive";
 export type ApiAutomationTrigger = "schedule" | "manual";
 export type ApiAutomationRunStatus = "success" | "failed";
 
