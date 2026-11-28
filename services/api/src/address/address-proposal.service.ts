@@ -119,14 +119,23 @@ export class AddressProposalService implements OnModuleInit {
     // Địa chỉ trước (ảnh chụp trước khi chuẩn hóa) + chuỗi đưa cho LLM.
     // raw thắng khi gửi kèm orderId (chuỗi dán vào là địa chỉ cần chuẩn
     // hóa); address thắng khi gửi kèm orderId; không có cả hai thì lấy
-    // địa chỉ đã lưu của đơn. Chuỗi thô dán vào dùng nguyên văn; địa chỉ
-    // đã có thì nối các phần lại thành chuỗi để LLM sửa lỗi gõ / tên
-    // phường cũ trong địa chỉ đã lưu.
+    // chuỗi thô đã lưu trên đơn (đơn chưa tách chỉ lưu chuỗi thô), cuối
+    // cùng mới lấy địa chỉ đã lưu của đơn. Chuỗi thô dán vào dùng nguyên
+    // văn; địa chỉ đã có thì nối các phần lại thành chuỗi để LLM sửa lỗi
+    // gõ / tên phường cũ trong địa chỉ đã lưu.
+    // Chuỗi thô đã lưu trên đơn (nếu có) thắng địa chỉ đã tách: đơn chưa
+    // tách chỉ lưu chuỗi thô, gợi ý phải tách chính chuỗi đó.
+    const storedRaw =
+      !hasRaw && !hasAddress && order?.address?.raw?.trim()
+        ? order.address.raw.trim()
+        : '';
+    const effectiveRaw = hasRaw ? input.raw!.trim() : storedRaw;
+    const useRaw = effectiveRaw !== '';
     let beforeAddress: AddressInput;
     let rawParts: AddressParts | null = null;
     let llmText = '';
-    if (hasRaw) {
-      const split = this.addressService.splitRaw(input.raw!);
+    if (useRaw) {
+      const split = this.addressService.splitRaw(effectiveRaw);
       rawParts = split.parts;
       beforeAddress = {
         province: split.parts.province,
@@ -134,7 +143,7 @@ export class AddressProposalService implements OnModuleInit {
         district: split.parts.district,
         street: split.parts.street,
       };
-      llmText = input.raw!.trim();
+      llmText = effectiveRaw;
     } else if (hasAddress) {
       beforeAddress = input.address!;
       llmText = joinAddressParts(beforeAddress);
@@ -148,7 +157,7 @@ export class AddressProposalService implements OnModuleInit {
     // Đề xuất theo luật (đường lui; cũng dùng để ghi lý do khi địa chỉ
     // đã đạt mức cao).
     const rulesSuggestion = (): SuggestedAddress => {
-      if (hasRaw) {
+      if (useRaw) {
         return this.addressService.suggestFromParts({
           province: rawParts!.province,
           ward: rawParts!.ward,
@@ -187,7 +196,7 @@ export class AddressProposalService implements OnModuleInit {
     // chỉ có cấu trúc/đã lưu khi không có raw); dùng làm mốc đối chiếu
     // tỉnh LLM trả. Không có tỉnh rõ ràng thì tỉnh LLM phải được dữ liệu
     // hành chính buộc ra (xem kiểm tra grounding bên dưới).
-    const explicitProvince = hasRaw
+    const explicitProvince = useRaw
       ? rawParts?.province
       : beforeAddress.province;
     if (rulesFirstTrust >= 95) {

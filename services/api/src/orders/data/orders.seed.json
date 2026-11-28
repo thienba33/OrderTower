@@ -1,1 +1,157 @@
-{"items":[{"address":{"district":"Quận Không Có","province":"Hà Nội","street":"Số 12 ngõ 34 phố Hàng Bè","ward":"Phường Không Có"},"channelId":"K-1001","customer":"Hộ nước mắm C","deadline":"2026-11-19T10:00:00.000Z","idempotencyKey":"seed-order-1","items":[{"quantity":2,"sku":"NM-25"}],"phone":"0901234501","targetState":"Mới tạo"},{"address":{"province":"Hà Nội","ward":"Phường Hai Bà Trưng","street":"Số 12 phố Hàng Bè"},"channelId":"K-1002","customer":"Hộ nước mắm D","deadline":"2026-11-20T10:00:00.000Z","idempotencyKey":"seed-order-2","items":[{"quantity":1,"sku":"NM-15"}],"phone":"0901234502","targetState":"Mới tạo"},{"address":{"province":"Hà Nội","ward":"Phường Cửa Nam","street":"Số 5 phố Trần Hưng Đạo"},"channelId":"K-1003","customer":"Cửa hàng hải sản E","deadline":"2026-11-20T14:00:00.000Z","idempotencyKey":"seed-order-3","items":[{"quantity":2,"sku":"HS-KHO"}],"phone":"0901234503","targetState":"Đã kiểm tra"},{"address":{"province":"Hải Phòng","ward":"Phường Hồng Bàng","street":"Số 20 phố Hoàng Văn Thụ"},"channelId":"K-1001","customer":"Quán ăn F","deadline":"2026-11-21T09:00:00.000Z","idempotencyKey":"seed-order-4","items":[{"quantity":1,"sku":"NM-25"},{"quantity":1,"sku":"NM-15"}],"phone":"0901234504","targetState":"Đã kiểm tra"},{"address":{"province":"Quảng Ninh","ward":"Phường Bãi Cháy","street":"Số 3 phố Bãi Cháy"},"channelId":"K-1002","customer":"Siêu thị mini G","deadline":"2026-11-21T11:00:00.000Z","idempotencyKey":"seed-order-5","items":[{"quantity":3,"sku":"NM-15"}],"phone":"0901234505","targetState":"Chờ kho"},{"address":{"province":"Hà Nội","ward":"Phường Hai Bà Trưng","street":"Số 8 phố Hàng Bè"},"channelId":"K-1003","customer":"Nhà hàng H","deadline":"2026-11-22T10:00:00.000Z","idempotencyKey":"seed-order-6","items":[{"quantity":1,"sku":"HS-KHO"}],"phone":"0901234506","targetState":"Chờ kho"},{"address":{"province":"Hà Nội","ward":"Phường Cửa Nam","street":"Số 9 phố Trần Hưng Đạo"},"channelId":"K-1001","customer":"Cửa hàng tạp hóa I","deadline":"2026-11-20T16:00:00.000Z","idempotencyKey":"seed-order-7","items":[{"quantity":2,"sku":"NM-25"}],"phone":"0901234507","targetState":"Đang đóng gói"},{"address":{"province":"Hải Phòng","ward":"Phường Hồng Bàng","street":"Số 7 phố Hoàng Văn Thụ"},"channelId":"K-1002","customer":"Hộ kinh doanh K","deadline":"2026-11-19T15:00:00.000Z","idempotencyKey":"seed-order-8","items":[{"quantity":2,"sku":"HS-KHO"}],"phone":"0901234508","targetState":"Chờ điều xe"}],"note":"8 đơn mẫu nạp lúc API khởi động khi bảng đơn còn trống, qua đường dịch vụ thật (create rồi transition hợp lệ). Trạng thái đích: Mới tạo x2, Đã kiểm tra x2, Chờ kho x2, Đang đóng gói x1, Chờ điều xe x1; không seed đơn Đang giao/Đã giao (cần shipment, demo tạo live). Đơn seed-order-1 có địa chỉ tin cậy thấp (chỉ tỉnh đúng 40 + đường 20 = 60) để màn Telesale/SLA có dữ liệu; 7 đơn còn lại địa chỉ đủ 100. Đơn Đang đóng gói và Chờ điều xe đã giữ hàng nên tránh SKU NM-40 (kiểm thử tích hợp đo tồn NM-40). Không đặt customerId để khỏi phụ thuộc bảng khách hàng."}
+{
+  "items": [
+    {
+      "address": {
+        "raw": "Số 12 ngõ 34 phố Hàng Bè, Phường Không Có, Quận Không Có, Hà Nội"
+      },
+      "channelId": "K-1001",
+      "customer": "Hộ nước mắm C",
+      "deadline": "2026-11-19T10:00:00.000Z",
+      "idempotencyKey": "seed-order-1",
+      "items": [
+        {
+          "quantity": 2,
+          "sku": "NM-25"
+        }
+      ],
+      "phone": "0901234501",
+      "targetState": "Mới tạo"
+    },
+    {
+      "address": {
+        "raw": "Số 12 phố Hàng Bè, Phường Hai Bà Trưng, Hà Nội"
+      },
+      "channelId": "K-1002",
+      "customer": "Hộ nước mắm D",
+      "deadline": "2026-11-20T10:00:00.000Z",
+      "idempotencyKey": "seed-order-2",
+      "items": [
+        {
+          "quantity": 1,
+          "sku": "NM-15"
+        }
+      ],
+      "phone": "0901234502",
+      "targetState": "Mới tạo"
+    },
+    {
+      "address": {
+        "province": "Hà Nội",
+        "ward": "Phường Cửa Nam",
+        "street": "Số 5 phố Trần Hưng Đạo"
+      },
+      "channelId": "K-1003",
+      "customer": "Cửa hàng hải sản E",
+      "deadline": "2026-11-20T14:00:00.000Z",
+      "idempotencyKey": "seed-order-3",
+      "items": [
+        {
+          "quantity": 2,
+          "sku": "HS-KHO"
+        }
+      ],
+      "phone": "0901234503",
+      "targetState": "Đã kiểm tra"
+    },
+    {
+      "address": {
+        "province": "Hải Phòng",
+        "ward": "Phường Hồng Bàng",
+        "street": "Số 20 phố Hoàng Văn Thụ"
+      },
+      "channelId": "K-1001",
+      "customer": "Quán ăn F",
+      "deadline": "2026-11-21T09:00:00.000Z",
+      "idempotencyKey": "seed-order-4",
+      "items": [
+        {
+          "quantity": 1,
+          "sku": "NM-25"
+        },
+        {
+          "quantity": 1,
+          "sku": "NM-15"
+        }
+      ],
+      "phone": "0901234504",
+      "targetState": "Đã kiểm tra"
+    },
+    {
+      "address": {
+        "province": "Quảng Ninh",
+        "ward": "Phường Bãi Cháy",
+        "street": "Số 3 phố Bãi Cháy"
+      },
+      "channelId": "K-1002",
+      "customer": "Siêu thị mini G",
+      "deadline": "2026-11-21T11:00:00.000Z",
+      "idempotencyKey": "seed-order-5",
+      "items": [
+        {
+          "quantity": 3,
+          "sku": "NM-15"
+        }
+      ],
+      "phone": "0901234505",
+      "targetState": "Chờ kho"
+    },
+    {
+      "address": {
+        "province": "Hà Nội",
+        "ward": "Phường Hai Bà Trưng",
+        "street": "Số 8 phố Hàng Bè"
+      },
+      "channelId": "K-1003",
+      "customer": "Nhà hàng H",
+      "deadline": "2026-11-22T10:00:00.000Z",
+      "idempotencyKey": "seed-order-6",
+      "items": [
+        {
+          "quantity": 1,
+          "sku": "HS-KHO"
+        }
+      ],
+      "phone": "0901234506",
+      "targetState": "Chờ kho"
+    },
+    {
+      "address": {
+        "province": "Hà Nội",
+        "ward": "Phường Cửa Nam",
+        "street": "Số 9 phố Trần Hưng Đạo"
+      },
+      "channelId": "K-1001",
+      "customer": "Cửa hàng tạp hóa I",
+      "deadline": "2026-11-20T16:00:00.000Z",
+      "idempotencyKey": "seed-order-7",
+      "items": [
+        {
+          "quantity": 2,
+          "sku": "NM-25"
+        }
+      ],
+      "phone": "0901234507",
+      "targetState": "Đang đóng gói"
+    },
+    {
+      "address": {
+        "province": "Hải Phòng",
+        "ward": "Phường Hồng Bàng",
+        "street": "Số 7 phố Hoàng Văn Thụ"
+      },
+      "channelId": "K-1002",
+      "customer": "Hộ kinh doanh K",
+      "deadline": "2026-11-19T15:00:00.000Z",
+      "idempotencyKey": "seed-order-8",
+      "items": [
+        {
+          "quantity": 2,
+          "sku": "HS-KHO"
+        }
+      ],
+      "phone": "0901234508",
+      "targetState": "Chờ điều xe"
+    }
+  ],
+  "note": "8 đơn mẫu nạp lúc API khởi động khi bảng đơn còn trống, qua đường dịch vụ thật (create rồi transition hợp lệ). Trạng thái đích: Mới tạo x2, Đã kiểm tra x2, Chờ kho x2, Đang đóng gói x1, Chờ điều xe x1; không seed đơn Đang giao/Đã giao (cần shipment, demo tạo live). Theo luồng mới, đơn Mới tạo (DH-1001, DH-1002) chỉ lưu chuỗi thô khách ghi, chưa tách, chưa chấm điểm, nằm ở tab Chờ tách: DH-1001 là chuỗi xấu (phường không có trong tỉnh) nên Tách bằng AI sẽ lỗi sang tab Lỗi phân tách; DH-1002 là chuỗi tốt nên Tách bằng AI sẽ được tin cậy 100 sang tab Xác nhận. 6 đơn còn lại đã qua bước tách địa chỉ nên lưu địa chỉ đã tách, tin cậy 100. Đơn Đang đóng gói và Chờ điều xe đã giữ hàng nên tránh SKU NM-40 (kiểm thử tích hợp đo tồn NM-40). Không đặt customerId để khỏi phụ thuộc bảng khách hàng."
+}

@@ -20,6 +20,12 @@ export interface ApiOrderAddress {
   district?: string;
   ward?: string;
   street?: string;
+  // Chuỗi địa chỉ thô khách ghi, lưu nguyên văn lúc tạo đơn; đơn chưa
+  // tách chỉ có trường này, chưa có điểm tin cậy.
+  raw?: string;
+  // Lỗi phân tách đã lưu (khi tách chuỗi thô thất bại): đơn vào tab Lỗi
+  // phân tách để nhập tay. null nghĩa là đã xóa lỗi.
+  splitError?: { code: string; message: string } | null;
 }
 
 export interface ApiOrderDetail {

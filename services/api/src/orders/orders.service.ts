@@ -332,24 +332,34 @@ export class OrdersService implements OnModuleInit {
     return items as OrderSeedItem[];
   }
 
-  // Tách chuỗi thô khách ghi (nếu có) bằng dữ liệu hành chính mới rồi trả
-  // địa chỉ đã tách + điểm tin cậy; địa chỉ đã có cấu trúc thì chấm như
-  // cũ. Chuỗi thô thắng khi gửi kèm cả hai.
+  // Chuỗi thô khách ghi (nếu có) thì lưu nguyên văn, chưa tách, chưa
+  // chấm điểm (evaluation null -> tin cậy null): đơn nằm ở tab Chờ tách
+  // với đúng địa chỉ khách ghi. Bấm Tách / Tách bằng AI mới tách chuỗi
+  // này. Địa chỉ đã có cấu trúc thì chấm như cũ và xóa lỗi phân tách đã
+  // lưu (nếu có) vì địa chỉ đã được sửa lại. Gửi kèm cả chuỗi thô và
+  // phần đã tách (trường hợp AI tách được 1 phần, tin cậy thấp) thì giữ
+  // cả hai để còn đối chiếu, chấm điểm theo phần đã tách.
   private resolveAddress(address: AddressInput): {
     stored: AddressInput;
-    evaluation: AddressEvaluation;
+    evaluation: AddressEvaluation | null;
   } {
     const raw = address.raw;
+    const { splitError: _ignored, ...parts } = address;
+    const hasParts =
+      parts.province !== undefined ||
+      parts.district !== undefined ||
+      parts.ward !== undefined ||
+      parts.street !== undefined;
     if (typeof raw === 'string' && raw.trim() !== '') {
-      const { suggestion } = this.address.suggestFromRaw(raw.trim());
-      const stored: AddressInput = {
-        ...(suggestion.province !== '' ? { province: suggestion.province } : {}),
-        ...(suggestion.ward !== '' ? { ward: suggestion.ward } : {}),
-        ...(suggestion.street !== '' ? { street: suggestion.street } : {}),
-      };
-      return { stored, evaluation: this.address.evaluate(stored) };
+      if (hasParts) {
+        return {
+          stored: { raw: raw.trim(), ...parts },
+          evaluation: this.address.evaluate(parts),
+        };
+      }
+      return { stored: { raw: raw.trim() }, evaluation: null };
     }
-    return { stored: address, evaluation: this.address.evaluate(address) };
+    return { stored: parts, evaluation: this.address.evaluate(parts) };
   }
 
   async create(
@@ -372,8 +382,9 @@ export class OrdersService implements OnModuleInit {
     }
     validateItems(input.items);
     // Địa chỉ nhận vào: chuỗi thô khách ghi (Zalo/Facebook/landing page...)
-    // thì tách bằng dữ liệu hành chính mới rồi lưu phần đã tách; địa chỉ
-    // đã có cấu trúc thì chấm như cũ.
+    // thì chỉ lưu nguyên văn, chưa tách, chưa chấm điểm; địa chỉ đã có
+    // cấu trúc thì chấm như cũ. Đơn mới nằm ở tab Chờ tách cho tới khi
+    // người dùng bấm Tách / Tách bằng AI.
     let storedAddress: AddressInput | undefined;
     let evaluation: AddressEvaluation | null = null;
     if (input.address !== undefined) {
@@ -1140,11 +1151,31 @@ export class OrdersService implements OnModuleInit {
     }
     let evaluation = null;
     if (input.address !== undefined) {
-      const resolved = this.resolveAddress(input.address);
-      order.address = { ...resolved.stored };
-      evaluation = resolved.evaluation;
-      order.addressTrust = evaluation.trust;
-      order.addressLevel = evaluation.level;
+      const addr = input.address as AddressInput;
+      const hasParts =
+        addr.province !== undefined ||
+        addr.district !== undefined ||
+        addr.ward !== undefined ||
+        addr.street !== undefined ||
+        addr.raw !== undefined;
+      if (addr.splitError !== undefined && !hasParts) {
+        // Chỉ ghi/xóa lỗi phân tách (màn hình đưa đơn sang tab Lỗi hoặc
+        // bấm Ẩn để đưa về tab Chờ): giữ nguyên địa chỉ đã lưu + điểm tin
+        // cậy, chỉ thêm/xóa lỗi. splitError null nghĩa là xóa lỗi đã lưu.
+        const current: AddressInput = { ...(order.address ?? {}) };
+        if (addr.splitError === null) {
+          delete current.splitError;
+        } else {
+          current.splitError = addr.splitError;
+        }
+        order.address = current;
+      } else {
+        const resolved = this.resolveAddress(input.address);
+        order.address = { ...resolved.stored };
+        evaluation = resolved.evaluation;
+        order.addressTrust = evaluation ? evaluation.trust : null;
+        order.addressLevel = evaluation ? evaluation.level : null;
+      }
     }
     const now = new Date().toISOString();
     order.updatedAt = now;
@@ -1239,6 +1270,20 @@ function validateAddress(address: unknown): void {
     if (value !== undefined && typeof value !== 'string') {
       throw new BadRequestException(
         `address.${field} phải là dạng chuỗi khi có.`,
+      );
+    }
+  }
+  // Lỗi phân tách đã lưu: object {code, message} hoặc null (xóa lỗi).
+  const splitError = (address as Record<string, unknown>).splitError;
+  if (splitError !== undefined && splitError !== null) {
+    if (typeof splitError !== 'object' || Array.isArray(splitError)) {
+      throw new BadRequestException('address.splitError phải là 1 object khi có.');
+    }
+    const code = (splitError as Record<string, unknown>).code;
+    const message = (splitError as Record<string, unknown>).message;
+    if (typeof code !== 'string' || typeof message !== 'string') {
+      throw new BadRequestException(
+        'address.splitError cần có code và message dạng chuỗi.',
       );
     }
   }

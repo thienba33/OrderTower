@@ -8,10 +8,14 @@ export interface AddressInput {
   district?: string;
   ward?: string;
   street?: string;
-  // Chuỗi địa chỉ thô khách ghi (Zalo/Facebook/landing page...). Chỉ dùng
-  // lúc tạo đơn: API tách bằng dữ liệu hành chính mới rồi lưu phần đã
-  // tách, không lưu nguyên văn vào đơn.
+  // Chuỗi địa chỉ thô khách ghi (Zalo/Facebook/landing page...). Lưu
+  // nguyên văn vào đơn lúc tạo; đơn chưa tách thì chỉ có trường này,
+  // chưa có điểm tin cậy. Bấm Tách / Tách bằng AI mới tách chuỗi này.
   raw?: string;
+  // Lỗi phân tách đã lưu (khi tách chuỗi thô thất bại): màn hình đưa đơn
+  // vào tab Lỗi phân tách để nhập tay. Xóa khi địa chỉ được tách lại
+  // thành công hoặc người dùng bấm Ẩn. null nghĩa là xóa lỗi đã lưu.
+  splitError?: SplitError | null;
 }
 
 export type AddressLevel = 'Tin cậy cao' | 'Cần lưu ý' | 'Rủi ro cao';
