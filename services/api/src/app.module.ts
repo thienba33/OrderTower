@@ -2,6 +2,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
+import { AiAssignmentsModule } from './ai-assignments/ai-assignments.module';
 import { ApprovalsModule } from './approvals/approval.module';
 import { ArchiveModule } from './archive/archive.module';
 import { AssignmentModule } from './assignments/assignment.module';
@@ -34,6 +35,7 @@ import { WorkflowModule } from './workflow/workflow.module';
 
 @Module({
   imports: [
+    AiAssignmentsModule,
     ApprovalsModule,
     ArchiveModule,
     AssignmentModule,
