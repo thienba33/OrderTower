@@ -9,62 +9,58 @@ Realm `ordertower` dùng TOTP native của Keycloak cho hai vai quản trị:
 | `demo.manager` | Quản lý | Có |
 | Các tài khoản demo khác | Nhân viên/khách | Không, login một bước |
 
-## Demo secret
+## Đăng ký OTP lần đầu
 
-Chỉ dùng cho môi trường demo/local:
+1. Đăng nhập `demo.admin` hoặc `demo.manager` bằng mật khẩu demo.
+2. Keycloak hiện màn **Configure authenticator** kèm **QR code**.
+3. Quét QR bằng Google Authenticator / FreeOTP / Microsoft Authenticator.
+4. Nhập mã 6 số để hoàn tất.
+5. Lần đăng nhập sau mới hiện ô **One-time code**.
 
-| Tài khoản | TOTP secret (Base32) |
-| --- | --- |
-| `demo.admin` | `JBSWY3DPEHPK3PXP` |
-| `demo.manager` | `GEZDGNBVGY3TQOJQ` |
+Không có secret cố định trong repo. Secret do Keycloak sinh khi quét QR.
 
-Thêm secret vào Google Authenticator/FreeOTP bằng “Enter a setup key”, hoặc
-dùng đoạn Node sau để lấy mã hiện tại:
+Nếu tài khoản đã có OTP credential cũ và không hiện QR:
+
+- Vào Keycloak Admin Console → realm `ordertower` → Users → chọn user →
+  Credentials → xoá `OTP`.
+- Thêm required action **Configure OTP**.
+- Đăng nhập lại.
+
+Realm JSON không còn seed OTP secret; QR do Keycloak sinh khi đăng ký.
+
+Hoặc xoá riêng database Keycloak để import lại realm sạch (không ảnh hưởng
+database đơn hàng `ordertower`):
 
 ```bash
-node -e "const {createHmac}=require('crypto');const s='JBSWY3DPEHPK3PXP';const a='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let b=0,v=0,o=[];for(const c of s){const i=a.indexOf(c);v=(v<<5)|i;b+=5;if(b>=8){o.push((v>>>(b-8))&255);b-=8}}const t=Math.floor(Date.now()/30000),buf=Buffer.alloc(8);buf.writeBigUInt64BE(BigInt(t));const h=createHmac('sha1',Buffer.from(o)).update(buf).digest(),off=h[h.length-1]&15;console.log(((h.readUInt32BE(off)&0x7fffffff)%1e6).toString().padStart(6,'0'))"
+docker compose exec -T postgres psql -U ordertower -d postgres \
+  -c 'DROP DATABASE keycloak WITH (FORCE);' \
+  -c 'CREATE DATABASE keycloak OWNER keycloak;'
+docker compose restart keycloak
 ```
-
-Production phải rotate secret, không dùng secret trong repo.
 
 ## Flow
 
-- `browser-mfa`: cookie → username/password → conditional subflow theo client
-  role `ordertower-web.admin` và `ordertower-web.manager`.
-- Mỗi subflow có:
-  - `conditional-user-role` bắt buộc.
-  - `auth-otp-form` alternative.
-  - `auth-recovery-authn-code-form` alternative.
-- Người không thuộc admin/manager không đi qua subflow MFA.
+- Dùng browser flow mặc định của Keycloak.
+- `CONFIGURE_TOTP` là required action của `demo.admin`/`demo.manager`, nên lần
+  đăng nhập đầu bắt buộc đăng ký QR trước khi vào app.
+- Sau khi có OTP credential, Keycloak tự hỏi OTP ở các lần đăng nhập sau.
+- Người không có OTP credential không bị hỏi.
 
 ## Recovery codes
 
-Keycloak 26.8 bật required action **Recovery Authentication Codes**. Sau khi
-đăng nhập MFA:
+Với realm mới, bật thêm một lần trong Keycloak Admin Console:
 
-1. Mở `http://localhost:9080/realms/ordertower/account/`.
-2. **Account security → Signing in → Recovery authentication codes**.
-3. Lưu 12 mã; mỗi mã dùng một lần.
-4. Ở màn OTP, chọn **Try another way → Recovery authentication code**.
+1. **Authentication → Flows → Browser → Browser - Conditional 2FA**.
+2. Đổi **Recovery Authentication Code Form** từ `Disabled` sang `Alternative`.
+3. Đăng nhập MFA, mở `http://localhost:9080/realms/ordertower/account/`.
+4. **Account security → Signing in → Recovery authentication codes**.
+5. Lưu 12 mã; mỗi mã dùng một lần.
+6. Ở màn OTP, chọn **Try another way → Recovery authentication code**.
 
-## Realm đã tồn tại
+Realm live hiện đã bật form này.
 
-Keycloak chỉ import realm khi realm chưa tồn tại. Với DB Keycloak cũ:
+## Production
 
-- Cách nhanh để áp dụng đúng seed/flow: xoá riêng database Keycloak rồi restart
-  (không ảnh hưởng database đơn hàng `ordertower`):
-  ```bash
-  docker compose exec -T postgres psql -U ordertower -d postgres \
-    -c 'DROP DATABASE keycloak WITH (FORCE);' \
-    -c 'CREATE DATABASE keycloak OWNER keycloak;'
-  docker compose restart keycloak
-  ```
-- Hoặc thêm OTP credential/flow thủ công qua Admin Console. File realm JSON là
-  nguồn chuẩn cho cài mới.
-
-## Kiểm tra
-
-- `demo.admin` + mật khẩu → màn **One-time code**.
-- Mã đúng → vào app; mã sai → `Invalid authenticator code`.
-- `demo.warehouse-staff` → vào thẳng, không hỏi OTP.
-- Log Keycloak có `LOGIN_ERROR invalid_user_credentials` khi mã sai.
+- Không dùng required action seed hoặc tài khoản demo.
+- Bật MFA theo role/group; secret do người dùng tự đăng ký.
+- Có thể yêu cầu WebAuthn/passkey thay TOTP.
