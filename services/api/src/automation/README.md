@@ -11,6 +11,7 @@ console quản trị.
 | --- | --- | --- |
 | `outbox-relay` | 15 giây | Gọi `OutboxService.relay`, phát event pending; event lỗi retry backoff, quá `max_attempts` thành dead-letter |
 | `sla-scan` | 60 giây | Quét workflow instance active quá hạn, tạo notification theo vai, escalation cho Quản lý sau 60 phút |
+| `lakehouse-archive` | 24 giờ | Export đơn đã đóng quá retention ra Parquet trên SeaweedFS, ghi manifest; không xoá OLTP |
 
 Không job nào tự chuyển trạng thái đơn/task/approval. Muốn đổi trạng thái vẫn
 phải đi qua workflow + guard + audit như cũ.
@@ -20,6 +21,9 @@ phải đi qua workflow + guard + audit như cũ.
 - `AUTOMATION_ENABLED=1|0`
 - `AUTOMATION_OUTBOX_INTERVAL_MS` (mặc định 15000, tối thiểu 5000)
 - `AUTOMATION_SLA_INTERVAL_MS` (mặc định 60000, tối thiểu 5000)
+- `AUTOMATION_ARCHIVE_INTERVAL_MS` (mặc định 86400000 = 24 giờ)
+- `ARCHIVE_RETENTION_DAYS` (mặc định 0 cho demo; production 30–90)
+- `ARCHIVE_LIMIT` (mặc định 500, tối đa 1000)
 
 Khi `NODE_ENV=test`, scheduler không khởi động để unit test không chạy job.
 
@@ -32,7 +36,8 @@ Chỉ Quản trị viên:
   `{ items, total, limit, offset }`.
 - `GET /api/automation/notifications?limit=20&offset=0`: notification toàn
   tenant, cùng dạng phân trang.
-- `POST /api/automation/jobs/:job/run`: chạy tay `outbox-relay` hoặc `sla-scan`.
+- `POST /api/automation/jobs/:job/run`: chạy tay `outbox-relay`, `sla-scan`
+  hoặc `lakehouse-archive`.
 
 Notification cho caller:
 
@@ -49,6 +54,15 @@ Nguồn: `workflow_instances` active join `orders.deadline`.
 - Quá hạn ≥ 60 phút tạo thêm escalation `sla-escalated:<instance>:<state>`
   cho Quản lý; nếu vai xử lý đã là Quản lý thì bỏ qua escalation trùng.
 - Notification có `action_href` để mở đơn.
+
+## Lakehouse archive
+
+- Gọi `ArchiveService.run` với caller hệ thống `system` / vai Quản trị viên.
+- Chỉ chọn đơn ở trạng thái đã đóng, `updatedAt` cũ hơn retention và chưa có
+  trong `order_archive_manifest`.
+- Kết quả run log: `archived`, `runId`, `rows`, `bytes`, `cutoffAt`,
+  `objectKey`; đơn gốc vẫn nằm trong OLTP.
+- Chạy lại không trùng nhờ manifest.
 
 ## UI
 

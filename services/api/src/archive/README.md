@@ -49,9 +49,16 @@ row count, bytes, object key và lỗi.
   `OrdersService.list()`.
 - Muốn xoá hẳn khỏi OLTP cần thêm retention/partitioning; bản này chưa làm.
 
+## Scheduler
+
+Job `lakehouse-archive` trong `automation/` chạy mỗi 24 giờ (cấu hình
+`AUTOMATION_ARCHIVE_INTERVAL_MS`), dùng `ARCHIVE_RETENTION_DAYS` và
+`ARCHIVE_LIMIT`. Có thể chạy tay từ `/admin/automation` hoặc
+`POST /api/automation/jobs/lakehouse-archive/run`.
+
 ## Giới hạn đã biết
 
-- Chưa có scheduler; archive chạy tay qua API/UI.
+- Scheduler không xoá đơn khỏi OLTP; chỉ export + manifest.
 - Chưa dùng Iceberg/Trino/DuckDB; Parquet đọc bằng `parquetjs-lite`.
 - Analytics đọc toàn bộ run completed; với dữ liệu lớn cần partition/catalog.
 - Chưa có compaction hay lifecycle policy cho object storage.

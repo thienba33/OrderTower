@@ -33,12 +33,25 @@ import {
 const JOB_LABEL: Record<ApiAutomationJobName, string> = {
   "outbox-relay": "Outbox relay",
   "sla-scan": "SLA scan",
+  "lakehouse-archive": "Lakehouse archive",
 };
 
 const JOB_DESCRIPTION: Record<ApiAutomationJobName, string> = {
   "outbox-relay": "Tự phát event pending, retry backoff, dead-letter.",
   "sla-scan": "Quét task quá hạn, tạo notification và escalation.",
+  "lakehouse-archive":
+    "Export đơn đã đóng quá retention ra Parquet, ghi manifest.",
 };
+
+function formatInterval(ms: number): string {
+  if (ms >= 3_600_000) {
+    return `${Math.round(ms / 3_600_000)} giờ`;
+  }
+  if (ms >= 60_000) {
+    return `${Math.round(ms / 60_000)} phút`;
+  }
+  return `${Math.round(ms / 1000)} giây`;
+}
 
 function formatDateTime(iso: string): string {
   const date = new Date(iso);
@@ -588,7 +601,7 @@ function JobCard({
       <div className="grid gap-2 text-xs text-gray-600 sm:grid-cols-3">
         <p className="inline-flex items-center gap-1">
           <Clock size={13} />
-          Mỗi {Math.round(job.intervalMs / 1000)} giây
+          Mỗi {formatInterval(job.intervalMs)}
         </p>
         <p>
           Lần cuối: {last ? formatDateTime(last.startedAt) : "chưa chạy"}
