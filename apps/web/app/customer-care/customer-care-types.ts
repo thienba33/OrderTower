@@ -131,6 +131,29 @@ export interface ApiCallLog {
   createdAt: string;
 }
 
+// Cuộc gọi tiếp theo do AI gợi ý (POST /ai-assignments/telesale/next):
+// phân đơn đã tạo cho chính người gọi (null khi hết đơn ưu tiên), kèm
+// thông tin đơn + lý do ưu tiên + ETA để hiện thẻ "Cuộc gọi tiếp theo".
+export interface ApiNextCallOrder {
+  orderId: string;
+  customer: string;
+  phone: string | null;
+  deadline: string | null;
+  total: number;
+  addressTrust: number | null;
+  reason: string;
+  suggestion: string;
+  eta: string;
+  etaMinutes: number | null;
+}
+
+export interface ApiNextCall {
+  assignment: ApiAssignment | null;
+  order: ApiNextCallOrder | null;
+  reason: string;
+  existing: boolean;
+}
+
 // Lỗi tải dữ liệu cuộc gọi: hết phiên thì hiện link đăng nhập lại, lỗi
 // khác thì báo tải lại trang. null là tải được. Cùng quy ước như
 // ReturnsError của panel hoàn hàng.
