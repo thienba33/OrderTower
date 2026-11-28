@@ -34,3 +34,45 @@ export const OVERLOAD_STANDARD = 30;
 // lỗi khác thì báo tải lại trang. null là tải được. Cùng quy ước như
 // ReturnsError và CallsError của màn Chăm sóc khách hàng.
 export type DistributionError = "unauthorized" | "load-failed";
+
+// 1 mục đề xuất AI chia đơn kho: 1 đơn giao cho 1 nhân viên, kèm lý do +
+// số đầu vào để người duyệt kiểm tra lại được.
+export interface ApiProposalItem {
+  orderId: string;
+  assignedTo: string;
+  reason: string;
+  inputs: {
+    active: number;
+    completed: number;
+    avgMinutes: number | null;
+    score: number;
+  };
+  originalAssignmentId: string | null;
+}
+
+// 1 đề xuất AI chia đơn kho: 1 đợt chia, duyệt cả đợt 1 lần.
+export interface ApiProposal {
+  id: string;
+  kind: "warehouse" | "telesale";
+  status: "Chờ duyệt" | "Đã áp dụng" | "Đã từ chối" | "Chờ duyệt vượt tải";
+  items: ApiProposalItem[];
+  skipped: { orderId: string; reason: string }[];
+  overloaded: boolean;
+  approvalId: string | null;
+  requestedBy: string;
+  requestedAt: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionReason: string | null;
+  appliedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Kết quả duyệt đề xuất: phân đơn tạo thành công + mục lỗi từng đơn.
+export interface ApiDecideResult {
+  proposal: ApiProposal;
+  applied: { orderId: string; assignmentId: string }[];
+  failed: { orderId: string; reason: string }[];
+  approvalId: string | null;
+}

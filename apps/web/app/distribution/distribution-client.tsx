@@ -10,7 +10,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
@@ -19,7 +19,9 @@ import {
   DEMO_WAREHOUSE_ACCOUNTS,
   OVERLOAD_STANDARD,
   type ApiAssignment,
+  type ApiDecideResult,
   type ApiOrder,
+  type ApiProposal,
   type AssignmentStatus,
   type DistributionError,
 } from "./distribution-types";
@@ -116,6 +118,52 @@ export default function DistributionClient({
   // Lựa chọn nhân viên cho từng đơn ở tab Cần chú ý; chưa chọn thì lấy
   // người gợi ý (ít phân đơn đang hoạt động nhất).
   const [assignChoice, setAssignChoice] = useState<Record<string, string>>({});
+
+  // Modal AI chia đơn kho: bước 1 chọn nhân viên đang làm việc, bước 2
+  // duyệt đề xuất theo đợt (đổi người nhận, bỏ đơn, áp dụng/từ chối).
+  const [proposalOpen, setProposalOpen] = useState(false);
+  const [proposal, setProposal] = useState<ApiProposal | null>(null);
+  const [proposalBusy, setProposalBusy] = useState<string | null>(null);
+  const [proposalError, setProposalError] = useState("");
+  const [workingStaff, setWorkingStaff] = useState<string[]>([
+    ...DEMO_WAREHOUSE_ACCOUNTS,
+  ]);
+  const [editedAssignee, setEditedAssignee] = useState<Record<string, string>>({});
+  const [removedOrderIds, setRemovedOrderIds] = useState<string[]>([]);
+  const [rejectReason, setRejectReason] = useState("");
+  const [showReject, setShowReject] = useState(false);
+  const [decideResult, setDecideResult] = useState<ApiDecideResult | null>(null);
+
+  // Đề xuất gần đây (để mở lại đề xuất đang chờ duyệt vượt tải sau khi
+  // Quản lý đã duyệt). Tải khi vào tab Cần chú ý.
+  const [recentProposals, setRecentProposals] = useState<ApiProposal[]>([]);
+  const loadRecentProposals = async () => {
+    try {
+      const response = await fetch("/api/ai-assignments/warehouse/proposals");
+      if (!response.ok) return;
+      const data = (await response.json()) as ApiProposal[];
+      setRecentProposals(data.slice(0, 5));
+    } catch {
+      // Không chặn màn hình khi tải danh sách đề xuất lỗi.
+    }
+  };
+  useEffect(() => {
+    if (tab === "attention") {
+      void loadRecentProposals();
+    }
+  }, [tab]);
+
+  // Mở lại 1 đề xuất đã lưu trong modal để duyệt tiếp.
+  const openProposal = (item: ApiProposal) => {
+    setProposal(item);
+    setProposalError("");
+    setEditedAssignee({});
+    setRemovedOrderIds([]);
+    setRejectReason("");
+    setShowReject(false);
+    setDecideResult(null);
+    setProposalOpen(true);
+  };
 
   const packingRows = useMemo<PackingRow[]>(() => {
     const activeByOrder = activeAssignmentByOrder(assignments);
@@ -403,6 +451,144 @@ export default function DistributionClient({
     router.refresh();
   };
 
+  // Mở modal AI chia đơn: bước 1 chọn nhân viên đang làm việc (mặc định
+  // tick đủ 3 tài khoản demo kho); bỏ tick ai thì người đó không nhận đơn
+  // trong đợt này.
+  const openProposalModal = () => {
+    setProposal(null);
+    setProposalError("");
+    setWorkingStaff([...DEMO_WAREHOUSE_ACCOUNTS]);
+    setEditedAssignee({});
+    setRemovedOrderIds([]);
+    setRejectReason("");
+    setShowReject(false);
+    setDecideResult(null);
+    setProposalOpen(true);
+  };
+
+  // Gửi đề xuất AI chia đơn qua route nội bộ; lỗi hiện message của API.
+  const submitPropose = async () => {
+    setProposalBusy("propose");
+    setProposalError("");
+    try {
+      const exclude = DEMO_WAREHOUSE_ACCOUNTS.filter(
+        (name) => !workingStaff.includes(name),
+      );
+      const response = await fetch("/api/ai-assignments/warehouse/propose", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ exclude }),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setProposalError(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Không đề xuất được (${response.status}).`,
+        );
+        return;
+      }
+      const data = (await response.json()) as ApiProposal;
+      setProposal(data);
+      setEditedAssignee({});
+      setRemovedOrderIds([]);
+    } catch {
+      setProposalError("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setProposalBusy(null);
+    }
+  };
+
+  // Chia lại đơn của nhân viên nghỉ đột xuất: mở modal với đề xuất chia lại.
+  const submitReassign = async (staffName: string) => {
+    setProposalBusy(`reassign-${staffName}`);
+    setProposalError("");
+    setProposal(null);
+    setEditedAssignee({});
+    setRemovedOrderIds([]);
+    setRejectReason("");
+    setShowReject(false);
+    setDecideResult(null);
+    setProposalOpen(true);
+    try {
+      const response = await fetch("/api/ai-assignments/warehouse/reassign", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ assignedTo: staffName }),
+      });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setProposalError(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Không chia lại được (${response.status}).`,
+        );
+        return;
+      }
+      const data = (await response.json()) as ApiProposal;
+      setProposal(data);
+    } catch {
+      setProposalError("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setProposalBusy(null);
+    }
+  };
+
+  // Duyệt đề xuất: áp dụng cả đợt 1 lần (dùng danh sách đã sửa trong modal
+  // nếu có), hoặc từ chối kèm lý do bắt buộc. Đề xuất vượt tải thì API
+  // chuyển sang phê duyệt ở Hàng đợi duyệt, không áp dụng trực tiếp.
+  const submitDecide = async (decision: "approved" | "rejected") => {
+    if (proposal === null) return;
+    if (decision === "rejected" && rejectReason.trim() === "") {
+      setProposalError("Từ chối đề xuất cần có lý do.");
+      return;
+    }
+    setProposalBusy(`decide-${decision}`);
+    setProposalError("");
+    try {
+      const items = proposal.items
+        .filter((item) => !removedOrderIds.includes(item.orderId))
+        .map((item) => ({
+          orderId: item.orderId,
+          assignedTo: editedAssignee[item.orderId] ?? item.assignedTo,
+        }));
+      const response = await fetch(
+        `/api/ai-assignments/warehouse/${encodeURIComponent(proposal.id)}/decision`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            decision,
+            ...(decision === "rejected"
+              ? { reason: rejectReason.trim() }
+              : {}),
+            ...(decision === "approved" ? { items } : {}),
+          }),
+        },
+      );
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = (data as { message?: unknown } | null)?.message;
+        setProposalError(
+          typeof message === "string" && message !== ""
+            ? message
+            : `Không duyệt được (${response.status}).`,
+        );
+        return;
+      }
+      const data = (await response.json()) as ApiDecideResult;
+      setProposal(data.proposal);
+      setDecideResult(data);
+      router.refresh();
+    } catch {
+      setProposalError("Không gọi được máy chủ, thử lại sau.");
+    } finally {
+      setProposalBusy(null);
+    }
+  };
+
   const submitDialogAssign = async () => {
     if (dialogRow === null) return;
     const row = dialogRow;
@@ -541,6 +727,25 @@ export default function DistributionClient({
         (activeCounts.get(name) ?? 0) > 0 ? "Đang đóng gói" : "-",
       cellClassName: "text-xs text-gray-700",
       headerClassName: "w-[189px]",
+    },
+    {
+      key: "reassign",
+      header: "Chia lại",
+      render: (name) =>
+        isDispatcher && (activeCounts.get(name) ?? 0) > 0 ? (
+          <button
+            type="button"
+            disabled={proposalBusy !== null}
+            onClick={() => void submitReassign(name)}
+            className="flex h-8 items-center justify-center rounded-md border border-gray-300 px-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {proposalBusy === `reassign-${name}` ? "Đang chia..." : "Chia lại"}
+          </button>
+        ) : (
+          <span className="text-xs text-gray-400">-</span>
+        ),
+      cellClassName: "text-xs",
+      headerClassName: "w-[110px]",
     },
   ];
 
@@ -700,7 +905,44 @@ export default function DistributionClient({
           )}
 
           {tab === "attention" && (
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div>
+              {isDispatcher && (
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busyKey !== null}
+                    onClick={openProposalModal}
+                    className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                  >
+                    AI chia đơn
+                  </button>
+                  <p className="text-xs text-gray-500">
+                    AI gợi ý chia toàn bộ đơn đang chờ theo hiệu suất, điều phối viên duyệt trong modal rồi mới áp dụng.
+                  </p>
+                </div>
+              )}
+              {isDispatcher && recentProposals.length > 0 && (
+                <div className="mb-4 flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-3">
+                  <p className="text-xs font-semibold text-gray-900">Đề xuất gần đây</p>
+                  {recentProposals.map((item) => (
+                    <div key={item.id} className="flex flex-wrap items-center gap-2 text-xs text-gray-700">
+                      <span className="font-medium text-gray-900">{item.id}</span>
+                      <span>{item.items.length} đơn</span>
+                      <span>{item.status}</span>
+                      {item.status === "Chờ duyệt" || item.status === "Chờ duyệt vượt tải" ? (
+                        <button
+                          type="button"
+                          onClick={() => openProposal(item)}
+                          className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          Mở lại
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="grid gap-4 lg:grid-cols-3">
               <div className="flex flex-col gap-2">
                 <div className="flex h-11 items-center rounded-lg border border-gray-200 bg-white px-4">
                   <p className="text-xs font-semibold text-gray-900">
@@ -848,6 +1090,7 @@ export default function DistributionClient({
                 </div>
               </div>
             </div>
+            </div>
           )}
 
           {tab === "staff" && (
@@ -985,6 +1228,261 @@ export default function DistributionClient({
             </Link>
             {dialogErrorText !== "" && (
               <p className="text-sm text-red-700">{dialogErrorText}</p>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={proposalOpen}
+        onClose={() => {
+          setProposalOpen(false);
+          setProposal(null);
+          setDecideResult(null);
+        }}
+        title={
+          proposal === null
+            ? "AI chia đơn kho"
+            : `Đề xuất ${proposal.id} (${proposal.items.length} đơn)`
+        }
+        footer={
+          proposal === null ? (
+            <button
+              type="button"
+              disabled={proposalBusy !== null || workingStaff.length === 0}
+              onClick={() => void submitPropose()}
+              className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+            >
+              {proposalBusy === "propose" ? "Đang đề xuất..." : "Đề xuất chia đơn"}
+            </button>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {proposal.status === "Chờ duyệt" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={proposalBusy !== null}
+                    onClick={() => void submitDecide("approved")}
+                    className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                  >
+                    {proposalBusy === "decide-approved" ? "Đang áp dụng..." : "Áp dụng"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={proposalBusy !== null}
+                    onClick={() => setShowReject((prev) => !prev)}
+                    className="flex h-9 items-center justify-center rounded-md border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Từ chối
+                  </button>
+                </>
+              )}
+              {proposal.status === "Chờ duyệt vượt tải" && (
+                <button
+                  type="button"
+                  disabled={proposalBusy !== null}
+                  onClick={() => void submitDecide("approved")}
+                  className="flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                >
+                  {proposalBusy === "decide-approved" ? "Đang áp dụng..." : "Áp dụng sau phê duyệt"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setProposalOpen(false);
+                  setProposal(null);
+                  setDecideResult(null);
+                }}
+                className="flex h-9 items-center justify-center rounded-md border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Đóng
+              </button>
+            </div>
+          )
+        }
+      >
+        {proposal === null ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-gray-700">
+              Chọn nhân viên đang làm việc hôm nay. Bỏ tick ai thì người đó
+              không nhận đơn trong đợt này.
+            </p>
+            {staffList.map((name) => (
+              <label key={name} className="flex items-center gap-2 text-sm text-gray-900">
+                <input
+                  type="checkbox"
+                  checked={workingStaff.includes(name)}
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      setWorkingStaff((prev) => [...prev, name]);
+                    } else {
+                      setWorkingStaff((prev) => prev.filter((item) => item !== name));
+                    }
+                  }}
+                  className="h-4 w-4 accent-red-700"
+                />
+                {name} ({activeCounts.get(name) ?? 0} đơn đang làm)
+              </label>
+            ))}
+            {proposalError !== "" && (
+              <p className="text-sm text-red-700">{proposalError}</p>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-gray-700">
+              Đề xuất {proposal.items.length} đơn cho{" "}
+              {new Set(proposal.items.map((item) => item.assignedTo)).size}{" "}
+              nhân viên kho. Người duyệt xem xét, sửa (đổi người nhận, bỏ đơn)
+              rồi mới áp dụng.
+            </p>
+            {proposal.overloaded && proposal.status === "Chờ duyệt" && (
+              <p className="text-sm font-medium text-red-700">
+                Đề xuất này vượt tải (đẩy ai đó lên từ 30 đơn đang làm trở
+                lên). Bấm Áp dụng sẽ gửi yêu cầu phê duyệt tới Quản lý/Quản trị
+                viên ở Hàng đợi duyệt, chưa tạo phân đơn ngay.
+              </p>
+            )}
+            {proposal.status === "Chờ duyệt vượt tải" && (
+              <p className="text-sm font-medium text-amber-700">
+                Đang chờ Quản lý/Quản trị viên duyệt vượt tải ở Hàng đợi duyệt
+                (phê duyệt {proposal.approvalId ?? ""}). Sau khi được duyệt,
+                mở lại đề xuất này và bấm Áp dụng sau phê duyệt.
+              </p>
+            )}
+            {proposal.skipped.length > 0 && (
+              <p className="text-sm text-gray-500">
+                Bỏ qua {proposal.skipped.length} đơn:{" "}
+                {proposal.skipped
+                  .map((item) => `${item.orderId} (${item.reason})`)
+                  .join("; ")}
+              </p>
+            )}
+            {decideResult !== null && decideResult.failed.length > 0 && (
+              <p className="text-sm text-red-700">
+                {decideResult.failed.length} mục lỗi:{" "}
+                {decideResult.failed
+                  .map((item) => `${item.orderId} (${item.reason})`)
+                  .join("; ")}
+              </p>
+            )}
+            {decideResult !== null && decideResult.applied.length > 0 && (
+              <p className="text-sm text-green-700">
+                Đã tạo {decideResult.applied.length} phân đơn.
+              </p>
+            )}
+            {Array.from(
+              new Set(
+                proposal.items.map(
+                  (item) => editedAssignee[item.orderId] ?? item.assignedTo,
+                ),
+              ),
+            ).map((assignee) => {
+              const groupItems = proposal.items.filter(
+                (item) =>
+                  (editedAssignee[item.orderId] ?? item.assignedTo) === assignee &&
+                  !removedOrderIds.includes(item.orderId),
+              );
+              if (groupItems.length === 0) return null;
+              const active = activeCounts.get(assignee) ?? 0;
+              return (
+                <div
+                  key={assignee}
+                  className="flex flex-col gap-2 rounded-lg border border-gray-200 p-3"
+                >
+                  <p className="text-sm font-semibold text-gray-900">
+                    {assignee}: đang làm {active}, nhận thêm {groupItems.length}, tổng{" "}
+                    {active + groupItems.length}
+                  </p>
+                  {groupItems.map((item) => {
+                    const order = orders.find((o) => o.id === item.orderId);
+                    return (
+                      <div
+                        key={item.orderId}
+                        className="flex flex-col gap-1 rounded-md border border-gray-100 p-2"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-gray-900">
+                            {item.orderId}
+                            {order !== undefined ? ` - ${itemsSummary(order)}` : ""}
+                          </p>
+                          {item.originalAssignmentId !== null && (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+                              Chia lại
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-700">{item.reason}</p>
+                        <p className="text-xs text-gray-500">
+                          Đang làm {item.inputs.active} · Đã hoàn thành{" "}
+                          {item.inputs.completed} ·{" "}
+                          {item.inputs.avgMinutes === null
+                            ? "Chưa đo tốc độ"
+                            : `Trung bình ${item.inputs.avgMinutes} phút/đơn`}{" "}
+                          · Điểm {item.inputs.score}
+                        </p>
+                        {proposal.status === "Chờ duyệt" && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={editedAssignee[item.orderId] ?? item.assignedTo}
+                              onChange={(event) =>
+                                setEditedAssignee((prev) => ({
+                                  ...prev,
+                                  [item.orderId]: event.target.value,
+                                }))
+                              }
+                              aria-label={`Đổi người nhận đơn ${item.orderId}`}
+                              className="h-8 rounded-md border border-gray-300 px-2 text-xs text-gray-700"
+                            >
+                              {staffList.map((name) => (
+                                <option key={name} value={name}>
+                                  {name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRemovedOrderIds((prev) => [...prev, item.orderId])
+                              }
+                              className="flex h-8 items-center justify-center rounded-md border border-gray-300 px-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                            >
+                              Bỏ đơn khỏi đợt
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            {showReject && proposal.status === "Chờ duyệt" && (
+              <div className="flex flex-col gap-2">
+                <label htmlFor="proposal-reject-reason" className="text-sm font-medium text-gray-900">
+                  Lý do từ chối (bắt buộc)
+                </label>
+                <input
+                  id="proposal-reject-reason"
+                  type="text"
+                  value={rejectReason}
+                  onChange={(event) => setRejectReason(event.target.value)}
+                  placeholder="Ví dụ: Chia chưa đều, làm lại."
+                  className="h-9 rounded-md border border-gray-300 px-3 text-sm text-gray-900 placeholder:text-gray-500"
+                />
+                <button
+                  type="button"
+                  disabled={proposalBusy !== null || rejectReason.trim() === ""}
+                  onClick={() => void submitDecide("rejected")}
+                  className="flex h-9 w-fit items-center justify-center rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                >
+                  {proposalBusy === "decide-rejected" ? "Đang từ chối..." : "Xác nhận từ chối"}
+                </button>
+              </div>
+            )}
+            {proposalError !== "" && (
+              <p className="text-sm text-red-700">{proposalError}</p>
             )}
           </div>
         )}
